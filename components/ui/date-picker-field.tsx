@@ -1,0 +1,166 @@
+import React, { useState } from 'react';
+import {
+  View, Text, TouchableOpacity, StyleSheet, Platform, Modal,
+} from 'react-native';
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function parseIso(str: string | undefined): Date {
+  if (str && /^\d{4}-\d{2}-\d{2}$/.test(str)) {
+    const [y, m, d] = str.split('-').map(Number);
+    return new Date(y, m - 1, d);
+  }
+  return new Date();
+}
+
+function toIso(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function formatDisplay(iso: string): string {
+  const d = parseIso(iso);
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
+
+interface Props {
+  label: string;
+  value: string;        // YYYY-MM-DD, or '' for unset
+  onChange: (iso: string) => void;
+  optional?: boolean;   // show "optional" hint next to label
+}
+
+export function DatePickerField({ label, value, onChange, optional }: Props) {
+  const [show, setShow] = useState(false);
+  // tempDate tracks in-progress iOS spinner selection before Done is tapped
+  const [tempDate, setTempDate] = useState<Date>(() => parseIso(value));
+
+  const display = value ? formatDisplay(value) : '';
+
+  function openPicker() {
+    setTempDate(parseIso(value));
+    setShow(true);
+  }
+
+  function handleAndroidChange(event: DateTimePickerEvent, date?: Date) {
+    setShow(false);
+    if (event.type === 'set' && date) onChange(toIso(date));
+  }
+
+  function handleIosChange(_event: DateTimePickerEvent, date?: Date) {
+    if (date) setTempDate(date);
+  }
+
+  function handleDone() {
+    setShow(false);
+    onChange(toIso(tempDate));
+  }
+
+  function handleClear() {
+    setShow(false);
+    onChange('');
+  }
+
+  return (
+    <View style={s.field}>
+      <View style={s.labelRow}>
+        <Text style={s.label}>{label}</Text>
+        {optional && <Text style={s.optionalHint}>optional</Text>}
+      </View>
+
+      <TouchableOpacity style={s.input} onPress={openPicker} activeOpacity={0.7}>
+        <Text style={display ? s.valueText : s.placeholder}>
+          {display || 'Select date'}
+        </Text>
+        <Text style={s.icon}>📅</Text>
+      </TouchableOpacity>
+
+      {/* Android — system dialog, renders directly */}
+      {Platform.OS === 'android' && show && (
+        <DateTimePicker
+          mode="date"
+          display="default"
+          value={tempDate}
+          onChange={handleAndroidChange}
+          accentColor="#5B5BD6"
+        />
+      )}
+
+      {/* iOS — inline calendar inside a bottom-sheet modal */}
+      {Platform.OS === 'ios' && (
+        <Modal
+          transparent
+          visible={show}
+          animationType="slide"
+          onRequestClose={() => setShow(false)}>
+          <View style={s.overlay}>
+            <TouchableOpacity style={s.overlayBackdrop} onPress={() => setShow(false)} activeOpacity={1} />
+            <View style={s.sheet}>
+              <View style={s.sheetHeader}>
+                <TouchableOpacity onPress={handleClear} activeOpacity={0.7}>
+                  <Text style={s.clearText}>{value ? 'Clear' : 'Cancel'}</Text>
+                </TouchableOpacity>
+                <Text style={s.sheetTitle}>{label}</Text>
+                <TouchableOpacity onPress={handleDone} activeOpacity={0.7}>
+                  <Text style={s.doneText}>Done</Text>
+                </TouchableOpacity>
+              </View>
+              <DateTimePicker
+                mode="date"
+                display="inline"
+                value={tempDate}
+                onChange={handleIosChange}
+                accentColor="#5B5BD6"
+                style={s.picker}
+              />
+            </View>
+          </View>
+        </Modal>
+      )}
+    </View>
+  );
+}
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
+const s = StyleSheet.create({
+  field: { marginBottom: 18 },
+  labelRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
+  label: {
+    fontSize: 12, fontWeight: '600', color: '#AAAAAA',
+    letterSpacing: 0.5, textTransform: 'uppercase',
+  },
+  optionalHint: { fontSize: 11, color: '#CCCCCC', marginLeft: 6 },
+
+  input: {
+    backgroundColor: '#F4F4F8', borderRadius: 10,
+    paddingHorizontal: 14, paddingVertical: 13,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+  },
+  valueText: { fontSize: 15, color: '#2D2B55', fontWeight: '500' },
+  placeholder: { fontSize: 15, color: '#BBBBBB' },
+  icon: { fontSize: 16 },
+
+  // iOS modal
+  overlay: { flex: 1, justifyContent: 'flex-end' },
+  overlayBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)' },
+  sheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    paddingBottom: 34,
+  },
+  sheetHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 22, paddingVertical: 16,
+    borderBottomWidth: 1, borderBottomColor: '#F0F0F0',
+  },
+  sheetTitle: { fontSize: 16, fontWeight: '600', color: '#2D2B55' },
+  clearText: { fontSize: 15, color: '#AAAAAA' },
+  doneText: { fontSize: 15, fontWeight: '700', color: '#5B5BD6' },
+  picker: { alignSelf: 'stretch' },
+});
