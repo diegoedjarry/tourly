@@ -10,9 +10,9 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { db } from '@/db';
 import { useAppQuery } from '@/hooks/useAppQuery';
 import { DEMO_MODE } from '@/config/demo';
+import { apiPatchTournament } from '@/lib/api';
 import { useDemoData } from '@/hooks/useDemoData';
 import { CourtIcon } from '@/components/ui/court-icon';
 import { fmtDate } from '@/utils/deadlines';
@@ -281,7 +281,7 @@ export default function AlertsScreen() {
     if (DEMO_MODE) {
       demoCtx?.patchTournament(pendingWithdraw.tournamentId, { isWithdrawn: true });
     } else {
-      await db.transact(db.tx.tournaments[pendingWithdraw.tournamentId].update({ isWithdrawn: true }));
+      await apiPatchTournament(pendingWithdraw.tournamentId, { isWithdrawn: true });
     }
     setPendingWithdraw(null);
   }

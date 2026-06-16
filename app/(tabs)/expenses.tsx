@@ -15,9 +15,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
-import { db } from '@/db';
 import { useAppQuery } from '@/hooks/useAppQuery';
-import { id } from '@instantdb/react-native';
+import { apiAddExpense, apiUpdateExpense, apiDeleteExpense, apiPatchTournament } from '@/lib/api';
 import { DatePickerField } from '@/components/ui/date-picker-field';
 import { DEMO_MODE } from '@/config/demo';
 import { useDemoData } from '@/hooks/useDemoData';
@@ -112,7 +111,7 @@ function AddExpenseModal({ tournaments, onClose, defaultTournamentId }: {
     try {
       if (DEMO_MODE) {
         demoCtx?.addExpense({
-          id: id(),
+          id: crypto.randomUUID(),
           tournamentId,
           category: finalCategory,
           amount: amt,
@@ -122,16 +121,14 @@ function AddExpenseModal({ tournaments, onClose, defaultTournamentId }: {
         });
         onClose();
       } else {
-        await db.transact(
-          db.tx.expenses[id()].update({
-            tournamentId,
-            category: finalCategory,
-            amount: amt,
-            note: note.trim(),
-            date,
-            isCoachExpense,
-          })
-        );
+        await apiAddExpense({
+          tournamentId,
+          category: finalCategory,
+          amount: amt,
+          note: note.trim(),
+          date,
+          isCoachExpense,
+        });
         onClose();
       }
     } catch (e: any) {
@@ -362,15 +359,13 @@ function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => v
     if (!finalCategory) { setError('Please select a category.'); return; }
     setSaving(true); setError('');
     try {
-      await db.transact(
-        db.tx.expenses[expense.id].update({
-          category: finalCategory,
-          amount: amt,
-          note: note.trim(),
-          date,
-          isCoachExpense: COACH_CATS.includes(finalCategory),
-        })
-      );
+      await apiUpdateExpense(expense.id, {
+        category: finalCategory,
+        amount: amt,
+        note: note.trim(),
+        date,
+        isCoachExpense: COACH_CATS.includes(finalCategory),
+      });
       onClose();
     } catch (e: any) {
       setError(e?.message ?? 'Failed to save.');
@@ -630,7 +625,7 @@ function TournamentExpenseDetail({ tournament, onClose, allTournaments }: {
 
   async function confirmDelete(expense: any) {
     setDeleting(true);
-    try { await db.transact(db.tx.expenses[expense.id].delete()); }
+    try { await apiDeleteExpense(expense.id); }
     finally { setDeleting(false); setDeleteExpense(null); }
   }
 
@@ -653,7 +648,7 @@ function TournamentExpenseDetail({ tournament, onClose, allTournaments }: {
     if (DEMO_MODE) {
       demoCtx?.patchTournament(t.id, { singlesPrizeMoney: val, prizeMoney: val + doublesPrize });
     } else {
-      await db.transact(db.tx.tournaments[t.id].update({ singlesPrizeMoney: val, prizeMoney: val + doublesPrize }));
+      await apiPatchTournament(t.id, { singlesPrizeMoney: val, prizeMoney: val + doublesPrize });
     }
   }
 
@@ -661,7 +656,7 @@ function TournamentExpenseDetail({ tournament, onClose, allTournaments }: {
     if (DEMO_MODE) {
       demoCtx?.patchTournament(t.id, { doublesPrizeMoney: val, prizeMoney: singlesPrize + val });
     } else {
-      await db.transact(db.tx.tournaments[t.id].update({ doublesPrizeMoney: val, prizeMoney: singlesPrize + val }));
+      await apiPatchTournament(t.id, { doublesPrizeMoney: val, prizeMoney: singlesPrize + val });
     }
   }
 

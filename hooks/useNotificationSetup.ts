@@ -1,31 +1,19 @@
 import { useEffect } from 'react';
 import { useRouter } from 'expo-router';
 import * as Notifications from 'expo-notifications';
-import { db } from '@/db';
+import { useAppQuery } from '@/hooks/useAppQuery';
 import {
   requestPermissionsAndGetToken,
   rescheduleAllNotifications,
 } from '@/utils/notifications';
 
-const DEVICE_ID = 'singleton-device';
-
 export function useNotificationSetup() {
   const router = useRouter();
-  const { user } = db.useAuth();
-  const { data } = db.useQuery(user ? { tournaments: {} } : null);
+  const { data } = useAppQuery({});
 
-  // Request permissions + save push token
+  // Request push permissions (token storage handled server-side later)
   useEffect(() => {
-    requestPermissionsAndGetToken().then(token => {
-      if (!token) return;
-      db.transact(
-        db.tx.devices[DEVICE_ID].update({
-          pushToken: token,
-          platform: require('react-native').Platform.OS,
-          updatedAt: Date.now(),
-        })
-      );
-    });
+    requestPermissionsAndGetToken().catch(() => {});
   }, []);
 
   // Reschedule all notifications whenever tournament data changes

@@ -7,7 +7,6 @@ import {
   ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { db } from '@/db';
 import { useAppQuery } from '@/hooks/useAppQuery';
 import { TournamentDetail } from '@/app/(tabs)/tournaments';
 import { CourtIcon } from '@/components/ui/court-icon';

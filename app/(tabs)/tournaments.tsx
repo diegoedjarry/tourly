@@ -15,9 +15,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
-import { db } from '@/db';
 import { useAppQuery } from '@/hooks/useAppQuery';
-import { id } from '@instantdb/react-native';
+import { apiPatchTournament, apiAddTournament } from '@/lib/api';
 import { DatePickerField } from '@/components/ui/date-picker-field';
 import { CourtIcon } from '@/components/ui/court-icon';
 import { calcDeadlines, fmtDeadline, fmtDate, fmtDateRange } from '@/utils/deadlines';
@@ -313,7 +312,7 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
       if (DEMO_MODE) {
         demoCtx?.patchTournament(t.id, updates);
       } else {
-        await db.transact(db.tx.tournaments[t.id].update(updates));
+        await apiPatchTournament(t.id, updates);
         const { rescheduleAllNotifications } = await import('@/utils/notifications');
         rescheduleAllNotifications(data?.tournaments ?? []);
       }
@@ -332,7 +331,7 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
       if (DEMO_MODE) {
         demoCtx?.patchTournament(t.id, updates);
       } else {
-        await db.transact(db.tx.tournaments[t.id].update(updates));
+        await apiPatchTournament(t.id, updates);
       }
       onClose();
     } finally { setSavingAction(null); }
@@ -345,7 +344,7 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
       if (DEMO_MODE) {
         demoCtx?.patchTournament(t.id, { isWithdrawn: newValue });
       } else {
-        await db.transact(db.tx.tournaments[t.id].update({ isWithdrawn: newValue }));
+        await apiPatchTournament(t.id, { isWithdrawn: newValue });
       }
       setShowWithdraw(false);
       onClose();
@@ -725,7 +724,7 @@ function AddTournamentModal({ onClose }: { onClose: () => void }) {
         demoCtx?.patchTournament(tournament.id, updates);
         onClose();
       } else {
-        await db.transact(db.tx.tournaments[tournament.id].update(updates));
+        await apiPatchTournament(tournament.id, updates);
         onClose();
       }
     } catch (e: any) { setError(e?.message ?? 'Failed to add.'); setSaving(false); }
@@ -749,7 +748,7 @@ function AddTournamentModal({ onClose }: { onClose: () => void }) {
     try {
       if (DEMO_MODE) {
         demoCtx?.addTournament({
-          id: id(),
+          id: crypto.randomUUID(),
           name: f.name.trim(), country: f.country, city: f.city.trim(),
           surface: f.surface, category: f.category, startDate: f.startDate,
           endDate: f.endDate,
@@ -762,18 +761,17 @@ function AddTournamentModal({ onClose }: { onClose: () => void }) {
         });
         onClose();
       } else {
-        await db.transact(
-          db.tx.tournaments[id()].update({
-            name: f.name.trim(), country: f.country, city: f.city.trim(),
-            surface: f.surface, category: f.category, startDate: f.startDate,
-            endDate: f.endDate,
-            signUpDeadline: f.signUpDeadline,
-            withdrawalDeadline: f.withdrawalDeadline,
-            freezeDeadline: f.freezeDeadline,
-            isRegistered: autoRegistered,
-            isWithdrawn: false, isInMyList: true, status: 'upcoming',
-          })
-        );
+        await apiAddTournament({
+          name: f.name.trim(), country: f.country, city: f.city.trim(),
+          surface: f.surface, category: f.category, startDate: f.startDate,
+          endDate: f.endDate,
+          signUpDeadline: f.signUpDeadline,
+          withdrawalDeadline: f.withdrawalDeadline,
+          freezeDeadline: f.freezeDeadline,
+          isRegistered: autoRegistered,
+          isWithdrawn: false, isInMyList: true, status: 'upcoming',
+          prizeMoney: 0, singlesPrizeMoney: 0, doublesPrizeMoney: 0,
+        });
         onClose();
       }
     } catch (e: any) { setError(e?.message ?? 'Failed to save.'); setSaving(false); }
