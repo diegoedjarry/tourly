@@ -4,18 +4,23 @@ import {
   TouchableOpacity,
   Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
 } from 'react-native';
 import { Text } from '@/components/ui/text';
 import { AgentIcon } from '@/components/ui/agent-icon';
 import { T } from '@/constants/theme';
 
-interface FloatingInsightProps {
+export interface InsightItem {
+  id: string;
   content: string;
-  label?: string;
-  generatedAt?: string;
+  insight_label?: string;
+  generated_at?: string;
+}
+
+interface FloatingInsightProps {
+  insights: InsightItem[];
   locked?: boolean;
-  onPress?: () => void;
 }
 
 function relativeDate(iso: string): string {
@@ -29,36 +34,29 @@ function relativeDate(iso: string): string {
   return `${+day} ${MONTHS[+m - 1]}`;
 }
 
-export function FloatingInsight({ content, label, generatedAt, locked, onPress }: FloatingInsightProps) {
+export function FloatingInsight({ insights, locked }: FloatingInsightProps) {
   const [open, setOpen] = useState(false);
 
-  const handleFabPress = () => {
-    setOpen(true);
-  };
-
-  const handleViewAll = () => {
-    setOpen(false);
-    onPress?.();
-  };
-
-  const dateStr = generatedAt ? relativeDate(generatedAt) : 'Today';
+  // Only show the 2 most recent insights
+  const shown = (insights ?? []).slice(0, 2);
+  const hasInsights = shown.length > 0;
 
   return (
     <>
       {/* Floating action button */}
       <TouchableOpacity
         style={s.fab}
-        onPress={handleFabPress}
+        onPress={() => setOpen(true)}
         activeOpacity={0.85}
       >
-        {locked || !content ? (
-          <Text style={s.fabLock}>✦</Text>
-        ) : (
+        {hasInsights ? (
           <AgentIcon size={26} />
+        ) : (
+          <Text style={s.fabSparkle}>✦</Text>
         )}
       </TouchableOpacity>
 
-      {/* Insight modal */}
+      {/* Modal */}
       <Modal
         visible={open}
         transparent
@@ -66,40 +64,52 @@ export function FloatingInsight({ content, label, generatedAt, locked, onPress }
         onRequestClose={() => setOpen(false)}
       >
         <Pressable style={s.backdrop} onPress={() => setOpen(false)}>
-          <Pressable style={s.card} onPress={() => {}}>
+          <Pressable style={s.panel} onPress={() => {}}>
+
             {/* Header */}
-            <View style={s.topRow}>
+            <View style={s.header}>
               <View style={s.iconWrap}>
                 <AgentIcon size={18} />
               </View>
-              <Text style={s.labelText}>{label ?? 'FINANCIAL COACH'}</Text>
-              <Text style={s.dateText}>{dateStr}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={s.headerTitle}>AI Coaching</Text>
+                <Text style={s.headerSub}>Your latest personalized insights</Text>
+              </View>
+              <TouchableOpacity onPress={() => setOpen(false)} activeOpacity={0.7} style={s.closeBtn}>
+                <Text style={s.closeBtnText}>✕</Text>
+              </TouchableOpacity>
             </View>
 
             {/* Content */}
-            {locked ? (
-              <Text style={[s.content, { color: T.textSecondary }]}>
-                Add 2+ tournaments and 5+ expenses to unlock personalized AI coaching insights.
-              </Text>
-            ) : !content ? (
-              <Text style={[s.content, { color: T.textSecondary }]}>
-                Generating your first insight… check back in a moment.
-              </Text>
+            {locked || !hasInsights ? (
+              <View style={s.emptyWrap}>
+                <Text style={s.emptyText}>
+                  {locked
+                    ? 'Add 2+ tournaments and log some expenses to unlock personalized AI coaching insights.'
+                    : 'Generating your first insight… check back in a moment.'}
+                </Text>
+              </View>
             ) : (
-              <Text style={s.content}>{content}</Text>
+              <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
+                {shown.map((item, i) => (
+                  <View key={item.id} style={[s.insightCard, i > 0 && s.insightCardBorder]}>
+                    <View style={s.cardTopRow}>
+                      <Text style={s.cardLabel}>{item.insight_label ?? 'COACHING'}</Text>
+                      {item.generated_at && (
+                        <Text style={s.cardDate}>{relativeDate(item.generated_at)}</Text>
+                      )}
+                    </View>
+                    <Text style={s.cardContent}>{item.content}</Text>
+                  </View>
+                ))}
+              </ScrollView>
             )}
 
-            {/* Actions */}
-            <View style={s.actions}>
-              <TouchableOpacity style={s.dismissBtn} onPress={() => setOpen(false)} activeOpacity={0.7}>
-                <Text style={s.dismissText}>Dismiss</Text>
-              </TouchableOpacity>
-              {!locked && content ? (
-                <TouchableOpacity style={s.viewBtn} onPress={handleViewAll} activeOpacity={0.85}>
-                  <Text style={s.viewBtnText}>View all insights</Text>
-                </TouchableOpacity>
-              ) : null}
-            </View>
+            {/* Dismiss */}
+            <TouchableOpacity style={s.dismissBtn} onPress={() => setOpen(false)} activeOpacity={0.7}>
+              <Text style={s.dismissText}>Got it</Text>
+            </TouchableOpacity>
+
           </Pressable>
         </Pressable>
       </Modal>
@@ -108,7 +118,6 @@ export function FloatingInsight({ content, label, generatedAt, locked, onPress }
 }
 
 const s = StyleSheet.create({
-  // Floating button
   fab: {
     position: 'absolute',
     bottom: 24,
@@ -127,90 +136,117 @@ const s = StyleSheet.create({
     shadowRadius: 10,
     elevation: 8,
   },
-  fabLock: {
+  fabSparkle: {
     fontSize: 20,
     color: T.accent,
   },
 
-  // Modal backdrop
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    backgroundColor: 'rgba(0,0,0,0.65)',
     justifyContent: 'flex-end',
     paddingHorizontal: 16,
     paddingBottom: 100,
   },
-
-  // Insight card
-  card: {
+  panel: {
     backgroundColor: '#1A1A2E',
-    borderRadius: 16,
-    padding: 18,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: '#2A2A4A',
-    borderLeftWidth: 3,
-    borderLeftColor: T.accent,
+    overflow: 'hidden',
   },
-  topRow: {
+
+  header: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
+    gap: 10,
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#2A2A4A',
   },
   iconWrap: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(91,91,214,0.15)',
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(91,91,214,0.18)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  labelText: {
-    flex: 1,
+  headerTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#FAFAFA',
+  },
+  headerSub: {
+    fontSize: 11,
+    color: T.textSecondary,
+    marginTop: 1,
+  },
+  closeBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#252540',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  closeBtnText: {
+    fontSize: 13,
+    color: T.textSecondary,
+    fontWeight: '600',
+  },
+
+  emptyWrap: {
+    padding: 20,
+  },
+  emptyText: {
+    fontSize: 14,
+    color: T.textSecondary,
+    lineHeight: 22,
+    textAlign: 'center',
+  },
+
+  insightCard: {
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+  },
+  insightCardBorder: {
+    borderTopWidth: 1,
+    borderTopColor: '#2A2A4A',
+  },
+  cardTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  cardLabel: {
     fontSize: 10,
     fontWeight: '700',
-    color: T.textSecondary,
+    color: T.accent,
     letterSpacing: 0.8,
     textTransform: 'uppercase',
   },
-  dateText: {
+  cardDate: {
     fontSize: 10,
     color: T.textSecondary,
   },
-  content: {
+  cardContent: {
     fontSize: 14,
     color: '#FAFAFA',
     lineHeight: 22,
-    marginBottom: 16,
   },
 
-  // Action buttons
-  actions: {
-    flexDirection: 'row',
-    gap: 10,
-  },
   dismissBtn: {
-    flex: 1,
-    paddingVertical: 11,
-    borderRadius: 10,
+    margin: 12,
+    paddingVertical: 12,
+    borderRadius: 12,
     backgroundColor: '#252540',
     alignItems: 'center',
   },
   dismissText: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600',
     color: T.textSecondary,
-  },
-  viewBtn: {
-    flex: 2,
-    paddingVertical: 11,
-    borderRadius: 10,
-    backgroundColor: T.accent,
-    alignItems: 'center',
-  },
-  viewBtnText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#FAFAFA',
   },
 });

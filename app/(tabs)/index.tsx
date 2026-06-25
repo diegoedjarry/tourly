@@ -186,8 +186,6 @@ export default function HomeScreen() {
     );
   }, [insights, insightsLoading, tournaments, expenses]);
 
-  const latestInsight = insights?.[0];
-
   return (
     <SafeAreaView style={st.safe}>
       <StatusBar barStyle="light-content" backgroundColor={T.bg} />
@@ -397,11 +395,8 @@ export default function HomeScreen() {
         </ScrollView>
 
         <FloatingInsight
-          content={latestInsight?.content ?? ''}
-          label={latestInsight?.insight_label}
-          generatedAt={latestInsight?.generated_at}
-          locked={!latestInsight && !insightsLoading}
-          onPress={() => router.push('/insights' as any)}
+          insights={insights ?? []}
+          locked={!insightsLoading && (!insights || insights.length === 0)}
         />
       </View>
 
