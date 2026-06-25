@@ -37,9 +37,7 @@ import { useProfile } from '@/hooks/useProfile';
 import { AgentIcon } from '@/components/ui/agent-icon';
 
 const EXPENSES_WALKTHROUGH = [
-  { icon: '💸', title: 'Track expenses', body: 'Log flights, hotels, meals, and coaching costs per tournament. Tap "Add Expense" inside any tournament.' },
-  { icon: '📈', title: 'Spending chart', body: 'Swipe the chart left or right to see spending trends across different months.' },
-  { icon: '🏆', title: 'Prize vs. cost', body: 'Each tournament shows your net profit or loss — prize money minus all expenses — so you know your real ROI.' },
+  { icon: '💸', title: 'Log Your First Expense', body: 'Tap + to log your first expense. Link it to a tournament to track your weekly costs and see which tournaments give the best financial return.' },
 ];
 
 function genId(): string {

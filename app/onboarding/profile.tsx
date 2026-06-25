@@ -266,7 +266,7 @@ export default function OnboardingProfileScreen() {
         primary_surface: surface || null,
         onboarding_complete: true,
       } as any);
-      router.replace('/onboarding/walkthrough');
+      router.replace('/(tabs)');
     } catch (e: any) {
       Alert.alert('Error', e?.message ?? 'Could not save profile. Please try again.');
     }

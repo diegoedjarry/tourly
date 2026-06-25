@@ -7,13 +7,13 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
-  Alert,
   ScrollView,
   Switch,
 } from 'react-native';
 import { Text } from '@/components/ui/text';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '@/hooks/useAuth';
+import { useAppAlert } from '@/components/ui/app-alert';
 import { TourlyLogo } from '@/components/ui/tourly-logo';
 import { useLanguage } from '@/hooks/useLanguage';
 
@@ -27,23 +27,30 @@ export default function AuthScreen() {
   const [oauthLoading, setOauthLoading] = useState<string | null>(null);
 
   const { signInWithEmail, signUpWithEmail, signInWithOAuth } = useAuth();
+  const { show: showAlert } = useAppAlert();
   const { t } = useLanguage();
 
   async function handleSubmit() {
     if (!email.trim() || !password.trim()) {
-      Alert.alert('Missing fields', 'Please enter your email and password.');
+      showAlert('Missing fields', 'Please enter your email and password.');
       return;
     }
     setLoading(true);
     try {
       if (mode === 'signin') {
         await signInWithEmail(email.trim(), password);
+        // navigation handled by auth state change in _layout.tsx
       } else {
-        await signUpWithEmail(email.trim(), password);
-        Alert.alert(t('auth.checkEmail'), t('auth.confirmationSent'));
+        const result = await signUpWithEmail(email.trim(), password);
+        if (result === 'confirm') {
+          // Email confirmation required — Supabase sent a verification email
+          showAlert(t('auth.checkEmail'), t('auth.confirmationSent'));
+        }
+        // If result === 'session', the user is now signed in and _layout.tsx
+        // will navigate automatically — no alert needed.
       }
     } catch (err: any) {
-      Alert.alert('Error', err?.message ?? 'Something went wrong.');
+      showAlert('Error', err?.message ?? 'Something went wrong.');
     } finally {
       setLoading(false);
     }
@@ -54,7 +61,7 @@ export default function AuthScreen() {
     try {
       await signInWithOAuth(provider);
     } catch (err: any) {
-      Alert.alert('Error', err?.message ?? `${provider} sign in failed.`);
+      showAlert('Error', err?.message ?? `${provider} sign in failed.`);
     } finally {
       setOauthLoading(null);
     }
@@ -76,7 +83,7 @@ export default function AuthScreen() {
             <TextInput
               style={s.input}
               placeholder="Email"
-              placeholderTextColor="#A0A0B8"
+              placeholderTextColor="#6060A0"
               autoCapitalize="none"
               keyboardType="email-address"
               returnKeyType="next"
@@ -87,7 +94,7 @@ export default function AuthScreen() {
               <TextInput
                 style={s.passwordInput}
                 placeholder="Password"
-                placeholderTextColor="#A0A0B8"
+                placeholderTextColor="#6060A0"
                 secureTextEntry={!showPassword}
                 returnKeyType="done"
                 onSubmitEditing={handleSubmit}
@@ -104,7 +111,7 @@ export default function AuthScreen() {
                 <Switch
                   value={stayLoggedIn}
                   onValueChange={setStayLoggedIn}
-                  trackColor={{ false: '#E8E8F0', true: '#00D4AA' }}
+                  trackColor={{ false: '#252540', true: '#5B5BD6' }}
                   thumbColor="#FFFFFF"
                   style={{ transform: [{ scale: 0.8 }] }}
                 />
@@ -128,7 +135,7 @@ export default function AuthScreen() {
 
             <TouchableOpacity style={s.oauthBtn} onPress={() => handleOAuth('google')} disabled={!!oauthLoading} activeOpacity={0.8}>
               {oauthLoading === 'google' ? (
-                <ActivityIndicator color="#2D2B55" size="small" />
+                <ActivityIndicator color="#FAFAFA" size="small" />
               ) : (
                 <>
                   <Text style={s.oauthIcon}>G</Text>
@@ -164,36 +171,33 @@ export default function AuthScreen() {
 }
 
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#F0F0F8' },
+  safe: { flex: 1, backgroundColor: '#0F0F1A' },
   flex: { flex: 1 },
   scrollContent: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 24, paddingVertical: 40 },
   logo: { alignSelf: 'center', marginBottom: 32 },
   card: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#1A1A2E',
     borderRadius: 28,
     paddingHorizontal: 24,
     paddingVertical: 32,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 20,
-    elevation: 5,
+    borderWidth: 1,
+    borderColor: '#2A2A4A',
   },
-  title: { fontSize: 24, fontWeight: '700', color: '#2D2B55', marginBottom: 4 },
-  subtitle: { fontSize: 14, color: '#8888A8', marginBottom: 24 },
+  title: { fontSize: 24, fontWeight: '700', color: '#FAFAFA', marginBottom: 4 },
+  subtitle: { fontSize: 14, color: '#A0A0C8', marginBottom: 24 },
   input: {
-    backgroundColor: '#F4F4FA',
+    backgroundColor: '#252540',
     borderRadius: 50,
     paddingHorizontal: 20,
     paddingVertical: Platform.OS === 'ios' ? 16 : 14,
     fontSize: 15,
-    color: '#2D2B55',
+    color: '#FAFAFA',
     marginBottom: 12,
   },
   passwordRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F4F4FA',
+    backgroundColor: '#252540',
     borderRadius: 50,
     marginBottom: 12,
   },
@@ -202,7 +206,7 @@ const s = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: Platform.OS === 'ios' ? 16 : 14,
     fontSize: 15,
-    color: '#2D2B55',
+    color: '#FAFAFA',
   },
   eyeBtn: {
     paddingHorizontal: 16,
@@ -215,36 +219,36 @@ const s = StyleSheet.create({
     gap: 8,
     marginBottom: 8,
   },
-  stayText: { fontSize: 14, color: '#8888A8', fontWeight: '500' },
+  stayText: { fontSize: 14, color: '#A0A0C8', fontWeight: '500' },
   btn: {
-    backgroundColor: '#00D4AA',
+    backgroundColor: '#5B5BD6',
     borderRadius: 50,
     paddingVertical: 16,
     alignItems: 'center',
     marginTop: 4,
   },
-  btnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+  btnText: { color: '#FAFAFA', fontSize: 16, fontWeight: '700' },
   dividerRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 20 },
-  dividerLine: { flex: 1, height: 1, backgroundColor: '#E8E8F0' },
-  dividerText: { marginHorizontal: 14, fontSize: 13, color: '#A0A0B8', fontWeight: '500' },
+  dividerLine: { flex: 1, height: 1, backgroundColor: '#2A2A4A' },
+  dividerText: { marginHorizontal: 14, fontSize: 13, color: '#A0A0C8', fontWeight: '500' },
   oauthBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#1E1E38',
     borderRadius: 50,
     paddingVertical: 14,
     borderWidth: 1.5,
-    borderColor: '#E8E8F0',
+    borderColor: '#2A2A4A',
     marginBottom: 10,
     gap: 10,
   },
   appleBtn: { backgroundColor: '#000000', borderColor: '#000000' },
   oauthIcon: { fontSize: 18, fontWeight: '700', color: '#4285F4' },
   appleIcon: { color: '#FFFFFF', fontSize: 20 },
-  oauthText: { fontSize: 15, fontWeight: '600', color: '#2D2B55' },
+  oauthText: { fontSize: 15, fontWeight: '600', color: '#FAFAFA' },
   appleText: { color: '#FFFFFF' },
   switchRow: { alignItems: 'center', marginTop: 20 },
-  switchText: { fontSize: 14, color: '#8888A8' },
-  switchLink: { color: '#00D4AA', fontWeight: '700' },
+  switchText: { fontSize: 14, color: '#A0A0C8' },
+  switchLink: { color: '#5B5BD6', fontWeight: '700' },
 });

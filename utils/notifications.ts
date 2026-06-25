@@ -36,10 +36,14 @@ export async function requestPermissionsAndGetToken(): Promise<string | null> {
 
     if (Platform.OS === 'android') {
       await Notifications.setNotificationChannelAsync('tourly-deadlines', {
-        name: 'Deadline Alerts',
+        name: 'Tourly — Deadline Alerts',
+        description: 'Entry, withdrawal and freeze deadline reminders',
         importance: Notifications.AndroidImportance.HIGH,
         vibrationPattern: [0, 250, 250, 250],
         lightColor: '#5B5BD6',
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+        bypassDnd: false,
+        sound: 'default',
       });
     }
 

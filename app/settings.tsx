@@ -8,12 +8,12 @@ import {
   Platform,
   Modal,
   Switch,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import { Text } from '@/components/ui/text';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import { useAppAlert } from '@/components/ui/app-alert';
 import { useProfile, useUpdateProfile, type Profile, type ReminderConfig, type ReminderTime, type OnsiteReminderTime, DEFAULT_REMINDER_CONFIG, DEFAULT_ONSITE_REMINDERS } from '@/hooks/useProfile';
 import { useAuth } from '@/hooks/useAuth';
 import { DatePickerField } from '@/components/ui/date-picker-field';
@@ -23,10 +23,9 @@ import { useMyShares, useInviteShare, useRevokeShare } from '@/hooks/useSharedAc
 import { exportTournamentsCsv, exportExpensesCsv, exportAllCsv } from '@/utils/export-csv';
 import {
   pickAndParseFile,
-  mapColumnsLocal,
   detectHeaderRow,
-  applyMapping,
   insertExpenses,
+  smartParse,
   type MappedExpense,
   type ImportResult,
 } from '@/utils/import-expenses';
@@ -75,6 +74,7 @@ const LANGUAGES = [
 
 export default function SettingsScreen() {
   const router = useRouter();
+  const { show: showAlert } = useAppAlert();
   const { data: profile, isLoading } = useProfile();
   const { t } = useLanguage();
   const updateProfile = useUpdateProfile();
@@ -84,9 +84,13 @@ export default function SettingsScreen() {
   const { data: shares } = useMyShares();
   const inviteShare = useInviteShare();
   const revokeShare = useRevokeShare();
+  const [openSection, setOpenSection] = useState<string | null>(null);
+  function toggleSection(key: string) { setOpenSection(v => v === key ? null : key); }
+
   const [editField, setEditField] = useState<EditField>(null);
   const [editValue, setEditValue] = useState('');
   const [signingOut, setSigningOut] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [showInvite, setShowInvite] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -113,17 +117,12 @@ export default function SettingsScreen() {
 
       setImportFileName(file.fileName);
       const { headers, dataRows } = detectHeaderRow(file.rows);
-
-      const mapping = mapColumnsLocal(headers);
-      const result = applyMapping(dataRows, headers, mapping);
+      const result = smartParse(headers, dataRows);
 
       if (result.mapped.length === 0) {
-        const mappedFields = Object.entries(mapping).map(([k, v]) => `${k} → "${v}"`).join('\n');
-        const sampleRow = dataRows[0] || [];
-        const sampleValues = headers.map((h, i) => `${h}: "${sampleRow[i] ?? ''}"`).join('\n');
-        Alert.alert(
-          t('settings.couldNotMap'),
-          `Columns: ${headers.join(', ')}\n\nMatched:\n${mappedFields || 'none'}\n\nSample row:\n${sampleValues}\n\n${result.unmapped} rows skipped.`,
+        showAlert(
+          'Could not import file',
+          `No expenses could be read from this file.\n\nColumns found: ${headers.join(', ')}\n\n${result.unmapped} rows skipped.\n\nSupported formats: row-per-expense (date/amount/category), monthly summary (Category + Jan–Dec columns), quarterly summary (Q1–Q4), bank statement (date/debit/credit), or simple list (amount + description).`,
         );
         setImportStep('idle');
         return;
@@ -132,7 +131,7 @@ export default function SettingsScreen() {
       setImportData(result);
       setImportStep('preview');
     } catch (err: any) {
-      Alert.alert(t('settings.importError'), err?.message ?? 'Could not process file.');
+      showAlert(t('settings.importError'), err?.message ?? 'Could not process file.');
       setImportStep('idle');
     }
   }
@@ -149,11 +148,11 @@ export default function SettingsScreen() {
       const count = await insertExpenses(importData.mapped, tMap);
       await queryClient.invalidateQueries({ queryKey: ['expenses'] });
       await queryClient.invalidateQueries({ queryKey: ['tournaments'] });
-      Alert.alert(t('settings.importComplete'), `${count} expenses imported successfully.`);
+      showAlert(t('settings.importComplete'), `${count} expenses imported successfully.`);
       setImportStep('idle');
       setImportData(null);
     } catch (err: any) {
-      Alert.alert(t('settings.importError'), err?.message ?? 'Could not save expenses.');
+      showAlert(t('settings.importError'), err?.message ?? 'Could not save expenses.');
       setImportStep('preview');
     }
   }
@@ -179,7 +178,7 @@ export default function SettingsScreen() {
       try { await signOut(); } catch {}
       return;
     }
-    Alert.alert(t('settings.signOut'), t('settings.signOutConfirm'), [
+    showAlert(t('settings.signOut'), t('settings.signOutConfirm'), [
       { text: t('common.cancel'), style: 'cancel' },
       {
         text: t('settings.signOut'),
@@ -192,6 +191,45 @@ export default function SettingsScreen() {
         },
       },
     ]);
+  }
+
+  async function handleDeleteAccount() {
+    showAlert(
+      'Delete Account',
+      'This will permanently delete your account and all your data — tournaments, expenses, and insights. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete My Account',
+          style: 'destructive',
+          onPress: () => {
+            showAlert(
+              'Are you sure?',
+              'Type DELETE to confirm. All your data will be gone forever.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Yes, Delete Everything',
+                  style: 'destructive',
+                  onPress: async () => {
+                    setDeletingAccount(true);
+                    try {
+                      const { supabase: sb } = await import('@/lib/supabase');
+                      const { error } = await sb.rpc('delete_user_account');
+                      if (error) throw error;
+                      await signOut();
+                    } catch (err: any) {
+                      setDeletingAccount(false);
+                      showAlert('Error', err?.message ?? 'Could not delete account. Please contact support.');
+                    }
+                  },
+                },
+              ]
+            );
+          },
+        },
+      ]
+    );
   }
 
   async function toggleNotif(field: string, value: boolean) {
@@ -230,12 +268,12 @@ export default function SettingsScreen() {
       <ScrollView contentContainerStyle={s.scrollContent} showsVerticalScrollIndicator={false}>
 
         {/* ── PROFILE ── */}
-        <Text style={s.sectionLabel}>{t('settings.profile')}</Text>
-        <View style={s.card}>
+        <AccordionHeader label={t('settings.profile')} open={openSection === 'profile'} onPress={() => toggleSection('profile')} />
+        {openSection === 'profile' && <View style={s.card}>
           <SettingsRow
             label={t('settings.profilePhoto')}
             value=""
-            onPress={() => Alert.alert(t('common.comingSoon'), t('settings.photoComingSoon'))}
+            onPress={() => showAlert(t('common.comingSoon'), t('settings.photoComingSoon'))}
             trailing={<View style={s.avatarCircle}><Text style={s.avatarEmoji}>📷</Text></View>}
           />
           <Sep />
@@ -298,11 +336,11 @@ export default function SettingsScreen() {
             value={p?.travel_with_stringing ?? ''}
             onPress={() => openEdit('travel_with_stringing', p?.travel_with_stringing ?? '')}
           />
-        </View>
+        </View>}
 
         {/* ── IPIN ITF ── */}
-        <Text style={s.sectionLabel}>{t('settings.ipinSection')}</Text>
-        <View style={s.card}>
+        <AccordionHeader label={t('settings.ipinSection')} open={openSection === 'ipin'} onPress={() => toggleSection('ipin')} />
+        {openSection === 'ipin' && <View style={s.card}>
           <View style={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 6 }}>
             <Text style={s.rowLabel}>{t('settings.ipinLabel')}</Text>
             <Text style={{ fontSize: 12, color: T.textSecondary, marginTop: 4, marginBottom: 12, lineHeight: 17 }}>
@@ -333,16 +371,16 @@ export default function SettingsScreen() {
               </View>
             )}
           </View>
-        </View>
-        <View style={{ backgroundColor: '#1A1A2E', borderRadius: 10, padding: 12, marginTop: 8 }}>
-          <Text style={{ fontSize: 12, color: '#999', lineHeight: 17 }}>
+        </View>}
+        {openSection === 'ipin' && <View style={{ backgroundColor: '#1A1A2E', borderRadius: 10, padding: 12, marginTop: 4 }}>
+          <Text style={{ fontSize: 12, color: T.textTertiary, lineHeight: 17 }}>
             {t('settings.ipinInfoCard')}
           </Text>
-        </View>
+        </View>}
 
         {/* ── NOTIFICATIONS ── */}
-        <Text style={s.sectionLabel}>{t('settings.notifications')}</Text>
-        <View style={s.card}>
+        <AccordionHeader label={t('settings.notifications')} open={openSection === 'notif'} onPress={() => toggleSection('notif')} />
+        {openSection === 'notif' && <View style={s.card}>
           <View style={s.row}>
             <Text style={s.rowLabel}>{t('settings.pushNotifications')}</Text>
             <Switch
@@ -382,18 +420,18 @@ export default function SettingsScreen() {
               />
             </>
           )}
-        </View>
+        </View>}
 
         {/* ── EXPORT DATA ── */}
-        <Text style={s.sectionLabel}>{t('settings.exportData')}</Text>
-        <View style={s.card}>
+        <AccordionHeader label={t('settings.exportData')} open={openSection === 'export'} onPress={() => toggleSection('export')} />
+        {openSection === 'export' && <View style={s.card}>
           <TouchableOpacity
             style={s.row}
             activeOpacity={0.6}
             disabled={exporting}
             onPress={async () => {
               setExporting(true);
-              try { await exportAllCsv(appData?.tournaments ?? [], appData?.expenses ?? []); } catch (e: any) { Alert.alert('Export failed', e?.message ?? 'Could not export data.'); } finally { setExporting(false); }
+              try { await exportAllCsv(appData?.tournaments ?? [], appData?.expenses ?? []); } catch (e: any) { showAlert('Export failed', e?.message ?? 'Could not export data.'); } finally { setExporting(false); }
             }}>
             <Text style={s.rowLabel}>{t('settings.exportAll')}</Text>
             <View style={s.rowRight}>
@@ -405,7 +443,7 @@ export default function SettingsScreen() {
             style={s.row}
             activeOpacity={0.6}
             onPress={async () => {
-              try { await exportTournamentsCsv(appData?.tournaments ?? []); } catch (e: any) { Alert.alert('Export failed', e?.message ?? 'Could not export tournaments.'); }
+              try { await exportTournamentsCsv(appData?.tournaments ?? []); } catch (e: any) { showAlert('Export failed', e?.message ?? 'Could not export tournaments.'); }
             }}>
             <Text style={s.rowLabel}>{t('settings.exportTournaments')}</Text>
             <View style={s.rowRight}><Text style={s.rowArrow}>›</Text></View>
@@ -415,7 +453,7 @@ export default function SettingsScreen() {
             style={s.row}
             activeOpacity={0.6}
             onPress={async () => {
-              try { await exportExpensesCsv(appData?.expenses ?? [], appData?.tournaments ?? []); } catch (e: any) { Alert.alert('Export failed', e?.message ?? 'Could not export expenses.'); }
+              try { await exportExpensesCsv(appData?.expenses ?? [], appData?.tournaments ?? []); } catch (e: any) { showAlert('Export failed', e?.message ?? 'Could not export expenses.'); }
             }}>
             <Text style={s.rowLabel}>{t('settings.exportExpenses')}</Text>
             <View style={s.rowRight}><Text style={s.rowArrow}>›</Text></View>
@@ -425,7 +463,7 @@ export default function SettingsScreen() {
             style={s.row}
             activeOpacity={0.6}
             onPress={() => {
-              Alert.alert(
+              showAlert(
                 t('settings.taxReport'),
                 t('settings.taxReportDesc'),
               );
@@ -436,11 +474,11 @@ export default function SettingsScreen() {
               <Text style={s.rowArrow}>›</Text>
             </View>
           </TouchableOpacity>
-        </View>
+        </View>}
 
         {/* ── IMPORT DATA ── */}
-        <Text style={s.sectionLabel}>{t('settings.importData')}</Text>
-        <View style={s.card}>
+        <AccordionHeader label={t('settings.importData')} open={openSection === 'import'} onPress={() => toggleSection('import')} />
+        {openSection === 'import' && <View style={s.card}>
           <TouchableOpacity
             style={s.row}
             activeOpacity={0.6}
@@ -471,13 +509,13 @@ export default function SettingsScreen() {
               {t('settings.importHint')}
             </Text>
           </View>
-        </View>
+        </View>}
 
         {/* ── SHARED ACCESS ── */}
         {!DEMO_MODE && (
           <>
-            <Text style={s.sectionLabel}>{t('settings.sharedAccess')}</Text>
-            <View style={s.card}>
+            <AccordionHeader label={t('settings.sharedAccess')} open={openSection === 'shared'} onPress={() => toggleSection('shared')} />
+            {openSection === 'shared' && <View style={s.card}>
               <TouchableOpacity style={s.row} activeOpacity={0.6} onPress={() => setShowInvite(true)}>
                 <Text style={[s.rowLabel, { color: T.teal }]}>{t('settings.inviteCoachAgent')}</Text>
                 <View style={s.rowRight}><Text style={s.rowArrow}>›</Text></View>
@@ -494,7 +532,7 @@ export default function SettingsScreen() {
                     </View>
                     <TouchableOpacity
                       onPress={() => {
-                        Alert.alert(t('settings.removeAccess'), t('settings.removeAccessConfirm'), [
+                        showAlert(t('settings.removeAccess'), t('settings.removeAccessConfirm'), [
                           { text: t('common.cancel'), style: 'cancel' },
                           { text: t('settings.remove'), style: 'destructive', onPress: () => revokeShare.mutate(share.id) },
                         ]);
@@ -505,13 +543,13 @@ export default function SettingsScreen() {
                   </View>
                 </React.Fragment>
               ))}
-            </View>
+            </View>}
           </>
         )}
 
         {/* ── DATA & SCRAPER ── */}
-        <Text style={s.sectionLabel}>{t('settings.dataScraper')}</Text>
-        <View style={s.card}>
+        <AccordionHeader label={t('settings.dataScraper')} open={openSection === 'scraper'} onPress={() => toggleSection('scraper')} />
+        {openSection === 'scraper' && <View style={s.card}>
           <View style={s.row}>
             <Text style={s.rowLabel}>{t('settings.scraperStatus')}</Text>
             <View style={s.rowRight}>
@@ -553,11 +591,11 @@ export default function SettingsScreen() {
               <Text style={s.rowArrow}>›</Text>
             </View>
           </View>
-        </View>
+        </View>}
 
         {/* ── LANGUAGE ── */}
-        <Text style={s.sectionLabel}>{t('settings.language')}</Text>
-        <View style={s.card}>
+        <AccordionHeader label={t('settings.language')} open={openSection === 'lang'} onPress={() => toggleSection('lang')} />
+        {openSection === 'lang' && <View style={s.card}>
           <SettingsRow
             label={t('settings.appLanguage')}
             value={LANGUAGES.find(l => l.key === (p?.language ?? 'en'))?.label ?? 'English'}
@@ -572,11 +610,11 @@ export default function SettingsScreen() {
               </View>
             }
           />
-        </View>
+        </View>}
 
         {/* ── ACCOUNT ── */}
-        <Text style={s.sectionLabel}>{t('settings.account')}</Text>
-        <View style={s.card}>
+        <AccordionHeader label={t('settings.account')} open={openSection === 'account'} onPress={() => toggleSection('account')} />
+        {openSection === 'account' && <View style={s.card}>
           {DEMO_MODE ? (
             <View style={s.row}>
               <Text style={s.rowLabel}>{t('settings.demoMode')}</Text>
@@ -610,9 +648,17 @@ export default function SettingsScreen() {
                   <Text style={[s.rowLabel, { color: T.red }]}>{t('settings.signOut')}</Text>
                 )}
               </TouchableOpacity>
+              <Sep />
+              <TouchableOpacity style={s.row} activeOpacity={0.6} onPress={handleDeleteAccount} disabled={deletingAccount}>
+                {deletingAccount ? (
+                  <ActivityIndicator color={T.red} size="small" />
+                ) : (
+                  <Text style={[s.rowLabel, { color: T.red, opacity: 0.7 }]}>Delete Account</Text>
+                )}
+              </TouchableOpacity>
             </>
           )}
-        </View>
+        </View>}
 
         <View style={{ height: 40 }} />
       </ScrollView>
@@ -776,7 +822,7 @@ export default function SettingsScreen() {
                     await inviteShare.mutateAsync(inviteEmail);
                     setShowInvite(false);
                     setInviteEmail('');
-                    Alert.alert('Invite sent', `${inviteEmail} can now accept your invite.`);
+                    showAlert('Invite sent', `${inviteEmail} can now accept your invite.`);
                   }}>
                   {inviteShare.isPending ? (
                     <ActivityIndicator color={T.textPrimary} size="small" />
@@ -819,9 +865,9 @@ export default function SettingsScreen() {
                     try {
                       await updateEmail(newEmail.trim());
                       setShowChangeEmail(false);
-                      Alert.alert('Check your inbox', 'We sent a confirmation link to your new email. Click it to finalize the change.');
+                      showAlert('Check your inbox', 'We sent a confirmation link to your new email. Click it to finalize the change.');
                     } catch (err: any) {
-                      Alert.alert('Error', err?.message ?? 'Could not update email.');
+                      showAlert('Error', err?.message ?? 'Could not update email.');
                     } finally {
                       setAccountLoading(false);
                     }
@@ -923,7 +969,7 @@ export default function SettingsScreen() {
                       onPress={() => {
                         const results = parseNotes(notesText);
                         if (results.length === 0) {
-                          Alert.alert('No expenses found', 'Could not find any amounts in your text. Make sure each expense has a dollar amount (ex. "$350" or "350 USD").');
+                          showAlert('No expenses found', 'Could not find any amounts in your text. Make sure each expense has a dollar amount (ex. "$350" or "350 USD").');
                           return;
                         }
                         setParsedNotes(results);
@@ -971,9 +1017,9 @@ export default function SettingsScreen() {
                           setShowPasteNotes(false);
                           setParsedNotes([]);
                           setNotesText('');
-                          Alert.alert(t('settings.importComplete'), `${count} expenses imported.`);
+                          showAlert(t('settings.importComplete'), `${count} expenses imported.`);
                         } catch (err: any) {
-                          Alert.alert('Error', err?.message ?? 'Could not save expenses.');
+                          showAlert('Error', err?.message ?? 'Could not save expenses.');
                         }
                       }}>
                       <Text style={s.modalSaveText}>Import All</Text>
@@ -1017,16 +1063,16 @@ export default function SettingsScreen() {
                   disabled={accountLoading || newPassword.length < 6}
                   onPress={async () => {
                     if (newPassword !== confirmPassword) {
-                      Alert.alert('Mismatch', 'Passwords do not match.');
+                      showAlert('Mismatch', 'Passwords do not match.');
                       return;
                     }
                     setAccountLoading(true);
                     try {
                       await updatePassword(newPassword);
                       setShowChangePassword(false);
-                      Alert.alert('Done', 'Your password has been updated.');
+                      showAlert('Done', 'Your password has been updated.');
                     } catch (err: any) {
-                      Alert.alert('Error', err?.message ?? 'Could not update password.');
+                      showAlert('Error', err?.message ?? 'Could not update password.');
                     } finally {
                       setAccountLoading(false);
                     }
@@ -1047,6 +1093,15 @@ export default function SettingsScreen() {
 }
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
+
+function AccordionHeader({ label, open, onPress }: { label: string; open: boolean; onPress: () => void }) {
+  return (
+    <TouchableOpacity style={s.accordionHeader} onPress={onPress} activeOpacity={0.7}>
+      <Text style={s.accordionLabel}>{label}</Text>
+      <Text style={s.accordionArrow}>{open ? '∨' : '›'}</Text>
+    </TouchableOpacity>
+  );
+}
 
 function SettingsRow({ label, value, onPress, trailing }: {
   label: string;
@@ -1399,6 +1454,25 @@ const s = StyleSheet.create({
     marginTop: 24,
     marginBottom: 8,
     marginLeft: 4,
+  },
+  accordionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    paddingHorizontal: 4,
+    marginTop: 8,
+  },
+  accordionLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: T.textPrimary,
+    letterSpacing: 0.2,
+  },
+  accordionArrow: {
+    fontSize: 20,
+    color: T.textTertiary,
+    fontWeight: '300',
   },
   card: {
     backgroundColor: T.card,

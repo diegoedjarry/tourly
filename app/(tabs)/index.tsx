@@ -26,12 +26,10 @@ import { FloatingInsight } from '@/components/ui/floating-insight';
 import { useProfile } from '@/hooks/useProfile';
 import { T, SURFACE_STRIPE } from '@/constants/theme';
 import { TourlyLogo } from '@/components/ui/tourly-logo';
-import { AgentIcon } from '@/components/ui/agent-icon';
 import { useLanguage } from '@/hooks/useLanguage';
 
 const HOME_WALKTHROUGH = [
-  { icon: '🏠', title: 'Your dashboard', body: 'See your upcoming deadlines, active tournament, and season financial snapshot all in one place.' },
-  { icon: '🤖', title: 'AI insights', body: 'Scroll down for personalized coaching tips and spending analysis powered by AI.' },
+  { icon: '✦', title: 'Your Financial Coach', body: 'Your financial coach updates daily with personalized insights based on your real data. Tap the card at the bottom to read it.' },
   { icon: '📊', title: 'Season summary', body: 'Track your prize money, expenses, and net profit across the entire season at a glance.' },
 ];
 
@@ -171,42 +169,21 @@ export default function HomeScreen() {
   useEffect(() => {
     if (DEMO_MODE || insightsLoading || generateInsight.isPending) return;
     if (hasGeneratedRef.current) return;
+    if (!tournaments.length && !expenses.length) return;
     const now = new Date();
     const isMonday = now.getDay() === 1;
     const insightsList = insights ?? [];
-    const recentlyEnded = tournaments.find((t: any) => {
-      if (!t.endDate || t.isWithdrawn) return false;
-      const end = parseLocalDate(t.endDate);
-      if (!end) return false;
-      const hoursSince = (now.getTime() - end.getTime()) / 3600000;
-      return hoursSince >= 0 && hoursSince <= 48;
-    });
-    const hasRecentTournamentInsight = insightsList.some((i) => {
-      const hours = (now.getTime() - new Date(i.generated_at).getTime()) / 3600000;
-      return i.insight_type === 'tournament_roi' && hours < 48;
-    });
-    const safeMutate = (args: { trigger: string }) => {
-      generateInsight.mutate(args, { onError: () => {} });
-    };
-    if (recentlyEnded && !hasRecentTournamentInsight) {
-      hasGeneratedRef.current = true;
-      safeMutate({ trigger: 'tournament_ended' });
-      return;
-    }
     const latest = insightsList[0];
-    if (!latest) {
-      hasGeneratedRef.current = true;
-      safeMutate({ trigger: isMonday ? 'monday' : 'daily' });
-      return;
-    }
-    const hoursSince = (now.getTime() - new Date(latest.generated_at).getTime()) / 3600000;
-    if (hoursSince >= 24) {
-      hasGeneratedRef.current = true;
-      safeMutate({ trigger: isMonday ? 'monday' : 'daily' });
-    }
-  }, [insights, insightsLoading]);
+    const hoursSince = latest
+      ? (now.getTime() - new Date(latest.generated_at).getTime()) / 3600000
+      : Infinity;
+    if (hoursSince < 20) return;
+    hasGeneratedRef.current = true;
+    const trigger = isMonday ? 'monday' : 'daily';
+    generateInsight.mutate({ tournaments, expenses, trigger }, { onError: () => {} });
+  }, [insights, insightsLoading, tournaments, expenses]);
 
-  const latestInsight = insights?.[0]?.content ?? '';
+  const latestInsight = insights?.[0];
 
   return (
     <SafeAreaView style={st.safe}>
@@ -216,10 +193,8 @@ export default function HomeScreen() {
 
           {/* Top bar */}
           <View style={st.topBar}>
-            <View style={st.topBarSide} />
-            <TourlyLogo width={200} height={52} />
-            <TouchableOpacity onPress={() => router.push('/settings' as any)} activeOpacity={0.75} style={st.topBarSide}>
-              <AgentIcon size={36} />
+            <TouchableOpacity onPress={() => router.push('/settings' as any)} activeOpacity={0.75}>
+              <TourlyLogo width={220} height={58} />
             </TouchableOpacity>
           </View>
 
@@ -233,6 +208,15 @@ export default function HomeScreen() {
 
           {isLoading ? (
             <ActivityIndicator color={T.accent} style={{ marginTop: 48 }} />
+          ) : tournaments.length === 0 ? (
+            <View style={st.emptyState}>
+              <Text style={st.emptyStateIcon}>🎾</Text>
+              <Text style={st.emptyStateTitle}>{t('home.emptyTitle') ?? 'No tournaments yet'}</Text>
+              <Text style={st.emptyStateBody}>{t('home.emptyBody') ?? 'Add your first one in the Tournaments tab to start tracking deadlines, expenses, and earnings.'}</Text>
+              <TouchableOpacity style={st.emptyStateCta} activeOpacity={0.8} onPress={() => router.push('/(tabs)/tournaments' as any)}>
+                <Text style={st.emptyStateCtaText}>{t('home.goToTournaments') ?? 'Go to Tournaments'}</Text>
+              </TouchableOpacity>
+            </View>
           ) : (
             <>
               {/* Upcoming Deadlines */}
@@ -382,7 +366,13 @@ export default function HomeScreen() {
           )}
         </ScrollView>
 
-        {latestInsight ? <FloatingInsight content={latestInsight} /> : null}
+        <FloatingInsight
+          content={latestInsight?.content ?? ''}
+          label={latestInsight?.insight_label}
+          generatedAt={latestInsight?.generated_at}
+          locked={!latestInsight && !insightsLoading}
+          onPress={() => router.push('/insights' as any)}
+        />
       </View>
 
       {detailId && (
@@ -396,10 +386,9 @@ export default function HomeScreen() {
 const st = StyleSheet.create({
   safe: { flex: 1, backgroundColor: T.bg },
   scroll: { flex: 1 },
-  scrollContent: { paddingHorizontal: 16, paddingBottom: 32 },
+  scrollContent: { paddingHorizontal: 16, paddingBottom: 110 },
 
-  topBar: { paddingTop: 16, paddingBottom: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16 },
-  topBarSide: { width: 40, alignItems: 'flex-end' },
+  topBar: { paddingTop: 16, paddingBottom: 16, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
 
   section: { marginBottom: 16 },
   sectionLabel: { fontSize: 11, fontWeight: '600', color: T.textSecondary, letterSpacing: 1, marginBottom: 6, textTransform: 'uppercase' },
@@ -447,4 +436,11 @@ const st = StyleSheet.create({
   seasonStatLabel: { fontSize: 10, fontWeight: '600', color: T.textTertiary, letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 4 },
   seasonStatValue: { fontSize: 14, fontWeight: '700', color: T.textPrimary },
   seasonDivider: { width: 1, height: 24, backgroundColor: T.cardBorder },
+
+  emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, paddingTop: 64 },
+  emptyStateIcon: { fontSize: 48, marginBottom: 16 },
+  emptyStateTitle: { fontSize: 18, fontWeight: '700', color: T.textPrimary, textAlign: 'center', marginBottom: 8 },
+  emptyStateBody: { fontSize: 14, color: T.textSecondary, textAlign: 'center', lineHeight: 22, marginBottom: 24 },
+  emptyStateCta: { backgroundColor: T.accent, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 24 },
+  emptyStateCtaText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
 });

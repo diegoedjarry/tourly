@@ -78,6 +78,266 @@ export async function pickAndParseFile(): Promise<{ rows: string[][]; fileName: 
   return { rows, fileName: file.name };
 }
 
+// ─── Month helpers ────────────────────────────────────────────────────────────
+
+const MONTH_NAMES: Record<string, number> = {
+  jan:1, january:1, ene:1, enero:1,
+  feb:2, february:2, febrero:2,
+  mar:3, march:3, marzo:3,
+  apr:4, april:4, abr:4, abril:4,
+  may:5, mayo:5,
+  jun:6, june:6, junio:6,
+  jul:7, july:7, julio:7,
+  aug:8, august:8, ago:8, agosto:8,
+  sep:9, september:9, septiembre:9, sept:9,
+  oct:10, october:10, octubre:10,
+  nov:11, november:11, noviembre:11,
+  dec:12, december:12, dic:12, diciembre:12,
+};
+
+function monthIndex(h: string): number | null {
+  const key = h.toLowerCase().trim().replace(/[^a-záéíóúñ]/g, '');
+  return MONTH_NAMES[key] ?? null;
+}
+
+const QUARTER_MAP: Record<string, number[]> = {
+  q1: [1,2,3], q2: [4,5,6], q3: [7,8,9], q4: [10,11,12],
+  t1: [1,2,3], t2: [4,5,6], t3: [7,8,9], t4: [10,11,12],
+};
+
+function guessYearFromRows(rows: string[][]): number {
+  const cur = new Date().getFullYear();
+  for (const row of rows.slice(0, 5)) {
+    for (const cell of row) {
+      const m = String(cell).match(/\b(20\d{2})\b/);
+      if (m) return parseInt(m[1]);
+    }
+  }
+  return cur;
+}
+
+// ─── Format detection ─────────────────────────────────────────────────────────
+
+type FileFormat =
+  | 'row-per-expense'     // standard: date, amount, category per row
+  | 'monthly-pivot'       // category rows × month columns
+  | 'quarterly-pivot'     // category rows × Q1-Q4 columns
+  | 'bank-statement'      // date, description, debit, credit
+  | 'simple-list';        // amount + description only
+
+function detectFormat(headers: string[]): FileFormat {
+  const lower = headers.map(h => h.toLowerCase().trim());
+
+  // Monthly pivot: 3+ columns are month names
+  const monthCols = lower.filter(h => monthIndex(h) !== null).length;
+  if (monthCols >= 3) return 'monthly-pivot';
+
+  // Quarterly pivot: at least 2 quarter columns
+  const qCols = lower.filter(h => QUARTER_MAP[h.replace(/[^a-z0-9]/g, '')] !== undefined).length;
+  if (qCols >= 2) return 'quarterly-pivot';
+
+  // Bank statement: has debit or credit column
+  if (lower.some(h => h.includes('debit') || h.includes('credit') || h.includes('cargo') || h.includes('abono'))) {
+    return 'bank-statement';
+  }
+
+  // Row-per-expense: has a recognisable date or amount column
+  const hasDate = lower.some(h => h.includes('date') || h.includes('fecha'));
+  const hasAmount = lower.some(h => h.includes('amount') || h.includes('monto') || h.includes('total') || h.includes('cost'));
+  if (hasDate || hasAmount) return 'row-per-expense';
+
+  return 'simple-list';
+}
+
+// ─── Per-format parsers ───────────────────────────────────────────────────────
+
+function parseMonthlyPivot(headers: string[], rows: string[][], year: number): ImportResult {
+  const mapped: MappedExpense[] = [];
+  let unmapped = 0;
+
+  // Find the category column (first non-month, non-total column)
+  const catColIdx = headers.findIndex(h => {
+    const l = h.toLowerCase().trim();
+    return monthIndex(l) === null && !l.includes('total') && !l.includes('anual') && l.length > 0;
+  });
+
+  for (const row of rows) {
+    if (!Array.isArray(row)) continue;
+    const nonEmpty = row.filter(c => String(c).trim()).length;
+    if (nonEmpty === 0) continue;
+
+    const category = catColIdx >= 0 ? String(row[catColIdx] ?? '').trim() : 'Other';
+    if (!category) { unmapped++; continue; }
+
+    let rowHadAny = false;
+    for (let i = 0; i < headers.length; i++) {
+      const mIdx = monthIndex(headers[i]);
+      if (mIdx === null) continue;
+
+      const amount = parseAmount(row[i]);
+      if (amount == null || amount === 0) continue;
+
+      const mm = String(mIdx).padStart(2, '0');
+      mapped.push({
+        category,
+        amount,
+        date: `${year}-${mm}-01`,
+        note: null,
+        tournament_name: null,
+      });
+      rowHadAny = true;
+    }
+    if (!rowHadAny) unmapped++;
+  }
+
+  return { mapped, unmapped, columns: headers };
+}
+
+function parseQuarterlyPivot(headers: string[], rows: string[][], year: number): ImportResult {
+  const mapped: MappedExpense[] = [];
+  let unmapped = 0;
+
+  const catColIdx = headers.findIndex(h => {
+    const l = h.toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+    return QUARTER_MAP[l] === undefined && !l.includes('total') && l.length > 0;
+  });
+
+  for (const row of rows) {
+    if (!Array.isArray(row)) continue;
+    const nonEmpty = row.filter(c => String(c).trim()).length;
+    if (nonEmpty === 0) continue;
+
+    const category = catColIdx >= 0 ? String(row[catColIdx] ?? '').trim() : 'Other';
+    if (!category) { unmapped++; continue; }
+
+    let rowHadAny = false;
+    for (let i = 0; i < headers.length; i++) {
+      const key = headers[i].toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+      const months = QUARTER_MAP[key];
+      if (!months) continue;
+
+      const amount = parseAmount(row[i]);
+      if (amount == null || amount === 0) continue;
+
+      // Spread quarter amount evenly across its first month
+      const mm = String(months[0]).padStart(2, '0');
+      mapped.push({
+        category,
+        amount,
+        date: `${year}-${mm}-01`,
+        note: `${headers[i].toUpperCase()} total`,
+        tournament_name: null,
+      });
+      rowHadAny = true;
+    }
+    if (!rowHadAny) unmapped++;
+  }
+
+  return { mapped, unmapped, columns: headers };
+}
+
+function parseBankStatement(headers: string[], rows: string[][]): ImportResult {
+  const lower = headers.map(h => h.toLowerCase().trim());
+  const dateIdx = lower.findIndex(h => h.includes('date') || h.includes('fecha'));
+  const descIdx = lower.findIndex(h => h.includes('desc') || h.includes('memo') || h.includes('concept') || h.includes('merchant') || h.includes('payee'));
+  const debitIdx = lower.findIndex(h => h.includes('debit') || h.includes('cargo') || h.includes('withdrawal') || h.includes('out'));
+  const creditIdx = lower.findIndex(h => h.includes('credit') || h.includes('abono') || h.includes('deposit') || h.includes('in'));
+  // If no explicit debit/credit, fall back to a generic amount column
+  const amtIdx = lower.findIndex(h => h.includes('amount') || h.includes('monto') || h.includes('total'));
+
+  const mapped: MappedExpense[] = [];
+  let unmapped = 0;
+  const today = new Date().toISOString().split('T')[0];
+
+  for (const row of rows) {
+    if (!Array.isArray(row)) continue;
+    const nonEmpty = row.filter(c => String(c).trim()).length;
+    if (nonEmpty === 0) continue;
+
+    let amount: number | null = null;
+    if (debitIdx >= 0) amount = parseAmount(row[debitIdx]);
+    if (amount == null && amtIdx >= 0) amount = parseAmount(row[amtIdx]);
+    // Skip credits (deposits/income) — only import debits/expenses
+    if (amount == null) { unmapped++; continue; }
+
+    const desc = descIdx >= 0 ? String(row[descIdx] ?? '').trim() : '';
+    const date = dateIdx >= 0 ? parseDate(row[dateIdx]) : null;
+
+    mapped.push({
+      category: inferCategoryFromText(desc),
+      amount,
+      date: date ?? today,
+      note: desc || null,
+      tournament_name: null,
+    });
+  }
+
+  return { mapped, unmapped, columns: headers };
+}
+
+function parseSimpleList(headers: string[], rows: string[][]): ImportResult {
+  // Best-effort: find any numeric column as amount, rest as description
+  const mapped: MappedExpense[] = [];
+  let unmapped = 0;
+  const today = new Date().toISOString().split('T')[0];
+
+  // Find the column with the most numeric values
+  let amtColIdx = -1;
+  let maxNumeric = 0;
+  for (let i = 0; i < headers.length; i++) {
+    const count = rows.filter(r => parseAmount(r[i]) !== null).length;
+    if (count > maxNumeric) { maxNumeric = count; amtColIdx = i; }
+  }
+  if (amtColIdx < 0) return { mapped: [], unmapped: rows.length, columns: headers };
+
+  for (const row of rows) {
+    if (!Array.isArray(row)) continue;
+    const nonEmpty = row.filter(c => String(c).trim()).length;
+    if (nonEmpty === 0) continue;
+
+    const amount = parseAmount(row[amtColIdx]);
+    if (amount == null) { unmapped++; continue; }
+
+    const desc = row.filter((_, i) => i !== amtColIdx).map(c => String(c).trim()).filter(Boolean).join(' — ');
+    const date = row.map(c => parseDate(c)).find(d => d !== null) ?? today;
+
+    mapped.push({
+      category: inferCategoryFromText(desc),
+      amount,
+      date,
+      note: desc || null,
+      tournament_name: null,
+    });
+  }
+
+  return { mapped, unmapped, columns: headers };
+}
+
+function inferCategoryFromText(text: string): string {
+  return inferCategory([text]);
+}
+
+// ─── Main smart parser — replaces applyMapping for new callers ────────────────
+
+export function smartParse(headers: string[], rows: string[][]): ImportResult {
+  const format = detectFormat(headers);
+  const year = guessYearFromRows([headers, ...rows.slice(0, 3)]);
+
+  switch (format) {
+    case 'monthly-pivot':   return parseMonthlyPivot(headers, rows, year);
+    case 'quarterly-pivot': return parseQuarterlyPivot(headers, rows, year);
+    case 'bank-statement':  return parseBankStatement(headers, rows);
+    case 'simple-list':     return parseSimpleList(headers, rows);
+    default:                break; // fall through to row-per-expense below
+  }
+
+  // row-per-expense: use existing column-mapping logic
+  const mapping = mapColumnsLocal(headers);
+  return applyMapping(rows, headers, mapping);
+}
+
+// ─── Original keyword map (kept for row-per-expense path) ────────────────────
+
 const FIELD_KEYWORDS: Record<string, string[]> = {
   amount: ['amount', 'monto', 'total', 'cost', 'price', 'valor', 'gasto', 'expense', 'usd', 'dollars', 'money', 'sum', 'costo', 'importe', 'fee', 'charge', 'debit', 'credit', 'pago', 'paid', 'spend', 'spent'],
   date: ['date', 'fecha', 'day', 'dia', 'when', 'periodo', 'period', 'mes', 'month', 'transaction date', 'posting date', 'fecha de transaccion'],

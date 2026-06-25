@@ -10,6 +10,7 @@ import { useFonts, Montserrat_300Light, Montserrat_400Regular, Montserrat_500Med
 import * as SplashScreen from 'expo-splash-screen';
 
 import { useNotificationSetup } from '@/hooks/useNotificationSetup';
+import { AppAlertProvider } from '@/components/ui/app-alert';
 import { DemoDataProvider } from '@/hooks/useDemoData';
 import { queryClient, persistCacheToMmkv } from '@/lib/queryClient';
 import { supabase } from '@/lib/supabase';
@@ -45,25 +46,55 @@ export const unstable_settings = {
 
 function AuthGate({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
-  const { data: profile, isLoading: profileLoading } = useProfile();
+  const { data: profile, isLoading: profileLoading, isFetching: profileFetching } = useProfile();
   const segments = useSegments();
   const router = useRouter();
 
   useEffect(() => {
-    if (DEMO_MODE) return; // skip auth gate in demo mode
-    if (loading || (user && profileLoading)) return;
+    if (DEMO_MODE) return;
+
+    if (loading) return;
+    if (user && (profileLoading || profileFetching || profile === undefined)) return;
+
     const inAuth = segments[0] === 'auth';
     const inOnboarding = segments[0] === 'onboarding';
+
+    console.log('[AuthGate]', {
+      userId: user?.id ?? null,
+      loading,
+      profileLoading,
+      profileFetching,
+      profileIsNull: profile === null,
+      profileIsUndefined: profile === undefined,
+      onboarding_complete: (profile as any)?.onboarding_complete ?? 'N/A',
+      segments: segments[0],
+      inAuth,
+      inOnboarding,
+    });
+
     if (!user) {
-      if (!inAuth) router.replace('/auth');
-    } else if (profile && !profile.onboarding_complete) {
-      // Only redirect to onboarding if profile explicitly has onboarding_complete = false
-      if (!inOnboarding) router.replace('/onboarding/profile');
+      if (!inAuth) {
+        console.log('[AuthGate] → /auth (no user)');
+        router.replace('/auth');
+      }
+    } else if (!profile || !profile.onboarding_complete) {
+      // No profile row OR onboarding not complete → new user needs onboarding.
+      // NOTE: for pre-migration users the SQL in supabase/fix_missing_profiles.sql
+      // must be run first — it backfills rows with onboarding_complete = true so
+      // those users never land here.
+      if (!inOnboarding) {
+        console.log('[AuthGate] → /onboarding/walkthrough (onboarding_complete false/null)');
+        router.replace('/onboarding/walkthrough');
+      }
     } else {
-      // profile is null (no row yet) or onboarding_complete — go to tabs
-      if (inAuth || inOnboarding) router.replace('/(tabs)');
+      // Profile exists and onboarding is done → home.
+      if (inAuth || inOnboarding) {
+        console.log('[AuthGate] → /(tabs) (onboarding_complete = true)');
+        router.replace('/(tabs)');
+      }
     }
-  }, [user, loading, profile, profileLoading, segments]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, loading, profile, profileLoading, profileFetching]);
 
   return <>{children}</>;
 }
@@ -108,7 +139,9 @@ export default function RootLayout() {
     <QueryClientProvider client={queryClient}>
       <SafeAreaProvider>
         <DemoDataProvider>
-          <AppLayout />
+          <AppAlertProvider>
+            <AppLayout />
+          </AppAlertProvider>
         </DemoDataProvider>
       </SafeAreaProvider>
     </QueryClientProvider>

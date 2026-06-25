@@ -9,12 +9,9 @@ type Listener = (lang: Lang) => void;
 const listeners = new Set<Listener>();
 let currentLang: Lang = 'en';
 
-AsyncStorage.getItem(LANG_KEY).then(v => {
-  if (v === 'en' || v === 'es') {
-    currentLang = v;
-    listeners.forEach(fn => fn(v));
-  }
-}).catch(() => {});
+// Do NOT restore language from AsyncStorage on startup.
+// Language is driven by profile.language (set explicitly in Settings).
+// Defaulting to 'en' here ensures auth/onboarding screens are always English.
 
 export async function setLanguage(lang: Lang) {
   currentLang = lang;
@@ -33,7 +30,9 @@ export function useLanguage() {
   }, []);
 
   const profileLang = (profile?.language as Lang) || undefined;
-  const lang: Lang = profileLang ?? localLang;
+  // Default to English always. Only use a non-English language if the user
+  // has explicitly set it on their profile via Settings.
+  const lang: Lang = profileLang ?? 'en';
 
   const t = useCallback((key: StringKey): string => {
     return translate(key, lang);

@@ -8,9 +8,9 @@ import {
   Pressable,
   PanResponder,
   TextInput,
-  Alert,
   Platform,
   KeyboardAvoidingView,
+  ActivityIndicator,
 } from 'react-native';
 import { Text } from '@/components/ui/text';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -30,11 +30,10 @@ import { DatePickerField } from '@/components/ui/date-picker-field';
 import { DEMO_MODE } from '@/config/demo';
 import { T } from '@/constants/theme';
 import { useLanguage } from '@/hooks/useLanguage';
+import { useAppAlert } from '@/components/ui/app-alert';
 
 const CALENDAR_WALKTHROUGH = [
-  { icon: '📅', title: 'Monthly overview', body: 'See all your tournaments laid out week by week. Each one is color-coded by surface — clay, hard, or grass.' },
-  { icon: '⬅️', title: 'Navigate months', body: 'Tap the arrows to move between months, or hit "Today" to jump back to the current week.' },
-  { icon: '👆', title: 'Tournament details', body: 'Tap any tournament banner to open its full details — deadlines, expenses, and more.' },
+  { icon: '🗺️', title: 'Your Season Map', body: 'Your tournaments appear as dots on the map below the calendar. Dotted lines connect tournaments you could combine into one trip to save on flights.' },
 ];
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -50,10 +49,11 @@ const MONTHS_ES = [
   'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
 ];
 
-const SURFACE: Record<string, { bg: string; text: string }> = {
-  clay:  { bg: '#2A1A08', text: '#E8964A' },
-  hard:  { bg: '#081828', text: '#5AABEE' },
-  grass: { bg: '#0A1E06', text: '#68B83A' },
+const SURFACE: Record<string, { bg: string; text: string; border: string }> = {
+  clay:    { bg: '#3D2A00', text: '#E8964A', border: '#C8860A' },
+  hard:    { bg: '#0A1E3D', text: '#5AABEE', border: '#2E6098' },
+  grass:   { bg: '#0A2A0A', text: '#68B83A', border: '#2E7A2E' },
+  default: { bg: '#1E1E38', text: '#A0A0C8', border: '#5B5BD6' },
 };
 
 function flag(code: string | undefined): string {
@@ -99,7 +99,7 @@ function buildGrid(year: number, month: number): Date[][] {
 
 function surfaceKey(t: any): keyof typeof SURFACE {
   const s = t.surface?.toLowerCase() ?? '';
-  return (s in SURFACE ? s : 'clay') as keyof typeof SURFACE;
+  return (s in SURFACE ? s : 'default') as keyof typeof SURFACE;
 }
 
 // Tournaments that overlap the Mon–Sun range of a week
@@ -141,6 +141,7 @@ export default function CalendarScreen() {
   now.setHours(0, 0, 0, 0);
 
   const { lang, t } = useLanguage();
+  const { show: showAlert } = useAppAlert();
   const DAYS = lang === 'es' ? DAYS_ES : DAYS_EN;
   const MONTHS = lang === 'es' ? MONTHS_ES : MONTHS_EN;
 
@@ -160,7 +161,7 @@ export default function CalendarScreen() {
   const { isFirstVisit, markVisited } = useFirstVisit('calendar');
   const router = useRouter();
 
-  const { data } = useAppQuery({ tournaments: {} });
+  const { data, isLoading } = useAppQuery({ tournaments: {} });
   const allTournaments = data?.tournaments ?? [];
   const tournaments = useMemo(
     () => allTournaments.filter((t: any) => !t.isWithdrawn && t.isInMyList !== false),
@@ -354,6 +355,11 @@ export default function CalendarScreen() {
         showsVerticalScrollIndicator={false}
         {...panResponder.panHandlers}>
 
+        {/* Loading state */}
+        {isLoading && (
+          <ActivityIndicator color={T.accent} style={{ marginTop: 48 }} />
+        )}
+
         {/* Calendar grid */}
         <View style={s.grid}>
           {weeks.map((week, wi) => {
@@ -393,11 +399,13 @@ export default function CalendarScreen() {
                 {/* Tournament banners */}
                 {weekTournaments.map((t: any) => {
                   const label = [flag(t.country), t.name].filter(Boolean).join(' ');
+                  const sk = surfaceKey(t);
                   return (
-                    <TouchableOpacity key={t.id} style={s.banner}
+                    <TouchableOpacity key={t.id}
+                      style={[s.banner, { backgroundColor: SURFACE[sk].bg, borderLeftColor: SURFACE[sk].border }]}
                       onPress={() => setDetailId(t.id)} activeOpacity={0.75}>
                       <View style={s.bannerRow}>
-                        <Text style={s.bannerText} numberOfLines={1}>{label}</Text>
+                        <Text style={[s.bannerText, { color: SURFACE[sk].text }]} numberOfLines={1}>{label}</Text>
                         <CourtIcon surface={t.surface} size="sm" />
                       </View>
                     </TouchableOpacity>
@@ -535,7 +543,7 @@ export default function CalendarScreen() {
           defaultDate={tappedDate}
           onSave={async (block) => {
             if (DEMO_MODE) {
-              Alert.alert(t('calendar.demoMode'), t('calendar.demoTrainingMsg'));
+              showAlert(t('calendar.demoMode'), t('calendar.demoTrainingMsg'));
               setShowAddBlock(false);
               return;
             }
@@ -543,7 +551,7 @@ export default function CalendarScreen() {
               await addBlock.mutateAsync(block);
               setShowAddBlock(false);
             } catch (e: any) {
-              Alert.alert('Error', e?.message ?? 'Could not save.');
+              showAlert('Error', e?.message ?? 'Could not save.');
             }
           }}
           onClose={() => setShowAddBlock(false)}
@@ -567,7 +575,7 @@ export default function CalendarScreen() {
                 style={s.blockDeleteBtn}
                 activeOpacity={0.8}
                 onPress={() => {
-                  Alert.alert(t('common.delete'), `Remove this ${selectedBlock.title.toLowerCase()} block?`, [
+                  showAlert(t('common.delete'), `Remove this ${selectedBlock.title.toLowerCase()} block?`, [
                     { text: t('common.cancel'), style: 'cancel' },
                     {
                       text: t('common.delete'), style: 'destructive',
@@ -703,7 +711,7 @@ function AddTrainingBlockModal({ defaultDate, onSave, onClose }: {
             value={note}
             onChangeText={setNote}
             placeholder={t('calendar.notePlaceholder')}
-            placeholderTextColor="#3A3A4C"
+            placeholderTextColor={T.textTertiary}
             multiline
           />
 
@@ -792,7 +800,8 @@ const s = StyleSheet.create({
   banner: {
     marginHorizontal: 8, marginBottom: 4,
     borderRadius: 8, paddingHorizontal: 8, paddingVertical: 8,
-    backgroundColor: T.cardElevated,
+    backgroundColor: '#1E1E38',
+    borderLeftWidth: 3, borderLeftColor: '#5B5BD6',
   },
   bannerRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   bannerText: { fontSize: 11, fontWeight: '600', color: T.textSecondary, flex: 1 },

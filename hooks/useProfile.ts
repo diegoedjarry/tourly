@@ -49,13 +49,19 @@ const QUERY_KEY = ['profile'];
 export function useProfile() {
   return useQuery({
     queryKey: QUERY_KEY,
+    staleTime: 0,
     queryFn: async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return null;
+      // Use getSession() (reads from local storage) instead of getUser()
+      // (network round-trip). The session is guaranteed to be set by the time
+      // onAuthStateChange fires SIGNED_IN and we resetQueries — so this is
+      // safe and avoids a second network call that could race with the session
+      // not yet being fully persisted.
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) return null;
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
-        .eq('id', user.id)
+        .eq('id', session.user.id)
         .maybeSingle();
       if (error) throw error;
       return data as Profile | null;

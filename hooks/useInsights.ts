@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { DEMO_MODE } from '@/config/demo';
+import { selectInsight, hasEnoughData } from '@/utils/insights';
 
 export interface Insight {
   id: string;
@@ -13,44 +14,28 @@ export interface Insight {
 
 const DEMO_INSIGHTS: Insight[] = [
   {
-    id: 'demo-insight-1',
-    insight_type: 'surface_roi',
-    insight_label: 'SURFACE ROI',
-    content: "Your clay court results are your strongest this season — you're netting an average of $620 more per clay event compared to hard courts. With four clay tournaments coming up, you're well-positioned for a strong financial stretch.",
+    id: 'demo-1',
+    insight_type: 'surface_cost_efficiency',
+    insight_label: 'SURFACE COST',
+    content: "Clay is your most affordable surface at $620 average vs $940 on hard court. Your clay results also generate more prize money on average.",
     trigger_event: 'daily',
     generated_at: new Date().toISOString(),
   },
   {
-    id: 'demo-insight-2',
+    id: 'demo-2',
     insight_type: 'weekly_recap',
     insight_label: 'WEEKLY RECAP',
-    content: 'Last week you spent $740 across Buenos Aires — accommodation took 58% of that budget. Your prize money covered 71% of total costs, your best coverage ratio in the last six weeks.',
+    content: 'Last week in Buenos Aires you spent $740. Your biggest cost was Accommodation at $430.',
     trigger_event: 'monday',
     generated_at: new Date(Date.now() - 86400000).toISOString(),
   },
   {
-    id: 'demo-insight-3',
-    insight_type: 'biggest_cost_category',
-    insight_label: 'SPENDING PATTERN',
-    content: 'Flights account for 41% of your total spending this season at an average of $395 per tournament. Booking 30+ days in advance for your South American legs could save around $120 per trip.',
+    id: 'demo-3',
+    insight_type: 'prize_coverage',
+    insight_label: 'PRIZE COVERAGE',
+    content: 'Prize money covers 34% of your total expenses this season. You have earned $3,200 against $9,400 in costs.',
     trigger_event: 'daily',
     generated_at: new Date(Date.now() - 2 * 86400000).toISOString(),
-  },
-  {
-    id: 'demo-insight-4',
-    insight_type: 'season_net_position',
-    insight_label: 'SEASON NET',
-    content: "You're currently $1,850 net positive on the year — one of your best starts financially. Maintaining your current prize coverage ratio of 68% through the clay season would push you past $3,000 net by July.",
-    trigger_event: 'daily',
-    generated_at: new Date(Date.now() - 3 * 86400000).toISOString(),
-  },
-  {
-    id: 'demo-insight-5',
-    insight_type: 'geographic_efficiency',
-    insight_label: 'GEOGRAPHIC ROI',
-    content: 'South American events are your most cost-efficient region — you average $310 in expenses per $100 of prize money there, vs $480 in Europe. Prioritizing the South American clay swing makes strong financial sense.',
-    trigger_event: 'daily',
-    generated_at: new Date(Date.now() - 4 * 86400000).toISOString(),
   },
 ];
 
@@ -59,35 +44,105 @@ export function useInsights() {
     queryKey: ['insights'],
     enabled: !DEMO_MODE,
     queryFn: async () => {
+      console.log('[insights] fetching from Supabase...');
       const { data, error } = await supabase
         .from('insights')
         .select('*')
         .order('generated_at', { ascending: false })
         .limit(10);
-      if (error) throw error;
-      return data as Insight[];
+      if (error) {
+        console.error('[insights] fetch error:', error.message);
+        throw error;
+      }
+      console.log('[insights] fetched', data?.length ?? 0, 'insights');
+      return (data ?? []) as Insight[];
     },
     staleTime: 1000 * 60 * 30,
   });
 
   if (DEMO_MODE) {
+    console.log('[insights] DEMO_MODE on — using demo data');
     return { ...query, data: DEMO_INSIGHTS, isLoading: false };
   }
-
   return query;
 }
 
 export function useGenerateInsight() {
   const qc = useQueryClient();
+
   return useMutation({
-    mutationFn: async (params?: { trigger?: string; forced_type?: string }) => {
-      if (DEMO_MODE) return null;
-      const { data, error } = await supabase.functions.invoke('generate-insight', {
-        body: params ?? { trigger: 'daily' },
-      });
-      if (error) throw error;
+    mutationFn: async (params: {
+      tournaments: any[];
+      expenses: any[];
+      trigger?: string;
+    }) => {
+      if (DEMO_MODE) {
+        console.log('[insights] DEMO_MODE — skipping generation');
+        return null;
+      }
+
+      console.log('[insights] checking data sufficiency:', params.tournaments.length, 'tournaments,', params.expenses.length, 'expenses');
+
+      if (!hasEnoughData(params.tournaments, params.expenses)) {
+        console.log('[insights] not enough data — need 2+ tournaments and 5+ expenses');
+        return null;
+      }
+
+      // Get current user
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      if (authError || !user) {
+        console.error('[insights] auth error or no user:', authError?.message);
+        return null;
+      }
+      console.log('[insights] generating for user:', user.id);
+
+      // Fetch recent insights to respect cooldowns
+      const { data: recent, error: recentError } = await supabase
+        .from('insights')
+        .select('insight_type, generated_at')
+        .eq('user_id', user.id)
+        .order('generated_at', { ascending: false })
+        .limit(20);
+
+      if (recentError) console.warn('[insights] could not fetch recent:', recentError.message);
+
+      const recentMapped = (recent ?? []).map((r: any) => ({
+        type: r.insight_type,
+        generated_at: r.generated_at,
+      }));
+
+      const forceMonday = params.trigger === 'monday';
+      const result = selectInsight(params.tournaments, params.expenses, recentMapped, forceMonday);
+
+      if (!result) {
+        console.log('[insights] selectInsight returned null — all on cooldown or no data');
+        return null;
+      }
+
+      console.log('[insights] selected insight type:', result.type);
+
+      const { data, error } = await supabase
+        .from('insights')
+        .insert({
+          user_id: user.id,
+          insight_type: result.type,
+          insight_label: result.label,
+          content: result.text,
+          trigger_event: params.trigger ?? 'daily',
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('[insights] insert error:', error.message, error.details);
+        throw error;
+      }
+
+      console.log('[insights] saved insight:', data.id);
       return data;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['insights'] }),
+    onSuccess: (data) => {
+      if (data) qc.invalidateQueries({ queryKey: ['insights'] });
+    },
   });
 }

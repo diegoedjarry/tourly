@@ -34,8 +34,7 @@ import { useTabSwipe } from '@/hooks/useTabSwipe';
 import { ScreenWalkthrough } from '@/components/ui/screen-walkthrough';
 
 const TOURNAMENTS_WALKTHROUGH = [
-  { icon: '🎾', title: 'Your tournaments', body: 'Browse all your tournaments grouped by time — upcoming, in progress, and past. Each card is color-coded by surface.' },
-  { icon: '➕', title: 'Add a tournament', body: 'Tap the + button to add a new tournament. Deadlines are auto-calculated from the start date.' },
+  { icon: '➕', title: 'Add a Tournament', body: 'Tap + to add your first tournament. Tourly calculates all deadlines automatically from the start date.' },
   { icon: '📋', title: 'Tournament details', body: 'Tap any tournament to see its full breakdown — deadlines, expenses, prize money, and net result.' },
 ];
 import { TournamentExpenseDetail } from '@/app/(tabs)/expenses';
@@ -865,17 +864,9 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
                 if (isChallenger) {
                   return (
                     <View style={{ marginBottom: 10, gap: 6 }}>
-                      <TouchableOpacity style={linkStyle} onPress={() => Linking.openURL('https://playerzone.atptour.com/')} activeOpacity={0.7}>
+                      <TouchableOpacity style={linkStyle} onPress={() => Linking.openURL('https://www.atppz.com/registration/login#nbb')} activeOpacity={0.7}>
                         <IconSymbol name="arrow.up.right.square" size={14} color="#5B5BD6" />
                         <Text style={{ fontSize: 13, fontWeight: '600', color: '#5B5BD6' }}>{t('tournament.playerZoneWeb')}</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={linkStyle}
-                        onPress={() => Linking.canOpenURL('atpplayerzone://').then(can =>
-                          Linking.openURL(can ? 'atpplayerzone://' : 'https://playerzone.atptour.com/')
-                        )}
-                        activeOpacity={0.7}>
-                        <IconSymbol name="arrow.up.right.square" size={14} color="#5B5BD6" />
-                        <Text style={{ fontSize: 13, fontWeight: '600', color: '#5B5BD6' }}>{t('tournament.playerZoneApp')}</Text>
                       </TouchableOpacity>
                     </View>
                   );
@@ -1513,7 +1504,11 @@ function TournamentDiscoveryModal({
         (trn.country ?? '').toLowerCase().includes(q);
       if (!match) return false;
     }
-    if (filterCountry && (trn.country ?? '').toUpperCase() !== filterCountry.toUpperCase()) return false;
+    if (filterCountry) {
+      const fc = filterCountry.trim().toUpperCase();
+      const matchedCode = COUNTRIES.find(c => c.name.toLowerCase() === filterCountry.trim().toLowerCase())?.code.toUpperCase() ?? fc;
+      if ((trn.country ?? '').toUpperCase() !== matchedCode) return false;
+    }
     if (filterCategories.length > 0 && !filterCategories.some(c => (trn.category ?? '').includes(c))) return false;
     if (filterSurfaces.length > 0 && !filterSurfaces.includes((trn.surface ?? '').toLowerCase())) return false;
     if (filterDateStart && trn.startDate && trn.startDate < filterDateStart) return false;
@@ -1578,10 +1573,10 @@ function TournamentDiscoveryModal({
   function CheckRow({ label, checked, onToggle }: { label: string; checked: boolean; onToggle: () => void }) {
     return (
       <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10 }} onPress={onToggle} activeOpacity={0.7}>
-        <View style={{ width: 22, height: 22, borderRadius: 4, borderWidth: 2, borderColor: checked ? '#5B5BD6' : '#3A3A5A', backgroundColor: checked ? '#5B5BD6' : '#1A1A2E', marginRight: 12, alignItems: 'center', justifyContent: 'center' }}>
-          {checked && <Text style={{ color: '#FFF', fontSize: 13, fontWeight: '700' }}>✓</Text>}
+        <View style={{ width: 22, height: 22, borderRadius: 4, borderWidth: 2, borderColor: checked ? T.accent : T.cardBorder, backgroundColor: checked ? T.accent : T.card, marginRight: 12, alignItems: 'center', justifyContent: 'center' }}>
+          {checked && <Text style={{ color: T.textPrimary, fontSize: 13, fontWeight: '700' }}>✓</Text>}
         </View>
-        <Text style={{ fontSize: 15, color: '#E0E0E0' }}>{label}</Text>
+        <Text style={{ fontSize: 15, color: T.textPrimary }}>{label}</Text>
       </TouchableOpacity>
     );
   }
@@ -1707,8 +1702,25 @@ function TournamentDiscoveryModal({
             <Text style={disc.filterSectionLabel}>{t('discovery.country')}</Text>
             <View style={disc.filterInputWrap}>
               <TextInput style={disc.filterInput} value={pendingCountry} onChangeText={setPendingCountry}
-                placeholder={t('discovery.countrySelect')} placeholderTextColor="#AAA" autoCapitalize="characters" maxLength={2} />
+                placeholder={t('discovery.countrySelect')} placeholderTextColor="#AAA" autoCorrect={false} />
             </View>
+            {pendingCountry.trim().length >= 2 && (() => {
+              const q = pendingCountry.trim().toLowerCase();
+              const matches = COUNTRIES.filter(c =>
+                c.name.toLowerCase().includes(q) || c.code.toLowerCase() === q
+              ).slice(0, 5);
+              if (!matches.length) return null;
+              return (
+                <View style={{ backgroundColor: T.card, borderRadius: 8, borderWidth: 1, borderColor: T.cardBorder, marginTop: 4, marginBottom: 8 }}>
+                  {matches.map(c => (
+                    <TouchableOpacity key={c.code} style={{ paddingHorizontal: 14, paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: T.cardBorder }}
+                      onPress={() => setPendingCountry(c.name)} activeOpacity={0.7}>
+                      <Text style={{ color: T.textPrimary, fontSize: 14 }}>{countryFlag(c.code)} {c.name}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              );
+            })()}
             <View style={disc.filterDivider} />
             {/* Category */}
             <Text style={disc.filterSectionLabel}>{t('discovery.category')}</Text>
@@ -1744,17 +1756,82 @@ function TournamentDiscoveryModal({
         <SafeAreaView style={disc.safe}>
           <View style={disc.header}>
             <TouchableOpacity onPress={() => setShowDatePanel(false)} activeOpacity={0.7} style={disc.closeBtn}>
-              <IconSymbol name="xmark" size={18} color="#555" />
+              <IconSymbol name="xmark" size={18} color="#AAA" />
             </TouchableOpacity>
             <Text style={disc.headerTitle}>{t('discovery.dateRange')}</Text>
             <View style={disc.closeBtn} />
           </View>
-          <ScrollView contentContainerStyle={{ padding: 24, gap: 20 }}>
-            <DatePickerField label={t('discovery.startDate')} value={filterDateStart} onChange={setFilterDateStart} />
-            <DatePickerField label={t('discovery.endDate')} value={filterDateEnd} onChange={setFilterDateEnd} />
+          {/* Date inputs row */}
+          <View style={{ flexDirection: 'row', gap: 12, paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: T.cardBorder }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 11, color: T.textSecondary, marginBottom: 6 }}>{t('discovery.startDate')}</Text>
+              <DatePickerField label="" value={filterDateStart} onChange={v => { setFilterDateStart(v); }} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 11, color: T.textSecondary, marginBottom: 6 }}>{t('discovery.endDate')}</Text>
+              <DatePickerField label="" value={filterDateEnd} onChange={v => { setFilterDateEnd(v); }} />
+            </View>
+          </View>
+          {/* Inline range calendar */}
+          <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+            {(() => {
+              const today = new Date(); today.setHours(0,0,0,0);
+              const months: { year: number; month: number }[] = [];
+              for (let i = 0; i < 6; i++) {
+                const d = new Date(today.getFullYear(), today.getMonth() + i, 1);
+                months.push({ year: d.getFullYear(), month: d.getMonth() });
+              }
+              const MONTH_NAMES_CAL = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+              const DAY_LABELS = ['Mo','Tu','We','Th','Fr','Sa','Su'];
+              const s = filterDateStart ? new Date(filterDateStart + 'T00:00:00') : null;
+              const e = filterDateEnd   ? new Date(filterDateEnd   + 'T00:00:00') : null;
+              function toISO(d: Date) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+              function handleDayTap(iso: string) {
+                const tapped = new Date(iso + 'T00:00:00');
+                if (!filterDateStart || (filterDateStart && filterDateEnd)) { setFilterDateStart(iso); setFilterDateEnd(''); }
+                else if (tapped < new Date(filterDateStart + 'T00:00:00')) { setFilterDateStart(iso); setFilterDateEnd(''); }
+                else { setFilterDateEnd(iso); }
+              }
+              return months.map(({ year, month }) => {
+                const firstDay = new Date(year, month, 1);
+                const lastDay  = new Date(year, month + 1, 0);
+                const startDow = (firstDay.getDay() + 6) % 7; // 0=Mon
+                const cells: (number | null)[] = Array(startDow).fill(null);
+                for (let d = 1; d <= lastDay.getDate(); d++) cells.push(d);
+                while (cells.length % 7) cells.push(null);
+                return (
+                  <View key={`${year}-${month}`} style={{ paddingHorizontal: 20, marginTop: 20 }}>
+                    <Text style={{ fontSize: 18, fontWeight: '700', color: T.textPrimary, marginBottom: 12 }}>{MONTH_NAMES_CAL[month]} {year}</Text>
+                    <View style={{ flexDirection: 'row', marginBottom: 8 }}>
+                      {DAY_LABELS.map(d => <Text key={d} style={{ flex: 1, textAlign: 'center', fontSize: 12, color: T.textTertiary, fontWeight: '600' }}>{d}</Text>)}
+                    </View>
+                    {Array.from({ length: cells.length / 7 }, (_, ri) => (
+                      <View key={ri} style={{ flexDirection: 'row' }}>
+                        {cells.slice(ri * 7, ri * 7 + 7).map((day, ci) => {
+                          if (!day) return <View key={ci} style={{ flex: 1, height: 44 }} />;
+                          const iso = toISO(new Date(year, month, day));
+                          const isStart = iso === filterDateStart;
+                          const isEnd   = iso === filterDateEnd;
+                          const inRange = s && e && new Date(iso+'T00:00:00') > s && new Date(iso+'T00:00:00') < e;
+                          const isToday = iso === toISO(today);
+                          const bg = (isStart || isEnd) ? '#5B5BD6' : inRange ? '#5B5BD633' : 'transparent';
+                          const textCol = (isStart || isEnd) ? T.textPrimary : inRange ? T.hardText : isToday ? T.accent : T.textPrimary;
+                          return (
+                            <TouchableOpacity key={ci} style={{ flex: 1, height: 44, alignItems: 'center', justifyContent: 'center', backgroundColor: bg, borderRadius: 8 }}
+                              onPress={() => handleDayTap(iso)} activeOpacity={0.7}>
+                              <Text style={{ fontSize: 14, fontWeight: (isStart || isEnd || isToday) ? '700' : '400', color: textCol }}>{day}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    ))}
+                  </View>
+                );
+              });
+            })()}
             {(filterDateStart || filterDateEnd) && (
-              <TouchableOpacity onPress={() => { setFilterDateStart(''); setFilterDateEnd(''); }} activeOpacity={0.7} style={{ alignSelf: 'center', marginTop: 8 }}>
-                <Text style={{ fontSize: 14, color: '#E24B4A', fontWeight: '600' }}>{t('discovery.clear')}</Text>
+              <TouchableOpacity onPress={() => { setFilterDateStart(''); setFilterDateEnd(''); }} style={{ alignSelf: 'center', marginTop: 20 }} activeOpacity={0.7}>
+                <Text style={{ color: '#E24B4A', fontSize: 14, fontWeight: '600' }}>{t('discovery.clear')}</Text>
               </TouchableOpacity>
             )}
           </ScrollView>
@@ -1817,42 +1894,42 @@ function TournamentDiscoveryModal({
 }
 
 const disc = StyleSheet.create({
-  safe:            { flex: 1, backgroundColor: '#0D0D1A' },
-  header:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: '#1E1E32' },
-  headerTitle:     { fontSize: 14, fontWeight: '800', color: '#FAFAFA', letterSpacing: 1.2 },
+  safe:            { flex: 1, backgroundColor: T.bg },
+  header:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: T.cardBorder },
+  headerTitle:     { fontSize: 14, fontWeight: '800', color: T.textPrimary, letterSpacing: 1.2 },
   closeBtn:        { padding: 4, minWidth: 30 },
-  searchWrap:      { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1A1A2E', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, marginHorizontal: 20, marginTop: 16, marginBottom: 12 },
-  searchInput:     { flex: 1, fontSize: 15, color: '#FAFAFA' },
-  filterChip:      { flexDirection: 'row', alignItems: 'center', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#1A1A2E', borderWidth: 1, borderColor: '#2A2A4A' },
-  filterChipActive:{ backgroundColor: '#5B5BD6', borderColor: '#5B5BD6' },
-  filterChipText:  { fontSize: 14, fontWeight: '600', color: '#888' },
-  sectionLabel:    { fontSize: 11, fontWeight: '700', color: '#666', letterSpacing: 1, marginHorizontal: 20, marginBottom: 10 },
-  emptyText:       { fontSize: 13, color: '#666', textAlign: 'center', marginHorizontal: 24, marginTop: 16, marginBottom: 24, lineHeight: 20, fontStyle: 'italic' },
-  trnRow:          { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#1A1A2E' },
-  trnName:         { fontSize: 14, fontWeight: '600', color: '#FAFAFA', marginBottom: 3 },
-  trnMeta:         { fontSize: 12, color: '#888' },
-  catPill:         { backgroundColor: '#2A2A4A', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, marginLeft: 6 },
-  catPillText:     { fontSize: 11, fontWeight: '700', color: '#888' },
+  searchWrap:      { flexDirection: 'row', alignItems: 'center', backgroundColor: T.card, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, marginHorizontal: 20, marginTop: 16, marginBottom: 12 },
+  searchInput:     { flex: 1, fontSize: 15, color: T.textPrimary },
+  filterChip:      { flexDirection: 'row', alignItems: 'center', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: T.card, borderWidth: 1, borderColor: T.cardBorder },
+  filterChipActive:{ backgroundColor: T.accent, borderColor: T.accent },
+  filterChipText:  { fontSize: 14, fontWeight: '600', color: T.textTertiary },
+  sectionLabel:    { fontSize: 11, fontWeight: '700', color: T.textTertiary, letterSpacing: 1, marginHorizontal: 20, marginBottom: 10 },
+  emptyText:       { fontSize: 13, color: T.textTertiary, textAlign: 'center', marginHorizontal: 24, marginTop: 16, marginBottom: 24, lineHeight: 20, fontStyle: 'italic' },
+  trnRow:          { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: T.card },
+  trnName:         { fontSize: 14, fontWeight: '600', color: T.textPrimary, marginBottom: 3 },
+  trnMeta:         { fontSize: 12, color: T.textSecondary },
+  catPill:         { backgroundColor: T.cardBorder, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, marginLeft: 6 },
+  catPillText:     { fontSize: 11, fontWeight: '700', color: T.textSecondary },
   deadlinePill:    { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
   deadlinePillText:{ fontSize: 11, fontWeight: '700' },
-  divider:         { height: 1, backgroundColor: '#1E1E32', marginHorizontal: 20, marginVertical: 24 },
-  card:            { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1A1A2E', borderRadius: 16, padding: 20, marginHorizontal: 20, marginBottom: 12 },
-  cardTitle:       { fontSize: 15, fontWeight: '600', color: '#FAFAFA', marginBottom: 4 },
-  cardSub:         { fontSize: 12, color: '#888', lineHeight: 16 },
-  inputLabel:      { fontSize: 11, fontWeight: '700', color: '#888', letterSpacing: 0.8, marginBottom: 6, marginTop: 16 },
-  textInput:       { backgroundColor: '#1A1A2E', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: '#FAFAFA', borderWidth: 1, borderColor: '#2A2A4A' },
-  saveBtn:         { backgroundColor: '#5B5BD6', borderRadius: 14, paddingVertical: 16, alignItems: 'center', marginTop: 24 },
-  saveBtnText:     { color: '#FAFAFA', fontSize: 16, fontWeight: '700' },
+  divider:         { height: 1, backgroundColor: T.cardBorder, marginHorizontal: 20, marginVertical: 24 },
+  card:            { flexDirection: 'row', alignItems: 'center', backgroundColor: T.card, borderRadius: 16, padding: 20, marginHorizontal: 20, marginBottom: 12 },
+  cardTitle:       { fontSize: 15, fontWeight: '600', color: T.textPrimary, marginBottom: 4 },
+  cardSub:         { fontSize: 12, color: T.textSecondary, lineHeight: 16 },
+  inputLabel:      { fontSize: 11, fontWeight: '700', color: T.textSecondary, letterSpacing: 0.8, marginBottom: 6, marginTop: 16 },
+  textInput:       { backgroundColor: T.card, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: T.textPrimary, borderWidth: 1, borderColor: T.cardBorder },
+  saveBtn:         { backgroundColor: T.accent, borderRadius: 14, paddingVertical: 16, alignItems: 'center', marginTop: 24 },
+  saveBtnText:     { color: T.textPrimary, fontSize: 16, fontWeight: '700' },
   // Filter panel
-  filterSectionLabel: { fontSize: 13, fontWeight: '700', color: '#888', letterSpacing: 0.8, marginTop: 12, marginBottom: 6, textTransform: 'uppercase' },
-  filterInputWrap: { borderWidth: 1, borderColor: '#2A2A4A', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 4, backgroundColor: '#1A1A2E' },
-  filterInput:     { fontSize: 15, color: '#FAFAFA' },
-  filterDivider:   { height: 1, backgroundColor: '#1E1E32', marginVertical: 14 },
-  filterActions:   { position: 'absolute', bottom: 0, left: 0, right: 0, flexDirection: 'row', gap: 12, padding: 20, backgroundColor: '#0D0D1A', borderTopWidth: 1, borderTopColor: '#1E1E32' },
-  clearBtn:        { flex: 1, borderRadius: 24, paddingVertical: 14, alignItems: 'center', backgroundColor: '#2A2A4A' },
-  clearBtnText:    { fontSize: 13, fontWeight: '700', color: '#AAA', letterSpacing: 0.5 },
-  applyBtn:        { flex: 2, borderRadius: 24, paddingVertical: 14, alignItems: 'center', backgroundColor: '#5B5BD6' },
-  applyBtnText:    { fontSize: 13, fontWeight: '700', color: '#FAFAFA', letterSpacing: 0.5 },
+  filterSectionLabel: { fontSize: 13, fontWeight: '700', color: T.textSecondary, letterSpacing: 0.8, marginTop: 12, marginBottom: 6, textTransform: 'uppercase' },
+  filterInputWrap: { borderWidth: 1, borderColor: T.cardBorder, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 4, backgroundColor: T.card },
+  filterInput:     { fontSize: 15, color: T.textPrimary },
+  filterDivider:   { height: 1, backgroundColor: T.cardBorder, marginVertical: 14 },
+  filterActions:   { position: 'absolute', bottom: 0, left: 0, right: 0, flexDirection: 'row', gap: 12, padding: 20, backgroundColor: T.bg, borderTopWidth: 1, borderTopColor: T.cardBorder },
+  clearBtn:        { flex: 1, borderRadius: 24, paddingVertical: 14, alignItems: 'center', backgroundColor: T.cardBorder },
+  clearBtnText:    { fontSize: 13, fontWeight: '700', color: T.textSecondary, letterSpacing: 0.5 },
+  applyBtn:        { flex: 2, borderRadius: 24, paddingVertical: 14, alignItems: 'center', backgroundColor: T.accent },
+  applyBtnText:    { fontSize: 13, fontWeight: '700', color: T.textPrimary, letterSpacing: 0.5 },
 });
 
 // ─── Screen ───────────────────────────────────────────────────────────────────

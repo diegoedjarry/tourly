@@ -47,10 +47,6 @@ export function useAppQuery(_query: any) {
   const { data: tournaments, isLoading: tLoading } = useTournaments();
   const { data: expenses, isLoading: eLoading } = useExpenses();
 
-  if (DEMO_MODE && demoCtx) {
-    return { data: demoCtx.demoData as any, isLoading: false, error: null };
-  }
-
   const mappedTournaments = useMemo(
     () => (tournaments ?? []).map(mapTournament),
     [tournaments],
@@ -59,6 +55,10 @@ export function useAppQuery(_query: any) {
     () => (expenses ?? []).map(mapExpense),
     [expenses],
   );
+
+  if (DEMO_MODE && demoCtx) {
+    return { data: demoCtx.demoData as any, isLoading: false, error: null };
+  }
 
   return {
     data: {

@@ -26,8 +26,7 @@ import { T } from '@/constants/theme';
 import { useLanguage } from '@/hooks/useLanguage';
 
 const ALERTS_WALKTHROUGH = [
-  { icon: '🔔', title: 'Deadline alerts', body: 'See all upcoming ITF & ATP Tour deadlines grouped by urgency — urgent (red), this week (amber), and upcoming (green).' },
-  { icon: '✍️', title: 'Quick actions', body: 'Tap any alert to see details. For withdrawal deadlines, you can mark a tournament as withdrawn right from here.' },
+  { icon: '🔔', title: 'Tap Any Alert', body: 'Tap any alert to go directly to that tournament\'s details and take action. Red means urgent — don\'t wait.' },
 ];
 
 type Urgency = 'urgent' | 'week' | 'upcoming';
@@ -516,7 +515,7 @@ const s = StyleSheet.create({
 
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', marginTop: 120, gap: 32 },
   emptyIcon: { fontSize: 48 },
-  emptyText: { fontSize: 16, color: T.textTertiary, fontWeight: '400' },
+  emptyText: { fontSize: 16, color: T.textSecondary, fontWeight: '400' },
 
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'flex-end' },
   sheet: { backgroundColor: T.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingBottom: 48, paddingTop: 24, alignItems: 'center' },
