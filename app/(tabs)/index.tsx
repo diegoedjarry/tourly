@@ -26,6 +26,7 @@ import { FloatingInsight } from '@/components/ui/floating-insight';
 import { useProfile } from '@/hooks/useProfile';
 import { T, SURFACE_STRIPE } from '@/constants/theme';
 import { TourlyLogo } from '@/components/ui/tourly-logo';
+import { AgentIcon } from '@/components/ui/agent-icon';
 import { useLanguage } from '@/hooks/useLanguage';
 
 const HOME_WALKTHROUGH = [
@@ -215,9 +216,10 @@ export default function HomeScreen() {
 
           {/* Top bar */}
           <View style={st.topBar}>
+            <View style={st.topBarSide} />
             <TourlyLogo width={200} height={52} />
-            <TouchableOpacity onPress={() => router.push('/profile' as any)} activeOpacity={0.7} style={st.avatarBtn}>
-              <Text style={st.avatarInitials}>{profileInitials}</Text>
+            <TouchableOpacity onPress={() => router.push('/settings' as any)} activeOpacity={0.75} style={st.topBarSide}>
+              <AgentIcon size={36} />
             </TouchableOpacity>
           </View>
 
@@ -396,9 +398,8 @@ const st = StyleSheet.create({
   scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: 16, paddingBottom: 32 },
 
-  topBar: { paddingTop: 16, paddingBottom: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  avatarBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: T.card, borderWidth: 1.5, borderColor: T.accent, alignItems: 'center', justifyContent: 'center' },
-  avatarInitials: { fontSize: 13, fontWeight: '700', color: T.accent },
+  topBar: { paddingTop: 16, paddingBottom: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16 },
+  topBarSide: { width: 40, alignItems: 'flex-end' },
 
   section: { marginBottom: 16 },
   sectionLabel: { fontSize: 11, fontWeight: '600', color: T.textSecondary, letterSpacing: 1, marginBottom: 6, textTransform: 'uppercase' },
