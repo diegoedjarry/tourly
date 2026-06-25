@@ -29,7 +29,7 @@ import { TourlyLogo } from '@/components/ui/tourly-logo';
 import { useLanguage } from '@/hooks/useLanguage';
 
 const HOME_WALKTHROUGH = [
-  { icon: '✦', title: 'Your Financial Coach', body: 'Your financial coach updates daily with personalized insights based on your real data. Tap the card at the bottom to read it.' },
+  { icon: '✦', title: 'Your Financial Coach', body: 'Your AI coach updates daily with personalized insights. Tap the floating button at the bottom right to read them.' },
   { icon: '📊', title: 'Season summary', body: 'Track your prize money, expenses, and net profit across the entire season at a glance.' },
 ];
 
@@ -413,7 +413,7 @@ export default function HomeScreen() {
 const st = StyleSheet.create({
   safe: { flex: 1, backgroundColor: T.bg },
   scroll: { flex: 1 },
-  scrollContent: { paddingHorizontal: 16, paddingBottom: 110 },
+  scrollContent: { paddingHorizontal: 16, paddingBottom: 40 },
 
   topBar: { paddingTop: 16, paddingBottom: 16, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
 

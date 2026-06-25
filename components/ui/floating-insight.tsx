@@ -1,6 +1,13 @@
-import React from 'react';
-import { View, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useState } from 'react';
+import {
+  View,
+  TouchableOpacity,
+  Modal,
+  Pressable,
+  StyleSheet,
+} from 'react-native';
 import { Text } from '@/components/ui/text';
+import { AgentIcon } from '@/components/ui/agent-icon';
 import { T } from '@/constants/theme';
 
 interface FloatingInsightProps {
@@ -23,88 +30,176 @@ function relativeDate(iso: string): string {
 }
 
 export function FloatingInsight({ content, label, generatedAt, locked, onPress }: FloatingInsightProps) {
-  if (locked) {
-    return (
-      <View style={s.card}>
-        <View style={s.topRow}>
-          <Text style={s.labelText}>FINANCIAL COACH</Text>
-        </View>
-        <View style={s.body}>
-          <Text style={[s.sparkle, { color: T.textTertiary }]}>🔒</Text>
-          <Text style={[s.content, { color: T.textSecondary }]}>
-            Add 2+ tournaments and 5+ expenses to unlock personalized AI coaching insights.
-          </Text>
-        </View>
-      </View>
-    );
-  }
+  const [open, setOpen] = useState(false);
 
-  if (!content) return null;
+  const handleFabPress = () => {
+    if (locked || !content) return;
+    setOpen(true);
+  };
+
+  const handleViewAll = () => {
+    setOpen(false);
+    onPress?.();
+  };
 
   const dateStr = generatedAt ? relativeDate(generatedAt) : 'Today';
 
   return (
-    <TouchableOpacity style={s.card} activeOpacity={0.85} onPress={onPress}>
-      <View style={s.topRow}>
-        <Text style={s.labelText}>{label ?? 'FINANCIAL COACH'}</Text>
-        <Text style={s.dateText}>{dateStr}</Text>
-      </View>
-      <View style={s.body}>
-        <Text style={s.sparkle}>✦</Text>
-        <Text style={s.content} numberOfLines={3}>{content}</Text>
-        <Text style={s.chevron}>›</Text>
-      </View>
-    </TouchableOpacity>
+    <>
+      {/* Floating action button */}
+      <TouchableOpacity
+        style={s.fab}
+        onPress={handleFabPress}
+        activeOpacity={0.85}
+      >
+        {locked || !content ? (
+          <Text style={s.fabLock}>✦</Text>
+        ) : (
+          <AgentIcon size={26} />
+        )}
+      </TouchableOpacity>
+
+      {/* Insight modal */}
+      <Modal
+        visible={open}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setOpen(false)}
+      >
+        <Pressable style={s.backdrop} onPress={() => setOpen(false)}>
+          <Pressable style={s.card} onPress={() => {}}>
+            {/* Header */}
+            <View style={s.topRow}>
+              <View style={s.iconWrap}>
+                <AgentIcon size={18} />
+              </View>
+              <Text style={s.labelText}>{label ?? 'FINANCIAL COACH'}</Text>
+              <Text style={s.dateText}>{dateStr}</Text>
+            </View>
+
+            {/* Content */}
+            <Text style={s.content}>{content}</Text>
+
+            {/* Actions */}
+            <View style={s.actions}>
+              <TouchableOpacity style={s.dismissBtn} onPress={() => setOpen(false)} activeOpacity={0.7}>
+                <Text style={s.dismissText}>Dismiss</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={s.viewBtn} onPress={handleViewAll} activeOpacity={0.85}>
+                <Text style={s.viewBtnText}>View all insights</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </>
   );
 }
 
 const s = StyleSheet.create({
-  card: {
+  // Floating button
+  fab: {
     position: 'absolute',
-    bottom: 8,
-    left: 16,
-    right: 16,
+    bottom: 24,
+    right: 20,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     backgroundColor: '#1A1A2E',
+    borderWidth: 1.5,
+    borderColor: T.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: T.accent,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.45,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  fabLock: {
+    fontSize: 20,
+    color: T.accent,
+  },
+
+  // Modal backdrop
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 16,
+    paddingBottom: 100,
+  },
+
+  // Insight card
+  card: {
+    backgroundColor: '#1A1A2E',
+    borderRadius: 16,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#2A2A4A',
     borderLeftWidth: 3,
     borderLeftColor: T.accent,
-    borderRadius: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
   },
   topRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 8,
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  iconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(91,91,214,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   labelText: {
+    flex: 1,
     fontSize: 10,
     fontWeight: '700',
     color: T.textSecondary,
     letterSpacing: 0.8,
+    textTransform: 'uppercase',
   },
   dateText: {
     fontSize: 10,
     color: T.textSecondary,
   },
-  body: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-  },
-  sparkle: {
-    fontSize: 14,
-    color: T.accent,
-    marginTop: 1,
-  },
   content: {
-    flex: 1,
     fontSize: 14,
     color: '#FAFAFA',
-    lineHeight: 21,
+    lineHeight: 22,
+    marginBottom: 16,
   },
-  chevron: {
-    fontSize: 20,
-    color: T.textTertiary,
-    marginTop: -1,
+
+  // Action buttons
+  actions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  dismissBtn: {
+    flex: 1,
+    paddingVertical: 11,
+    borderRadius: 10,
+    backgroundColor: '#252540',
+    alignItems: 'center',
+  },
+  dismissText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: T.textSecondary,
+  },
+  viewBtn: {
+    flex: 2,
+    paddingVertical: 11,
+    borderRadius: 10,
+    backgroundColor: T.accent,
+    alignItems: 'center',
+  },
+  viewBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FAFAFA',
   },
 });
