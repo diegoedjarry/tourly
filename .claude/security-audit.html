@@ -1,0 +1,558 @@
+<title>Tourly Security Audit — June 2026</title>
+<style>
+  :root {
+    --bg: #fafafa; --card: #fff; --text: #1a1a2e; --muted: #6b7280;
+    --border: #e5e7eb; --red: #dc2626; --orange: #ea580c; --yellow: #ca8a04;
+    --green: #16a34a; --blue: #2563eb; --indigo: #5B5BD6;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; padding: 2rem 1rem; max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 1.75rem; margin-bottom: 0.25rem; }
+  h2 { font-size: 1.35rem; margin: 2rem 0 0.75rem; border-bottom: 2px solid var(--border); padding-bottom: 0.5rem; }
+  h3 { font-size: 1.1rem; margin: 1.25rem 0 0.5rem; }
+  .subtitle { color: var(--muted); margin-bottom: 1.5rem; }
+  .rating { display: inline-block; padding: 0.5rem 1.25rem; border-radius: 8px; font-weight: 700; font-size: 1.1rem; margin: 0.5rem 0 1rem; }
+  .rating-orange { background: #fff7ed; color: var(--orange); border: 2px solid var(--orange); }
+  .summary-box { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; margin-bottom: 1.5rem; }
+  .finding { background: var(--card); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 1.25rem; overflow: hidden; }
+  .finding-header { padding: 0.75rem 1rem; display: flex; align-items: center; gap: 0.75rem; border-bottom: 1px solid var(--border); }
+  .finding-body { padding: 1rem; }
+  .finding-body h4 { font-size: 0.85rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin: 0.75rem 0 0.25rem; }
+  .finding-body h4:first-child { margin-top: 0; }
+  .sev { font-size: 0.75rem; font-weight: 700; padding: 0.2rem 0.6rem; border-radius: 4px; text-transform: uppercase; white-space: nowrap; }
+  .sev-critical { background: #fef2f2; color: var(--red); }
+  .sev-high { background: #fff7ed; color: var(--orange); }
+  .sev-medium { background: #fefce8; color: var(--yellow); }
+  .sev-low { background: #f0fdf4; color: var(--green); }
+  .finding-title { font-weight: 600; }
+  .cwe { font-size: 0.8rem; color: var(--muted); }
+  .loc { font-size: 0.85rem; color: var(--blue); font-family: 'SF Mono', 'Fira Code', monospace; }
+  pre { background: #1e1e2e; color: #cdd6f4; padding: 0.75rem 1rem; border-radius: 6px; overflow-x: auto; font-size: 0.82rem; margin: 0.5rem 0; line-height: 1.5; }
+  .effort { font-size: 0.85rem; color: var(--muted); margin-top: 0.75rem; font-style: italic; }
+  .checklist { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 0.4rem; font-size: 0.85rem; font-family: monospace; }
+  .checklist span { text-align: center; padding: 0.2rem; border-radius: 4px; }
+  .cl-pass { background: #f0fdf4; }
+  .cl-fail { background: #fef2f2; }
+  .cl-partial { background: #fefce8; }
+  .cl-na { background: #f3f4f6; }
+  table { width: 100%; border-collapse: collapse; margin: 0.5rem 0; font-size: 0.9rem; }
+  th, td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid var(--border); }
+  th { background: #f9fafb; font-weight: 600; font-size: 0.85rem; }
+  .good-list { list-style: none; }
+  .good-list li { padding: 0.35rem 0; }
+  .good-list li::before { content: '✓ '; color: var(--green); font-weight: 700; }
+  .quickwin { list-style: none; }
+  .quickwin li { padding: 0.35rem 0; padding-left: 1.5rem; position: relative; }
+  .quickwin li::before { content: '⚡'; position: absolute; left: 0; }
+  p { margin: 0.5rem 0; }
+  @media (max-width: 600px) { body { padding: 1rem 0.5rem; } .checklist { grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); } }
+</style>
+
+<h1>Tourly — Security Audit Report</h1>
+<p class="subtitle">June 22, 2026 &middot; Expo 54 + Supabase + InstantDB &middot; React Native mobile app</p>
+
+<h2>1. Security Posture Rating</h2>
+<div class="rating rating-orange">🟠 NEEDS WORK</div>
+<div class="summary-box">
+<p>Tourly has a solid foundation — RLS is enabled with <code>WITH CHECK</code> on core tables, secrets stay server-side in edge functions, and auth uses Supabase's built-in password + OAuth flows. However, two edge functions (<code>parse-excel</code> and <code>map-import-columns</code>) have <strong>no authentication at all</strong>, the shared-data feature bypasses RLS by querying another user's data without verifying the share relationship, offline mutations skip auth checks, and the <code>useRevokeShare</code> mutation lacks ownership validation. These are exploitable gaps that need fixing before production.</p>
+</div>
+
+<h2>2. Critical &amp; High Findings</h2>
+
+<!-- FINDING 1 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-high">HIGH</span>
+    <span class="finding-title">#1 — Unauthenticated Edge Functions</span>
+  </div>
+  <div class="finding-body">
+    <h4>Category</h4><p>Missing Authentication</p>
+    <h4>CWE</h4><p class="cwe">CWE-306 (Missing Authentication for Critical Function)</p>
+    <h4>Location</h4>
+    <p class="loc">supabase/functions/parse-excel/index.ts:4<br>supabase/functions/map-import-columns/index.ts:4</p>
+    <h4>What's wrong</h4>
+    <p>Both <code>parse-excel</code> and <code>map-import-columns</code> accept requests from anyone — no Authorization header check, no JWT validation. Any user who knows the function URL can call them.</p>
+    <h4>Why it matters</h4>
+    <p><code>map-import-columns</code> calls the Anthropic API with user-provided data. An attacker could spam it to exhaust your Anthropic API credits. <code>parse-excel</code> could be used to process arbitrarily large files, consuming Supabase function compute time.</p>
+    <h4>The vulnerable code (parse-excel)</h4>
+<pre>serve(async (req) =&gt; {
+  try {
+    const { base64, fileName } = await req.json();
+    // No auth check — jumps straight to parsing
+    ...</pre>
+    <h4>The fix</h4>
+<pre>serve(async (req) =&gt; {
+  try {
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } });
+    }
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    );
+    const jwt = authHeader.replace('Bearer ', '');
+    const { data: { user }, error } = await supabase.auth.getUser(jwt);
+    if (error || !user) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } });
+    }
+
+    const { base64, fileName } = await req.json();
+    ...</pre>
+    <p class="effort">~15 minutes (apply same pattern to both functions)</p>
+  </div>
+</div>
+
+<!-- FINDING 2 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-high">HIGH</span>
+    <span class="finding-title">#2 — Shared Data Bypasses RLS / No Access Verification</span>
+  </div>
+  <div class="finding-body">
+    <h4>Category</h4><p>Broken Access Control</p>
+    <h4>CWE</h4><p class="cwe">CWE-862 (Missing Authorization)</p>
+    <h4>Location</h4><p class="loc">hooks/useSharedAccess.ts:104-125</p>
+    <h4>What's wrong</h4>
+    <p><code>useSharedData(ownerId)</code> directly queries another user's tournaments, expenses, and profile by their <code>user_id</code>. It does not verify that the current user has an accepted share relationship. Meanwhile, the core RLS policies (<code>auth.uid() = user_id</code>) should block this entirely — meaning either (a) this feature is broken and returns empty data, or (b) there's an additional RLS policy granting broader read access that we can't verify from client code alone.</p>
+    <h4>Why it matters</h4>
+    <p>If RLS allows this query, any authenticated user can read any other user's complete financial data by guessing or knowing their UUID. If RLS blocks it, the feature is silently broken — a different kind of problem.</p>
+    <h4>The vulnerable code</h4>
+<pre>export function useSharedData(ownerId: string | null) {
+  return useQuery({
+    queryFn: async () =&gt; {
+      // No check that current user has accepted share access
+      const [tournamentsRes, expensesRes, profileRes] = await Promise.all([
+        supabase.from('tournaments').select('*').eq('user_id', ownerId),
+        supabase.from('expenses').select('*').eq('user_id', ownerId),
+        supabase.from('profiles').select('...').eq('id', ownerId).maybeSingle(),
+      ]);
+      ...</pre>
+    <h4>The fix</h4>
+<pre>export function useSharedData(ownerId: string | null) {
+  return useQuery({
+    queryFn: async () =&gt; {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user || !ownerId) return null;
+
+      // Verify share relationship exists and is accepted
+      const { data: share } = await supabase
+        .from('shared_access')
+        .select('id')
+        .eq('owner_id', ownerId)
+        .eq('shared_with_id', user.id)
+        .eq('status', 'accepted')
+        .maybeSingle();
+      if (!share) throw new Error('Access denied');
+
+      // Use the shared_tournaments / shared_expenses views instead
+      const [tournamentsRes, expensesRes, profileRes] = await Promise.all([
+        supabase.from('shared_tournaments').select('*')
+          .eq('user_id', ownerId).eq('shared_with_id', user.id),
+        supabase.from('shared_expenses').select('*')
+          .eq('user_id', ownerId).eq('shared_with_id', user.id),
+        supabase.from('profiles').select('full_name, ranking, nationality')
+          .eq('id', ownerId).maybeSingle(),
+      ]);
+      ...</pre>
+    <p class="effort">~20 minutes</p>
+  </div>
+</div>
+
+<!-- FINDING 3 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-high">HIGH</span>
+    <span class="finding-title">#3 — Offline Mutations Skip Authentication</span>
+  </div>
+  <div class="finding-body">
+    <h4>Category</h4><p>Missing Authentication</p>
+    <h4>CWE</h4><p class="cwe">CWE-287 (Improper Authentication)</p>
+    <h4>Location</h4><p class="loc">lib/api.ts:20-24, :32-35, :49-51, :66-68, :78-80</p>
+    <h4>What's wrong</h4>
+    <p>Every API function checks connectivity first. When offline, it enqueues the mutation <em>without</em> checking auth — the auth check only runs in the online branch. When the queue processes later (<code>offline-queue.ts:45</code>), it does check auth, but the enqueued mutation's <code>data</code> field never includes a <code>user_id</code> — the queue's <code>executeMutation</code> adds <code>user_id</code> from the current session. If the user signs out and another user signs in on the same device, the queued mutations from User A would execute under User B's identity.</p>
+    <h4>Why it matters</h4>
+    <p>Data from one user's session could be written to another user's account on shared/borrowed devices.</p>
+    <h4>The vulnerable code</h4>
+<pre>export async function apiAddTournament(data: Record&lt;string, any&gt;) {
+  if (await isOffline()) {
+    await enqueue({ table: 'tournaments', action: 'insert', data });
+    return data; // No auth check — queued blindly
+  }
+  // Auth check only happens in the online path
+  const { data: { user } } = await supabase.auth.getUser();
+  ...</pre>
+    <h4>The fix</h4>
+<pre>export async function apiAddTournament(data: Record&lt;string, any&gt;) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+
+  if (await isOffline()) {
+    await enqueue({
+      table: 'tournaments', action: 'insert', data,
+      userId: user.id,  // Pin the user identity at enqueue time
+    });
+    return data;
+  }
+  ...</pre>
+    <p class="effort">~20 minutes (update all 5 API functions + queue schema + executeMutation to compare userId)</p>
+  </div>
+</div>
+
+<!-- FINDING 4 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-high">HIGH</span>
+    <span class="finding-title">#4 — useRevokeShare Lacks Ownership Check</span>
+  </div>
+  <div class="finding-body">
+    <h4>Category</h4><p>Broken Access Control</p>
+    <h4>CWE</h4><p class="cwe">CWE-862 (Missing Authorization)</p>
+    <h4>Location</h4><p class="loc">hooks/useSharedAccess.ts:90-101</p>
+    <h4>What's wrong</h4>
+    <p><code>useRevokeShare</code> deletes a shared_access row by <code>id</code> alone — it doesn't filter by <code>owner_id = auth.uid()</code>. While the RLS DELETE policy (<code>auth.uid() = owner_id</code>) would prevent cross-user deletes at the database level, the client code doesn't signal intent correctly. If a future RLS change loosens the policy, this becomes exploitable.</p>
+    <h4>Why it matters</h4>
+    <p>Defense-in-depth: the client should always scope mutations to the current user. Currently the only protection is the RLS policy.</p>
+    <h4>The fix</h4>
+<pre>mutationFn: async (shareId: string) =&gt; {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+  const { error } = await supabase
+    .from('shared_access')
+    .delete()
+    .eq('id', shareId)
+    .eq('owner_id', user.id);  // Scope to current user
+  if (error) throw error;
+},</pre>
+    <p class="effort">~5 minutes</p>
+  </div>
+</div>
+
+<!-- FINDING 5 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-medium">MEDIUM</span>
+    <span class="finding-title">#5 — shared_access UPDATE Policy Too Broad</span>
+  </div>
+  <div class="finding-body">
+    <h4>Category</h4><p>Broken Access Control</p>
+    <h4>CWE</h4><p class="cwe">CWE-863 (Incorrect Authorization)</p>
+    <h4>Location</h4><p class="loc">supabase/add_shared_access.sql:29-31</p>
+    <h4>What's wrong</h4>
+    <p>The UPDATE policy allows both <code>shared_with_id</code> and <code>owner_id</code> to update any column. A shared user (invitee) could change their own <code>role</code> from <code>viewer</code> to <code>editor</code>, or change the <code>status</code> or <code>owner_id</code>.</p>
+    <h4>The vulnerable code</h4>
+<pre>CREATE POLICY "Shared users can accept invites"
+  ON shared_access FOR UPDATE
+  USING (auth.uid() = shared_with_id OR auth.uid() = owner_id);
+  -- No WITH CHECK, no column restriction</pre>
+    <h4>The fix</h4>
+<pre>-- Invitees can only accept (update status + set their id)
+CREATE POLICY "Shared users can accept invites"
+  ON shared_access FOR UPDATE
+  USING (auth.uid() = shared_with_id)
+  WITH CHECK (
+    status = 'accepted'
+    AND shared_with_id = auth.uid()
+    AND role = 'viewer'  -- prevent privilege escalation
+  );
+
+-- Owners can update their own shares
+CREATE POLICY "Owners can update their shares"
+  ON shared_access FOR UPDATE
+  USING (auth.uid() = owner_id)
+  WITH CHECK (auth.uid() = owner_id);</pre>
+    <p class="effort">~10 minutes</p>
+  </div>
+</div>
+
+<!-- FINDING 6 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-medium">MEDIUM</span>
+    <span class="finding-title">#6 — No Rate Limiting on parse-excel and map-import-columns</span>
+  </div>
+  <div class="finding-body">
+    <h4>Category</h4><p>Missing Rate Limiting</p>
+    <h4>CWE</h4><p class="cwe">CWE-770 (Allocation of Resources Without Limits)</p>
+    <h4>Location</h4>
+    <p class="loc">supabase/functions/parse-excel/index.ts<br>supabase/functions/map-import-columns/index.ts</p>
+    <h4>What's wrong</h4>
+    <p><code>map-import-columns</code> calls the Anthropic API on every request with no rate limit. An attacker (or even an overeager user) could call it repeatedly, racking up API charges. <code>parse-excel</code> has no file size limit — a 50MB base64 blob would consume significant function memory.</p>
+    <h4>The fix</h4>
+    <p>After adding auth (Finding #1), add a simple database-backed rate limit like the other edge functions use. For <code>parse-excel</code>, add <code>if (base64.length > 10_000_000) return 413;</code> (roughly 7.5MB file).</p>
+    <p class="effort">~15 minutes</p>
+  </div>
+</div>
+
+<!-- FINDING 7 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-medium">MEDIUM</span>
+    <span class="finding-title">#7 — recommend-tournaments Has No Rate Limiting</span>
+  </div>
+  <div class="finding-body">
+    <h4>Category</h4><p>Missing Rate Limiting</p>
+    <h4>CWE</h4><p class="cwe">CWE-770 (Allocation of Resources Without Limits)</p>
+    <h4>Location</h4><p class="loc">supabase/functions/recommend-tournaments/index.ts</p>
+    <h4>What's wrong</h4>
+    <p>This function has proper auth but no rate limiting (unlike generate-insight/coaching/reflection). It calls the Anthropic API with <code>max_tokens: 1024</code> per request. An authenticated user could spam it.</p>
+    <h4>The fix</h4>
+    <p>Add the same rate-limit pattern used in <code>generate-insight</code> — query the last recommendation timestamp, enforce a cooldown (e.g., 60 minutes).</p>
+    <p class="effort">~10 minutes</p>
+  </div>
+</div>
+
+<!-- FINDING 8 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-medium">MEDIUM</span>
+    <span class="finding-title">#8 — Error Messages Leak Internal Details</span>
+  </div>
+  <div class="finding-body">
+    <h4>Category</h4><p>Information Disclosure</p>
+    <h4>CWE</h4><p class="cwe">CWE-209 (Error Message Information Exposure)</p>
+    <h4>Location</h4>
+    <p class="loc">supabase/functions/parse-excel/index.ts:35<br>supabase/functions/map-import-columns/index.ts:65<br>supabase/functions/recommend-tournaments/index.ts:127</p>
+    <h4>What's wrong</h4>
+    <p>Three edge functions return <code>err.message</code> directly to the client in 500 responses. This can leak internal error details (Deno stack info, Anthropic API errors with key fragments, Supabase connection errors).</p>
+    <h4>The vulnerable code</h4>
+<pre>return new Response(JSON.stringify({ error: err.message ?? 'Internal error' }), {
+  status: 500, ...</pre>
+    <h4>The fix</h4>
+<pre>console.error('[function-name]', err);
+return new Response(JSON.stringify({ error: 'Internal server error' }), {
+  status: 500, ...</pre>
+    <p class="effort">~5 minutes</p>
+  </div>
+</div>
+
+<!-- FINDING 9 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-low">LOW</span>
+    <span class="finding-title">#9 — Console.log Leaks OAuth Redirect URL</span>
+  </div>
+  <div class="finding-body">
+    <h4>Category</h4><p>Information Disclosure</p>
+    <h4>CWE</h4><p class="cwe">CWE-532 (Information Exposure Through Log Files)</p>
+    <h4>Location</h4><p class="loc">hooks/useAuth.ts:54</p>
+    <h4>What's wrong</h4>
+    <p><code>console.log('[OAuth] redirectTo:', redirectTo);</code> leaks the OAuth redirect URI in production logs. While not a secret, it's development debris.</p>
+    <h4>The fix</h4>
+    <p>Remove the line or wrap with <code>if (__DEV__)</code>.</p>
+    <p class="effort">~1 minute</p>
+  </div>
+</div>
+
+<!-- FINDING 10 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-low">LOW</span>
+    <span class="finding-title">#10 — Hardcoded InstantDB App ID Fallback</span>
+  </div>
+  <div class="finding-body">
+    <h4>Category</h4><p>Hardcoded Configuration</p>
+    <h4>CWE</h4><p class="cwe">CWE-798 (Use of Hard-coded Credentials)</p>
+    <h4>Location</h4><p class="loc">db.ts:28</p>
+    <h4>What's wrong</h4>
+    <p>The InstantDB App ID has a hardcoded fallback: <code>'f819fcd1-f0da-4658-ac5c-a190539808f6'</code>. While an app ID is not a secret (it's a public identifier), hardcoding it means the app silently connects to this database even if the env var is misconfigured. This is especially risky if InstantDB has no server-side auth rules, as the app ID alone grants read/write access.</p>
+    <h4>The fix</h4>
+<pre>const APP_ID = process.env.EXPO_PUBLIC_INSTANTDB_APP_ID;
+if (!APP_ID) throw new Error('EXPO_PUBLIC_INSTANTDB_APP_ID is required');</pre>
+    <p class="effort">~2 minutes</p>
+  </div>
+</div>
+
+<!-- FINDING 11 -->
+<div class="finding">
+  <div class="finding-header">
+    <span class="sev sev-low">LOW</span>
+    <span class="finding-title">#11 — No Startup Validation for Supabase Env Vars</span>
+  </div>
+  <div class="finding-body">
+    <h4>Category</h4><p>Missing Fail-Fast</p>
+    <h4>CWE</h4><p class="cwe">CWE-1188 (Initialization with Hard-Coded Network Resource Config)</p>
+    <h4>Location</h4><p class="loc">lib/supabase.ts:4-5</p>
+    <h4>What's wrong</h4>
+    <p>The non-null assertions (<code>!</code>) suppress TypeScript errors but don't provide runtime validation. If env vars are missing, <code>createClient</code> receives <code>undefined</code> which may cause cryptic errors later.</p>
+    <h4>The fix</h4>
+<pre>const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  throw new Error('Missing Supabase environment variables');
+}</pre>
+    <p class="effort">~2 minutes</p>
+  </div>
+</div>
+
+<h2>3. Quick Wins (under 10 minutes each)</h2>
+<ol class="quickwin">
+  <li><strong>Remove console.log</strong> in useAuth.ts:54 — 1 min</li>
+  <li><strong>Remove hardcoded InstantDB fallback</strong> in db.ts:28 — 2 min</li>
+  <li><strong>Add env var validation</strong> in supabase.ts — 2 min</li>
+  <li><strong>Add ownership filter to useRevokeShare</strong> — 5 min</li>
+  <li><strong>Fix error message leaks</strong> in 3 edge functions — 5 min</li>
+  <li><strong>Add file size limit</strong> to parse-excel — 5 min</li>
+</ol>
+
+<h2>4. Prioritized Remediation Plan</h2>
+<table>
+  <tr><th>#</th><th>Finding</th><th>Severity</th><th>Effort</th></tr>
+  <tr><td>1</td><td>Add auth to parse-excel &amp; map-import-columns</td><td style="color:var(--orange)">HIGH</td><td>15 min</td></tr>
+  <tr><td>2</td><td>Fix useSharedData — verify share access</td><td style="color:var(--orange)">HIGH</td><td>20 min</td></tr>
+  <tr><td>3</td><td>Fix offline mutations — check auth before enqueue</td><td style="color:var(--orange)">HIGH</td><td>20 min</td></tr>
+  <tr><td>4</td><td>Add ownership check to useRevokeShare</td><td style="color:var(--orange)">HIGH</td><td>5 min</td></tr>
+  <tr><td>5</td><td>Tighten shared_access UPDATE RLS policy</td><td style="color:var(--yellow)">MEDIUM</td><td>10 min</td></tr>
+  <tr><td>6</td><td>Add rate limiting to parse-excel &amp; map-import-columns</td><td style="color:var(--yellow)">MEDIUM</td><td>15 min</td></tr>
+  <tr><td>7</td><td>Add rate limiting to recommend-tournaments</td><td style="color:var(--yellow)">MEDIUM</td><td>10 min</td></tr>
+  <tr><td>8</td><td>Fix error message leaks in 3 edge functions</td><td style="color:var(--yellow)">MEDIUM</td><td>5 min</td></tr>
+  <tr><td>9</td><td>Remove console.log OAuth debug line</td><td style="color:var(--green)">LOW</td><td>1 min</td></tr>
+  <tr><td>10</td><td>Remove hardcoded InstantDB App ID fallback</td><td style="color:var(--green)">LOW</td><td>2 min</td></tr>
+  <tr><td>11</td><td>Add startup env var validation</td><td style="color:var(--green)">LOW</td><td>2 min</td></tr>
+</table>
+<p style="margin-top: 0.75rem; color: var(--muted);">Total estimated effort: ~1 hour 45 minutes</p>
+
+<h2>5. What's Already Done Right</h2>
+<ul class="good-list">
+  <li><strong>RLS on all tables</strong> — Every table (tournaments, expenses, profiles, coaching_messages, reflections, insights, match_results, training_blocks, shared_access) has RLS enabled with proper <code>auth.uid()</code> policies and <code>WITH CHECK</code> clauses</li>
+  <li><strong>Secrets stay server-side</strong> — ANTHROPIC_API_KEY and SUPABASE_SERVICE_ROLE_KEY are only accessed via <code>Deno.env.get()</code> in edge functions; never exposed to the client</li>
+  <li><strong>.env properly gitignored</strong> — <code>.env</code> and <code>.env.*</code> covered; no .env files in git history</li>
+  <li><strong>EXPO_PUBLIC_ prefix used correctly</strong> — Only truly public values (Supabase URL, anon key, InstantDB app ID, demo mode flag) use the public prefix</li>
+  <li><strong>Auth uses getUser() not getSession()</strong> — All API functions and edge functions validate via <code>supabase.auth.getUser()</code> (server-validated JWT), not the client-only <code>getSession()</code></li>
+  <li><strong>Rate limiting on AI functions</strong> — generate-insight (60 min), generate-coaching (6 hours), generate-reflection (60 min) all have database-backed cooldowns with 429 responses</li>
+  <li><strong>Input allowlisting</strong> — generate-insight validates <code>trigger</code> and <code>forced_type</code> against whitelists; generate-reflection validates <code>period_type</code></li>
+  <li><strong>user_id from session, not request body</strong> — All insert operations derive <code>user_id</code> from the authenticated session, never from client-supplied data</li>
+  <li><strong>Defense-in-depth filtering</strong> — Edge functions add <code>.eq('user_id', user.id)</code> to queries even though RLS already enforces it</li>
+  <li><strong>No XSS vectors</strong> — No <code>dangerouslySetInnerHTML</code> or equivalent found anywhere in the codebase</li>
+  <li><strong>Supabase query builder prevents SQL injection</strong> — No raw SQL or string concatenation in client code; parameterized queries throughout</li>
+  <li><strong>Generic error messages on auth functions</strong> — generate-insight, generate-coaching, generate-reflection all return <code>"Internal server error"</code> (not <code>err.message</code>)</li>
+</ul>
+
+<h2>6. Checklist Summary</h2>
+
+<h3>Section 1 — Environment &amp; Secrets</h3>
+<div class="checklist">
+  <span class="cl-pass">1.1 ✅</span>
+  <span class="cl-pass">1.2 ✅</span>
+  <span class="cl-pass">1.3 ✅</span>
+  <span class="cl-fail">1.4 ❌</span>
+  <span class="cl-na">1.5 ⬚</span>
+  <span class="cl-fail">1.6 ❌</span>
+</div>
+<h3>Section 2 — Database Security</h3>
+<div class="checklist">
+  <span class="cl-pass">2.1 ✅</span>
+  <span class="cl-pass">2.2 ✅</span>
+  <span class="cl-partial">2.3 ⚠️</span>
+  <span class="cl-pass">2.4 ✅</span>
+  <span class="cl-pass">2.5 ✅</span>
+  <span class="cl-na">2.6 ⬚</span>
+  <span class="cl-pass">2.7 ✅</span>
+  <span class="cl-na">2.8 ⬚</span>
+</div>
+<h3>Section 3 — Authentication &amp; Sessions</h3>
+<div class="checklist">
+  <span class="cl-pass">3.1 ✅</span>
+  <span class="cl-pass">3.2 ✅</span>
+  <span class="cl-pass">3.3 ✅</span>
+  <span class="cl-na">3.4 ⬚</span>
+  <span class="cl-pass">3.5 ✅</span>
+  <span class="cl-fail">3.6 ❌</span>
+  <span class="cl-partial">3.7 ⚠️</span>
+  <span class="cl-na">3.8 ⬚</span>
+</div>
+<h3>Section 4 — Server-Side Validation</h3>
+<div class="checklist">
+  <span class="cl-partial">4.1 ⚠️</span>
+  <span class="cl-pass">4.2 ✅</span>
+  <span class="cl-pass">4.3 ✅</span>
+  <span class="cl-na">4.4 ⬚</span>
+  <span class="cl-fail">4.5 ❌</span>
+  <span class="cl-na">4.6 ⬚</span>
+</div>
+<h3>Section 5 — Dependencies</h3>
+<div class="checklist">
+  <span class="cl-partial">5.1 ⚠️</span>
+  <span class="cl-pass">5.2 ✅</span>
+  <span class="cl-pass">5.3 ✅</span>
+  <span class="cl-partial">5.4 ⚠️</span>
+  <span class="cl-pass">5.5 ✅</span>
+</div>
+<h3>Section 6 — Rate Limiting</h3>
+<div class="checklist">
+  <span class="cl-fail">6.1 ❌</span>
+  <span class="cl-na">6.2 ⬚</span>
+  <span class="cl-partial">6.3 ⚠️</span>
+</div>
+<h3>Section 7 — CORS</h3>
+<div class="checklist">
+  <span class="cl-na">7.1 ⬚</span>
+  <span class="cl-na">7.2 ⬚</span>
+</div>
+<h3>Section 8 — File Uploads</h3>
+<div class="checklist">
+  <span class="cl-partial">8.1 ⚠️</span>
+  <span class="cl-na">8.2 ⬚</span>
+  <span class="cl-na">8.3 ⬚</span>
+</div>
+
+<h2>Full Checklist Detail</h2>
+
+<h3>Section 1 — Environment &amp; Secrets</h3>
+<p><strong>1.1 ✅ PASS</strong> — No hardcoded secrets. API keys (Anthropic, Supabase service role) only accessed via <code>Deno.env.get()</code> in edge functions. The InstantDB App ID and Supabase anon key are public identifiers, not secrets.</p>
+<p><strong>1.2 ✅ PASS</strong> — <code>.gitignore:34-35</code> covers <code>.env</code> and <code>.env.*</code>. Git history shows no committed .env files.</p>
+<p><strong>1.3 ✅ PASS</strong> — Only public values use <code>EXPO_PUBLIC_</code>: Supabase URL/anon key (designed to be public), InstantDB app ID, demo mode flag. Service role keys and API keys are server-only.</p>
+<p><strong>1.4 ❌ FAIL</strong> — Finding #9. <code>console.log</code> in useAuth.ts:54 logs the OAuth redirect URL.</p>
+<p><strong>1.5 ⬚ N/A</strong> — React Native app, not a web build. No browser source maps concern. Expo handles source maps for crash reporting only.</p>
+<p><strong>1.6 ❌ FAIL</strong> — Findings #10, #11. No runtime validation — <code>supabase.ts</code> uses non-null assertions; <code>db.ts</code> falls back to a hardcoded ID.</p>
+
+<h3>Section 2 — Database Security</h3>
+<p><strong>2.1 ✅ PASS</strong> — All 9 tables have <code>ALTER TABLE ... ENABLE ROW LEVEL SECURITY</code> in their migration files.</p>
+<p><strong>2.2 ✅ PASS</strong> — Every table has at least one policy. Most use a single <code>FOR ALL</code> policy; <code>shared_access</code> has granular SELECT/INSERT/UPDATE/DELETE policies.</p>
+<p><strong>2.3 ⚠️ PARTIAL</strong> — Core tables (tournaments, expenses, profiles, etc.) all have <code>WITH CHECK</code>. But <code>shared_access</code> UPDATE policy (Finding #5) lacks <code>WITH CHECK</code>, allowing invitees to escalate privileges.</p>
+<p><strong>2.4 ✅ PASS</strong> — All RLS policies use <code>auth.uid()</code>, not <code>auth.jwt()->'user_metadata'</code>.</p>
+<p><strong>2.5 ✅ PASS</strong> — Service role key used only in Deno edge functions via <code>Deno.env.get()</code>. Never imported in client code.</p>
+<p><strong>2.6 ⬚ N/A</strong> — No Supabase Storage buckets used. File uploads go through the parse-excel edge function only (in-memory processing).</p>
+<p><strong>2.7 ✅ PASS</strong> — No raw SQL or string concatenation in client code. All queries use the Supabase query builder. Edge function SQL files use DDL only.</p>
+<p><strong>2.8 ⬚ N/A</strong> — The only database function (<code>update_updated_at()</code> in schema.sql:54) is a simple trigger, not SECURITY DEFINER, and doesn't expose data.</p>
+
+<h3>Section 3 — Authentication &amp; Sessions</h3>
+<p><strong>3.1 ✅ PASS</strong> — <code>AuthGate</code> component in <code>app/_layout.tsx:25-46</code> guards all routes. Unauthenticated users are redirected to <code>/auth</code>.</p>
+<p><strong>3.2 ✅ PASS</strong> — Default-deny pattern. <code>AuthGate</code> redirects to <code>/auth</code> unless the user is authenticated, then checks onboarding. Auth and onboarding screens are the only exceptions.</p>
+<p><strong>3.3 ✅ PASS</strong> — All data operations use <code>supabase.auth.getUser()</code> (server-validated). Edge functions validate the JWT via <code>getUser(jwt)</code>. The initial session load in useAuth.ts uses <code>getSession()</code> only for UI state, not security decisions.</p>
+<p><strong>3.4 ⬚ N/A</strong> — No server-side auth callback route. This is a React Native app; OAuth uses <code>expo-web-browser</code> + deep link redirect, not a server callback.</p>
+<p><strong>3.5 ✅ PASS</strong> — Sessions stored in AsyncStorage (the React Native equivalent of httpOnly cookies). Not accessible to other apps on non-jailbroken devices. No localStorage/sessionStorage concern (not a web app).</p>
+<p><strong>3.6 ❌ FAIL</strong> — Finding #1. <code>parse-excel</code> and <code>map-import-columns</code> edge functions have no auth check.</p>
+<p><strong>3.7 ⚠️ PARTIAL</strong> — OAuth uses <code>expo-web-browser</code> which provides some CSRF protection via system browser session. However, the manual token extraction from URL fragments (useAuth.ts:66-77) bypasses Supabase's recommended PKCE flow. The state parameter is handled by Supabase internally but isn't verified client-side.</p>
+<p><strong>3.8 ⬚ N/A</strong> — Password reset is handled entirely by Supabase Auth (no custom reset flow in the app).</p>
+
+<h3>Section 4 — Server-Side Validation</h3>
+<p><strong>4.1 ⚠️ PARTIAL</strong> — Edge functions with auth validate <code>trigger</code> and <code>forced_type</code> against allowlists (generate-insight), and <code>period_type</code> against enum (generate-reflection). However, there's no schema validation library (Zod, etc.) — validation is ad-hoc. Client API functions accept <code>Record&lt;string, any&gt;</code> with no validation at all.</p>
+<p><strong>4.2 ✅ PASS</strong> — All write operations derive <code>user_id</code> from <code>supabase.auth.getUser()</code>. Never accepted from request body.</p>
+<p><strong>4.3 ✅ PASS</strong> — No <code>dangerouslySetInnerHTML</code> or equivalent. React Native's <code>Text</code> component auto-escapes content. No HTML rendering of user content.</p>
+<p><strong>4.4 ⬚ N/A</strong> — React Native app, not a web server. Supabase edge functions use POST appropriately.</p>
+<p><strong>4.5 ❌ FAIL</strong> — Finding #8. Three edge functions leak <code>err.message</code> to clients.</p>
+<p><strong>4.6 ⬚ N/A</strong> — No webhook endpoints. The app doesn't receive webhooks.</p>
+
+<h3>Section 5 — Dependencies</h3>
+<p><strong>5.1 ⚠️ PARTIAL</strong> — <code>npm audit</code> reports moderate vulnerabilities in transitive Expo dependencies (<code>@expo/config-plugins</code> → <code>xcode</code>, <code>postcss</code>). Fix available in Expo 56 (major version bump). Also <code>uuid</code> via <code>@expo/ngrok</code> (dev dependency only).</p>
+<p><strong>5.2 ✅ PASS</strong> — All packages are well-known, widely-used libraries. No suspicious or hallucinated package names found.</p>
+<p><strong>5.3 ✅ PASS</strong> — <code>package-lock.json</code> is present (tracked in git based on git status showing it as modified).</p>
+<p><strong>5.4 ⚠️ PARTIAL</strong> — The Expo 54 ecosystem has known moderate vulnerabilities. Upgrade path exists (Expo 56) but requires a major version bump. The <code>deno.land/std@0.168.0</code> import in edge functions is also outdated.</p>
+<p><strong>5.5 ✅ PASS</strong> — All dependencies in package.json are actively used: Expo ecosystem, Supabase, React Query, papaparse (import), xlsx (import), chart library, etc.</p>
+
+<h3>Section 6 — Rate Limiting</h3>
+<p><strong>6.1 ❌ FAIL</strong> — Findings #6, #7. <code>map-import-columns</code>, <code>parse-excel</code>, and <code>recommend-tournaments</code> call external APIs or do expensive work with no rate limiting.</p>
+<p><strong>6.2 ⬚ N/A</strong> — Auth endpoints are Supabase-managed. Supabase Auth has built-in rate limiting on signup/login.</p>
+<p><strong>6.3 ⚠️ PARTIAL</strong> — The 3 rate-limited functions use database-backed cooldowns (reliable, persists across deploys). However, the implementation is per-user, not per-IP — an unauthenticated attacker hitting the unprotected endpoints isn't rate-limited at all.</p>
+
+<h3>Section 7 — CORS</h3>
+<p><strong>7.1 ⬚ N/A</strong> — React Native app. API calls are made via the Supabase client SDK (not browser fetch), so CORS doesn't apply. Edge functions handle OPTIONS for web compatibility but this is a mobile-only app.</p>
+<p><strong>7.2 ⬚ N/A</strong> — Same as 7.1.</p>
+
+<h3>Section 8 — File Uploads</h3>
+<p><strong>8.1 ⚠️ PARTIAL</strong> — Client-side: <code>DocumentPicker</code> restricts MIME types (CSV, Excel, TXT). Server-side: <code>parse-excel</code> validates that the workbook has sheets and rows. However, there's no file size limit and MIME types can be spoofed.</p>
+<p><strong>8.2 ⬚ N/A</strong> — Files are not stored. They're parsed in-memory in the edge function and discarded. Only the extracted expense data is persisted to the database.</p>
+<p><strong>8.3 ⬚ N/A</strong> — Files are processed in-memory via SheetJS in a Deno edge function sandbox. No file system storage or execution risk.</p>

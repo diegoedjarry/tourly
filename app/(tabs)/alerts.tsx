@@ -1,21 +1,34 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   ScrollView,
   View,
-  Text,
   StyleSheet,
   TouchableOpacity,
   Modal,
   Pressable,
   ActivityIndicator,
 } from 'react-native';
+import { Text } from '@/components/ui/text';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAppQuery } from '@/hooks/useAppQuery';
 import { DEMO_MODE } from '@/config/demo';
 import { apiPatchTournament } from '@/lib/api';
 import { useDemoData } from '@/hooks/useDemoData';
 import { CourtIcon } from '@/components/ui/court-icon';
-import { fmtDate } from '@/utils/deadlines';
+import { fmtDate, calcDeadlines, getOnsiteDeadlines, getCircuit } from '@/utils/deadlines';
+import { useFirstVisit } from '@/hooks/useFirstVisit';
+import { useTabSwipe } from '@/hooks/useTabSwipe';
+import { ScreenWalkthrough } from '@/components/ui/screen-walkthrough';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { TournamentDetail } from '@/app/(tabs)/tournaments';
+import { AgentIcon } from '@/components/ui/agent-icon';
+import { T } from '@/constants/theme';
+import { useLanguage } from '@/hooks/useLanguage';
+
+const ALERTS_WALKTHROUGH = [
+  { icon: '🔔', title: 'Deadline alerts', body: 'See all upcoming ITF & ATP Tour deadlines grouped by urgency — urgent (red), this week (amber), and upcoming (green).' },
+  { icon: '✍️', title: 'Quick actions', body: 'Tap any alert to see details. For withdrawal deadlines, you can mark a tournament as withdrawn right from here.' },
+];
 
 type Urgency = 'urgent' | 'week' | 'upcoming';
 
@@ -32,18 +45,36 @@ interface AlertItem {
 }
 
 function countryFlag(country: string): string {
-  const map: Record<string, string> = {
-    BR: '🇧🇷', AR: '🇦🇷', US: '🇺🇸', ES: '🇪🇸', AU: '🇦🇺', FR: '🇫🇷',
-    GB: '🇬🇧', DE: '🇩🇪', IT: '🇮🇹', CL: '🇨🇱', MX: '🇲🇽', PT: '🇵🇹',
-  };
-  return map[(country ?? '').toUpperCase()] ?? '🌍';
+  const code = (country ?? '').toUpperCase();
+  if (code.length !== 2) return '🌍';
+  return String.fromCodePoint(...[...code].map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
+}
+
+function parseLocalDate(val: any): Date | null {
+  if (!val) return null;
+  if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val)) {
+    const [y, m, d] = val.split('-').map(Number);
+    return new Date(y, m - 1, d);
+  }
+  const d = new Date(typeof val === 'number' ? val : String(val));
+  return isNaN(d.getTime()) ? null : d;
 }
 
 function daysUntil(dateStr: string | undefined): number | null {
   if (!dateStr) return null;
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  const target = new Date(dateStr); target.setHours(0, 0, 0, 0);
+  const target = parseLocalDate(dateStr);
+  if (!target) return null;
+  target.setHours(0, 0, 0, 0);
   return Math.round((target.getTime() - today.getTime()) / 86400000);
+}
+
+function hoursUntil(dateStr: string | undefined): number | null {
+  if (!dateStr) return null;
+  const target = parseLocalDate(dateStr);
+  if (!target) return null;
+  target.setHours(14, 0, 0, 0);
+  return Math.round((target.getTime() - Date.now()) / 3600000);
 }
 
 function buildAlerts(tournaments: any[]): AlertItem[] {
@@ -51,10 +82,16 @@ function buildAlerts(tournaments: any[]): AlertItem[] {
   for (const t of tournaments) {
     if (t.isWithdrawn) continue;
 
-    if (t.withdrawalDeadline) {
-      const days = daysUntil(t.withdrawalDeadline);
-      if (days !== null && days >= 0 && days <= 30) {
-        const urgency: Urgency = days === 0 ? 'urgent' : days <= 7 ? 'week' : 'upcoming';
+    const calc = t.startDate ? calcDeadlines(t.startDate, t.category) : null;
+    const withdrawal = calc?.withdrawalDeadline ?? t.withdrawalDeadline;
+    const signUp = calc?.signUpDeadline ?? t.signUpDeadline;
+    const freeze = calc?.freezeDeadline ?? t.freezeDeadline;
+
+    if (withdrawal) {
+      const days = daysUntil(withdrawal);
+      if (days !== null && days >= -7 && days <= 30) {
+        const hours = hoursUntil(withdrawal);
+        const urgency: Urgency = days < 0 ? 'urgent' : days === 0 ? 'urgent' : days <= 7 ? 'week' : 'upcoming';
         items.push({
           id: `${t.id}-withdrawal`,
           flag: t.country ? countryFlag(t.country) : '🌍',
@@ -62,17 +99,19 @@ function buildAlerts(tournaments: any[]): AlertItem[] {
           tournamentId: t.id,
           deadlineType: 'Withdrawal',
           surface: t.surface ?? '',
-          exactDate: t.withdrawalDeadline,
+          exactDate: withdrawal,
           urgency,
-          timeLabel: days === 0 ? 'today' : `${days}d`,
+          timeLabel: days < 0 ? `${Math.abs(days)}d ago` : days === 0 ? 'today'
+            : (hours !== null && hours > 0 && hours < 36) ? `${hours}h` : `${days}d`,
         });
       }
     }
 
-    if (!t.isRegistered && t.signUpDeadline) {
-      const days = daysUntil(t.signUpDeadline);
-      if (days !== null && days >= 0 && days <= 30) {
-        const urgency: Urgency = days === 0 ? 'urgent' : days <= 7 ? 'week' : 'upcoming';
+    if (!t.isRegistered && signUp) {
+      const days = daysUntil(signUp);
+      if (days !== null && days >= -7 && days <= 30) {
+        const hours = hoursUntil(signUp);
+        const urgency: Urgency = days < 0 ? 'urgent' : days === 0 ? 'urgent' : days <= 7 ? 'week' : 'upcoming';
         items.push({
           id: `${t.id}-signup`,
           flag: t.country ? countryFlag(t.country) : '🌍',
@@ -80,27 +119,30 @@ function buildAlerts(tournaments: any[]): AlertItem[] {
           tournamentId: t.id,
           deadlineType: 'Sign up',
           surface: t.surface ?? '',
-          exactDate: t.signUpDeadline,
+          exactDate: signUp,
           urgency,
-          timeLabel: days === 0 ? 'today' : `${days}d`,
+          timeLabel: days < 0 ? `${Math.abs(days)}d ago` : days === 0 ? 'today'
+            : (hours !== null && hours > 0 && hours < 36) ? `${hours}h` : `${days}d`,
         });
       }
     }
 
-    if (t.freezeDeadline) {
-      const days = daysUntil(t.freezeDeadline);
-      if (days !== null && days >= 0 && days <= 14) {
-        const urgency: Urgency = days === 0 ? 'urgent' : days <= 7 ? 'week' : 'upcoming';
+    if (freeze) {
+      const days = daysUntil(freeze);
+      if (days !== null && days >= -7 && days <= 14) {
+        const hours = hoursUntil(freeze);
+        const urgency: Urgency = days < 0 ? 'urgent' : days === 0 ? 'urgent' : days <= 7 ? 'week' : 'upcoming';
         items.push({
           id: `${t.id}-freeze`,
           flag: t.country ? countryFlag(t.country) : '🌍',
           tournament: t.name,
           tournamentId: t.id,
-          deadlineType: 'Freeze / doubles entry',
+          deadlineType: 'Doubles entry',
           surface: t.surface ?? '',
-          exactDate: t.freezeDeadline,
+          exactDate: freeze,
           urgency,
-          timeLabel: days === 0 ? 'today' : `${days}d`,
+          timeLabel: days < 0 ? `${Math.abs(days)}d ago` : days === 0 ? 'today'
+            : (hours !== null && hours > 0 && hours < 36) ? `${hours}h` : `${days}d`,
         });
       }
     }
@@ -108,12 +150,52 @@ function buildAlerts(tournaments: any[]): AlertItem[] {
   return items.sort((a, b) => a.exactDate.localeCompare(b.exactDate));
 }
 
-const TIME_COLOR: Record<Urgency, string> = { urgent: '#E24B4A', week: '#EF9F27', upcoming: '#2D9E6B' };
-const GROUP_LABELS: { key: Urgency; label: string }[] = [
-  { key: 'urgent', label: 'URGENT' },
-  { key: 'week', label: 'THIS WEEK' },
-  { key: 'upcoming', label: 'UPCOMING' },
-];
+interface OnsiteAlertItem {
+  id: string;
+  flag: string;
+  tournament: string;
+  tournamentId: string;
+  label: string;
+  time: string;
+  surface: string;
+  dateStr: string;
+}
+
+function buildOnsiteAlerts(tournaments: any[]): OnsiteAlertItem[] {
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const items: OnsiteAlertItem[] = [];
+  for (const t of tournaments) {
+    if (t.isWithdrawn) continue;
+    if (!['challenger', 'itf'].includes(getCircuit(t.category))) continue;
+    if (!t.startDate) continue;
+    const onsiteDeadlines = getOnsiteDeadlines(t.startDate, t.category);
+    for (const od of onsiteDeadlines) {
+      if (od.dateStr !== todayStr) continue;
+      items.push({
+        id: `${t.id}-onsite-${od.label}`,
+        flag: t.country ? countryFlag(t.country) : '🌍',
+        tournament: t.name,
+        tournamentId: t.id,
+        label: od.label,
+        time: od.time,
+        surface: t.surface ?? '',
+        dateStr: od.dateStr,
+      });
+    }
+  }
+  return items.sort((a, b) => a.time.localeCompare(b.time));
+}
+
+const TIME_COLOR: Record<Urgency, string> = { urgent: T.red, week: T.amber, upcoming: T.green };
+const DOT_COLOR: Record<Urgency, string> = { urgent: T.red, week: T.amber, upcoming: T.green };
+function getGroupLabels(t: (key: any) => string): { key: Urgency; label: string }[] {
+  return [
+    { key: 'urgent', label: t('alerts.urgent') },
+    { key: 'week', label: t('alerts.week') },
+    { key: 'upcoming', label: t('alerts.upcomingLabel') },
+  ];
+}
 const URGENCY_ORDER: Record<Urgency, number> = { urgent: 0, week: 1, upcoming: 2 };
 
 interface TournamentAlertGroup {
@@ -149,8 +231,10 @@ function buildTournamentGroups(alerts: AlertItem[]): TournamentAlertGroup[] {
   }
   for (const g of map.values()) {
     g.deadlines.sort((a, b) => {
-      const uo = URGENCY_ORDER[a.urgency] - URGENCY_ORDER[b.urgency];
-      return uo !== 0 ? uo : a.exactDate.localeCompare(b.exactDate);
+      const aPast = a.timeLabel.includes('ago') ? 1 : 0;
+      const bPast = b.timeLabel.includes('ago') ? 1 : 0;
+      if (aPast !== bPast) return aPast - bPast;
+      return a.exactDate.localeCompare(b.exactDate);
     });
   }
   return Array.from(map.values()).sort((a, b) => {
@@ -162,64 +246,76 @@ function buildTournamentGroups(alerts: AlertItem[]): TournamentAlertGroup[] {
 function TournamentDeadlineGroup({
   group,
   onPressItem,
+  onViewTournament,
 }: {
   group: TournamentAlertGroup;
   onPressItem: (item: AlertItem) => void;
+  onViewTournament: (tournamentId: string) => void;
 }) {
   return (
-    <View style={styles.tGroup}>
-      <View style={styles.tGroupHeader}>
-        <View style={styles.tGroupNameRow}>
-          <Text style={styles.tGroupName} numberOfLines={1}>{group.flag} {group.name}</Text>
+    <View style={s.tGroup}>
+      <TouchableOpacity style={s.tGroupHeader} onPress={() => onViewTournament(group.tournamentId)} activeOpacity={0.7}>
+        <View style={s.tGroupNameRow}>
+          <Text style={s.tGroupName} numberOfLines={1}>{group.flag} {group.name}</Text>
           {group.surface ? <CourtIcon surface={group.surface} size="sm" /> : null}
         </View>
-      </View>
-      {group.deadlines.map((item, idx) => (
-        <View key={item.id}>
-          <TouchableOpacity style={styles.deadlineRow} onPress={() => onPressItem(item)} activeOpacity={0.6}>
-            <Text style={styles.deadlineType}>{item.deadlineType}</Text>
-            <Text style={[styles.timeLabel, { color: TIME_COLOR[item.urgency] }]}>{item.timeLabel}</Text>
-          </TouchableOpacity>
-          {idx < group.deadlines.length - 1 && <View style={styles.tGroupSep} />}
-        </View>
-      ))}
+        <Text style={s.tGroupArrow}>›</Text>
+      </TouchableOpacity>
+      {group.deadlines.map((item, idx) => {
+        const isPast = item.timeLabel.includes('ago');
+        return (
+          <View key={item.id}>
+            <TouchableOpacity style={[s.deadlineRow, isPast && s.deadlineRowPast]} onPress={() => onPressItem(item)} activeOpacity={0.6}>
+              <View style={[s.urgencyDot, { backgroundColor: isPast ? T.textMuted : DOT_COLOR[item.urgency] }]} />
+              <Text style={[s.deadlineType, isPast && s.deadlineTypePast]}>{item.deadlineType}</Text>
+              <Text style={[s.timeLabel, { color: isPast ? T.textMuted : TIME_COLOR[item.urgency] }]}>{item.timeLabel}</Text>
+            </TouchableOpacity>
+            {idx < group.deadlines.length - 1 && <View style={s.tGroupSep} />}
+          </View>
+        );
+      })}
     </View>
   );
 }
 
-function AlertDetail({ item, onDismiss, onWithdraw }: {
-  item: AlertItem; onDismiss: () => void; onWithdraw?: () => void;
+function AlertDetail({ item, onDismiss, onWithdraw, onViewTournament }: {
+  item: AlertItem; onDismiss: () => void; onWithdraw?: () => void; onViewTournament: () => void;
 }) {
+  const { t } = useLanguage();
   return (
     <Modal transparent animationType="fade" onRequestClose={onDismiss}>
-      <Pressable style={styles.backdrop} onPress={onDismiss}>
-        <Pressable style={styles.sheet} onPress={() => {}}>
-          <View style={styles.sheetHandle} />
-          <Text style={styles.sheetFlag}>{item.flag}</Text>
-          <Text style={styles.sheetTournament}>{item.tournament}</Text>
-          <View style={styles.detailRows}>
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>deadline</Text>
-              <Text style={styles.detailValue}>{item.deadlineType}</Text>
+      <Pressable style={s.backdrop} onPress={onDismiss}>
+        <Pressable style={s.sheet} onPress={() => {}}>
+          <View style={s.sheetHandle} />
+          <Text style={s.sheetFlag}>{item.flag}</Text>
+          <Text style={s.sheetTournament}>{item.tournament}</Text>
+          <View style={s.detailRows}>
+            <View style={s.detailRow}>
+              <Text style={s.detailLabel}>{t('alerts.deadline')}</Text>
+              <Text style={s.detailValue}>{item.deadlineType}</Text>
             </View>
-            <View style={styles.detailSep} />
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>date</Text>
-              <Text style={styles.detailValue}>{fmtDate(item.exactDate)}</Text>
+            <View style={s.detailSep} />
+            <View style={s.detailRow}>
+              <Text style={s.detailLabel}>{t('alerts.date')}</Text>
+              <Text style={s.detailValue}>{fmtDate(item.exactDate)}</Text>
             </View>
-            <View style={styles.detailSep} />
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>surface</Text>
-              <Text style={styles.detailValue}>{item.surface}</Text>
+            <View style={s.detailSep} />
+            <View style={s.detailRow}>
+              <Text style={s.detailLabel}>{t('alerts.surfaceLabel')}</Text>
+              <Text style={s.detailValue}>{item.surface}</Text>
             </View>
           </View>
-          {item.deadlineType === 'withdrawal' && onWithdraw && (
-            <TouchableOpacity style={styles.withdrawBtn} onPress={onWithdraw} activeOpacity={0.8}>
-              <Text style={styles.withdrawBtnText}>withdraw</Text>
+          <TouchableOpacity style={s.viewTournamentBtn} onPress={onViewTournament} activeOpacity={0.8}>
+            <Text style={s.viewTournamentText}>{t('alerts.viewTournament')}</Text>
+            <Text style={s.viewTournamentArrow}>›</Text>
+          </TouchableOpacity>
+          {item.deadlineType === 'Withdrawal' && onWithdraw && (
+            <TouchableOpacity style={s.withdrawBtn} onPress={onWithdraw} activeOpacity={0.8}>
+              <Text style={s.withdrawBtnText}>{t('alerts.withdrawAction')}</Text>
             </TouchableOpacity>
           )}
-          <TouchableOpacity style={styles.gotItBtn} onPress={onDismiss} activeOpacity={0.8}>
-            <Text style={styles.gotItText}>got it</Text>
+          <TouchableOpacity style={s.gotItBtn} onPress={onDismiss} activeOpacity={0.8}>
+            <Text style={s.gotItText}>{t('alerts.gotIt')}</Text>
           </TouchableOpacity>
         </Pressable>
       </Pressable>
@@ -227,23 +323,24 @@ function AlertDetail({ item, onDismiss, onWithdraw }: {
   );
 }
 
-function WithdrawConfirmModal({ item, onConfirm, onCancel }: {
-  item: AlertItem; onConfirm: () => void; onCancel: () => void;
+function WithdrawConfirmModal({ item, onConfirm, onCancel, loading }: {
+  item: AlertItem; onConfirm: () => void; onCancel: () => void; loading?: boolean;
 }) {
+  const { t } = useLanguage();
   return (
     <Modal transparent animationType="fade" onRequestClose={onCancel}>
-      <Pressable style={styles.dialogBackdrop} onPress={onCancel}>
-        <Pressable style={styles.dialog} onPress={() => {}}>
-          <Text style={styles.dialogTitle}>Withdraw from this tournament?</Text>
-          <Text style={styles.dialogBody}>
-            {item.flag} {item.tournament} will be removed from your list. This cannot be undone.
+      <Pressable style={s.dialogBackdrop} onPress={onCancel}>
+        <Pressable style={s.dialog} onPress={() => {}}>
+          <Text style={s.dialogTitle}>{t('alerts.withdrawConfirm')}</Text>
+          <Text style={s.dialogBody}>
+            {item.flag} {item.tournament} {t('alerts.withdrawWarning')}
           </Text>
-          <View style={styles.dialogActions}>
-            <TouchableOpacity style={styles.cancelBtn} onPress={onCancel} activeOpacity={0.7}>
-              <Text style={styles.cancelText}>cancel</Text>
+          <View style={s.dialogActions}>
+            <TouchableOpacity style={s.cancelBtn} onPress={onCancel} activeOpacity={0.7} disabled={loading}>
+              <Text style={s.cancelText}>{t('common.cancel')}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.confirmWithdrawBtn} onPress={onConfirm} activeOpacity={0.8}>
-              <Text style={styles.confirmWithdrawText}>withdraw</Text>
+            <TouchableOpacity style={s.confirmWithdrawBtn} onPress={onConfirm} activeOpacity={0.8} disabled={loading}>
+              {loading ? <ActivityIndicator color="#FFFFFF" size="small" /> : <Text style={s.confirmWithdrawText}>{t('alerts.withdrawAction')}</Text>}
             </TouchableOpacity>
           </View>
         </Pressable>
@@ -253,63 +350,104 @@ function WithdrawConfirmModal({ item, onConfirm, onCancel }: {
 }
 
 export default function AlertsScreen() {
+  const { t } = useLanguage();
   const { data, isLoading } = useAppQuery({ tournaments: {} });
   const demoCtx = useDemoData();
   const [selected, setSelected] = useState<AlertItem | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(null);
   const [pendingWithdraw, setPendingWithdraw] = useState<AlertItem | null>(null);
+  const [withdrawing, setWithdrawing] = useState(false);
+  const { isFirstVisit, markVisited } = useFirstVisit('alerts');
+  const swipeHandlers = useTabSwipe();
 
-  const alerts = buildAlerts(data?.tournaments ?? []);
-  const tournamentGroups = buildTournamentGroups(alerts);
+  const tournaments = data?.tournaments ?? [];
+  const onsiteAlerts = useMemo(() => buildOnsiteAlerts(tournaments), [tournaments]);
+  const alerts = useMemo(() => buildAlerts(tournaments), [tournaments]);
+  const tournamentGroups = useMemo(() => buildTournamentGroups(alerts), [alerts]);
 
-  // Urgency sections; each contains one or more tournament groups
-  const sections: { key: Urgency; label: string; groups: TournamentAlertGroup[] }[] = [];
-  for (const g of tournamentGroups) {
-    const last = sections[sections.length - 1];
-    if (!last || last.key !== g.section) {
-      sections.push({
-        key: g.section,
-        label: GROUP_LABELS.find(l => l.key === g.section)?.label ?? g.section.toUpperCase(),
-        groups: [g],
-      });
-    } else {
-      last.groups.push(g);
+  const groupLabels = useMemo(() => getGroupLabels(t), [t]);
+  const sections = useMemo(() => {
+    const result: { key: Urgency; label: string; groups: TournamentAlertGroup[] }[] = [];
+    for (const g of tournamentGroups) {
+      const last = result[result.length - 1];
+      if (!last || last.key !== g.section) {
+        result.push({
+          key: g.section,
+          label: groupLabels.find(l => l.key === g.section)?.label ?? g.section.toUpperCase(),
+          groups: [g],
+        });
+      } else {
+        last.groups.push(g);
+      }
     }
-  }
+    return result;
+  }, [tournamentGroups, groupLabels]);
 
   async function handleWithdrawConfirm() {
-    if (!pendingWithdraw) return;
-    if (DEMO_MODE) {
-      demoCtx?.patchTournament(pendingWithdraw.tournamentId, { isWithdrawn: true });
-    } else {
-      await apiPatchTournament(pendingWithdraw.tournamentId, { isWithdrawn: true });
+    if (!pendingWithdraw || withdrawing) return;
+    setWithdrawing(true);
+    try {
+      if (DEMO_MODE) {
+        demoCtx?.patchTournament(pendingWithdraw.tournamentId, { isWithdrawn: true });
+      } else {
+        await apiPatchTournament(pendingWithdraw.tournamentId, { isWithdrawn: true });
+      }
+      setPendingWithdraw(null);
+    } finally {
+      setWithdrawing(false);
     }
-    setPendingWithdraw(null);
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+    <SafeAreaView style={s.safe}>
+      <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent} showsVerticalScrollIndicator={false} {...swipeHandlers}>
 
-        <View style={styles.topBar}>
-          <Text style={styles.topTitle}>Alerts</Text>
+        <View style={s.topBar}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <AgentIcon size={70} />
+            <Text style={s.topTitle}>{t('alerts.title')}</Text>
+          </View>
         </View>
 
+        {onsiteAlerts.length > 0 && (
+          <View style={s.section}>
+            <Text style={s.sectionLabel}>{t('alerts.todayOnSite')}</Text>
+            {onsiteAlerts.map(item => (
+              <View key={item.id} style={s.tGroup}>
+                <TouchableOpacity style={s.tGroupHeader} onPress={() => setDetailId(item.tournamentId)} activeOpacity={0.7}>
+                  <View style={s.tGroupNameRow}>
+                    <Text style={{ fontSize: 16 }}>🎾</Text>
+                    <Text style={s.tGroupName}>{item.flag} {item.tournament}</Text>
+                  </View>
+                  <Text style={s.tGroupArrow}>›</Text>
+                </TouchableOpacity>
+                <View style={s.deadlineRow}>
+                  <View style={[s.urgencyDot, { backgroundColor: T.amber }]} />
+                  <Text style={s.deadlineType}>{item.label}</Text>
+                  <Text style={[s.timeLabel, { color: T.amber }]}>{item.time}</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
+
         {isLoading ? (
-          <ActivityIndicator color="#5B5BD6" style={{ marginTop: 40 }} />
-        ) : sections.length === 0 ? (
-          <View style={styles.empty}>
-            <Text style={styles.emptyIcon}>📅</Text>
-            <Text style={styles.emptyText}>no upcoming deadlines</Text>
+          <ActivityIndicator color={T.accent} style={{ marginTop: 48 }} />
+        ) : sections.length === 0 && onsiteAlerts.length === 0 ? (
+          <View style={s.empty}>
+            <Text style={s.emptyIcon}>📅</Text>
+            <Text style={s.emptyText}>{t('alerts.noUpcomingDeadlines')}</Text>
           </View>
         ) : (
           sections.map(({ key, label, groups }) => (
-            <View key={key} style={styles.section}>
-              <Text style={styles.sectionLabel}>{label}</Text>
+            <View key={key} style={s.section}>
+              <Text style={s.sectionLabel}>{label}</Text>
               {groups.map((group) => (
                 <TournamentDeadlineGroup
                   key={group.tournamentId}
                   group={group}
                   onPressItem={setSelected}
+                  onViewTournament={setDetailId}
                 />
               ))}
             </View>
@@ -322,8 +460,13 @@ export default function AlertsScreen() {
         <AlertDetail
           item={selected}
           onDismiss={() => setSelected(null)}
-          onWithdraw={selected.deadlineType === 'withdrawal' ? () => { setSelected(null); setPendingWithdraw(selected); } : undefined}
+          onWithdraw={selected.deadlineType === 'Withdrawal' ? () => { setSelected(null); setPendingWithdraw(selected); } : undefined}
+          onViewTournament={() => { const id = selected.tournamentId; setSelected(null); setDetailId(id); }}
         />
+      )}
+
+      {detailId && (
+        <TournamentDetail tournamentId={detailId} onClose={() => setDetailId(null)} />
       )}
 
       {pendingWithdraw && (
@@ -331,59 +474,83 @@ export default function AlertsScreen() {
           item={pendingWithdraw}
           onConfirm={handleWithdrawConfirm}
           onCancel={() => setPendingWithdraw(null)}
+          loading={withdrawing}
         />
       )}
+      <ScreenWalkthrough steps={ALERTS_WALKTHROUGH} visible={isFirstVisit} onDismiss={markVisited} />
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#FAFAFA' },
+const s = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: T.bg },
   scroll: { flex: 1 },
-  scrollContent: { paddingHorizontal: 20, paddingBottom: 32 },
-  topBar: { paddingTop: 18, paddingBottom: 20 },
-  topTitle: { fontSize: 20, fontWeight: '700', color: '#2D2B55' },
-  sectionLabel: { fontSize: 11, fontWeight: '600', color: '#AAAAAA', letterSpacing: 0.8, marginBottom: 8, marginTop: 4 },
-  section: { marginBottom: 8 },
-  // Tournament deadline group card
-  tGroup: { backgroundColor: '#FFFFFF', borderRadius: 14, marginBottom: 10, overflow: 'hidden' },
-  tGroupHeader: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    paddingHorizontal: 16, paddingVertical: 12,
-    borderBottomWidth: 1, borderBottomColor: '#F0F0F0',
-  },
-  tGroupNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  tGroupName: { fontSize: 14, fontWeight: '700', color: '#2D2B55', flexShrink: 1 },
-  deadlineRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16, gap: 12 },
-  deadlineType: { fontSize: 13, color: '#666666', flex: 1 },
-  tGroupSep: { height: 1, backgroundColor: '#F0F0F0', marginLeft: 36 },
+  scrollContent: { paddingHorizontal: 16, paddingBottom: 32 },
 
-  timeLabel: { fontSize: 13, fontWeight: '700', flexShrink: 0 },
-  separator: { height: 1, backgroundColor: '#F0F0F0', marginLeft: 36 },
-  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', marginTop: 120, gap: 10 },
-  emptyIcon: { fontSize: 32 },
-  emptyText: { fontSize: 14, color: '#AAAAAA', fontWeight: '500' },
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingBottom: 40, paddingTop: 16, alignItems: 'center' },
-  sheetHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: '#DDDDDD', marginBottom: 24 },
-  sheetFlag: { fontSize: 36, marginBottom: 8 },
-  sheetTournament: { fontSize: 20, fontWeight: '700', color: '#2D2B55', marginBottom: 24, textAlign: 'center' },
-  detailRows: { width: '100%', backgroundColor: '#F8F8FB', borderRadius: 14, marginBottom: 16, overflow: 'hidden' },
-  detailRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16 },
-  detailSep: { height: 1, backgroundColor: '#EEEEEE', marginHorizontal: 16 },
-  detailLabel: { fontSize: 14, color: '#AAAAAA', fontWeight: '500' },
-  detailValue: { fontSize: 14, color: '#2D2B55', fontWeight: '600' },
-  withdrawBtn: { width: '100%', backgroundColor: '#E24B4A', borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginBottom: 10 },
-  withdrawBtnText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
-  gotItBtn: { width: '100%', backgroundColor: '#5B5BD6', borderRadius: 14, paddingVertical: 16, alignItems: 'center' },
+  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 16, paddingBottom: 24 },
+  topTitle: { fontSize: 18, fontWeight: '700', color: T.textPrimary },
+  avatarBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: T.card, borderWidth: 1.5, borderColor: T.accent, alignItems: 'center', justifyContent: 'center' },
+  avatarInitials: { fontSize: 13, fontWeight: '700', color: T.accent },
+
+  sectionLabel: { fontSize: 11, fontWeight: '600', color: T.textSecondary, letterSpacing: 1, marginBottom: 8, marginTop: 16, textTransform: 'uppercase' },
+  section: { marginBottom: 8 },
+
+  tGroup: { backgroundColor: T.card, borderRadius: 12, marginBottom: 8, overflow: 'hidden' },
+  tGroupHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 12, paddingVertical: 10,
+    borderBottomWidth: 1, borderBottomColor: T.cardBorder,
+  },
+  tGroupNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 },
+  tGroupArrow: { fontSize: 20, color: T.accent, fontWeight: '300' },
+  tGroupName: { fontSize: 14, fontWeight: '600', color: T.textPrimary, flexShrink: 1 },
+
+  deadlineRow: { flexDirection: 'row', alignItems: 'center', minHeight: 44, paddingHorizontal: 12, gap: 12 },
+  deadlineRowPast: { opacity: 0.45 },
+  urgencyDot: { width: 10, height: 10, borderRadius: 5 },
+  deadlineType: { fontSize: 12, color: T.textSecondary, flex: 1 },
+  deadlineTypePast: { textDecorationLine: 'line-through' as const },
+  tGroupSep: { height: 1, backgroundColor: T.cardBorder, marginLeft: 40 },
+
+  timeLabel: { fontSize: 12, fontWeight: '700', flexShrink: 0 },
+
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', marginTop: 120, gap: 32 },
+  emptyIcon: { fontSize: 48 },
+  emptyText: { fontSize: 16, color: T.textTertiary, fontWeight: '400' },
+
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'flex-end' },
+  sheet: { backgroundColor: T.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingBottom: 48, paddingTop: 24, alignItems: 'center' },
+  sheetHandle: { width: 32, height: 4, borderRadius: 2, backgroundColor: T.cardBorder, marginBottom: 24 },
+  sheetFlag: { fontSize: 48, marginBottom: 8 },
+  sheetTournament: { fontSize: 22, fontWeight: '700', color: T.textPrimary, marginBottom: 24, textAlign: 'center' },
+
+  detailRows: { width: '100%', backgroundColor: T.bg, borderRadius: 12, marginBottom: 12, overflow: 'hidden' },
+  detailRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 14 },
+  detailSep: { height: 1, backgroundColor: T.cardBorder, marginHorizontal: 16 },
+  detailLabel: { fontSize: 13, color: T.textTertiary, fontWeight: '400' },
+  detailValue: { fontSize: 13, color: T.textPrimary, fontWeight: '600' },
+
+  viewTournamentBtn: {
+    width: '100%', backgroundColor: T.card, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14,
+    marginBottom: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    borderWidth: 1, borderColor: T.cardBorder, minHeight: 40,
+  },
+  viewTournamentText: { color: T.accent, fontSize: 16, fontWeight: '600' },
+  viewTournamentArrow: { color: T.accent, fontSize: 22, fontWeight: '300' },
+
+  withdrawBtn: { width: '100%', backgroundColor: T.red, borderRadius: 16, minHeight: 48, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
+  withdrawBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+
+  gotItBtn: { width: '100%', backgroundColor: T.accent, borderRadius: 16, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
   gotItText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
-  dialogBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 28 },
-  dialog: { backgroundColor: '#FFFFFF', borderRadius: 20, padding: 24, width: '100%' },
-  dialogTitle: { fontSize: 17, fontWeight: '700', color: '#2D2B55', marginBottom: 10, textAlign: 'center' },
-  dialogBody: { fontSize: 14, color: '#777777', textAlign: 'center', lineHeight: 20, marginBottom: 24 },
-  dialogActions: { flexDirection: 'row', gap: 10 },
-  cancelBtn: { flex: 1, backgroundColor: '#F0F0F8', borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
-  cancelText: { fontSize: 15, fontWeight: '600', color: '#666666' },
-  confirmWithdrawBtn: { flex: 1, backgroundColor: '#E24B4A', borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
-  confirmWithdrawText: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
+
+  dialogBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 },
+  dialog: { backgroundColor: T.card, borderRadius: 16, padding: 24, width: '100%' },
+  dialogTitle: { fontSize: 16, fontWeight: '700', color: T.textPrimary, marginBottom: 8, textAlign: 'center' },
+  dialogBody: { fontSize: 13, color: T.textSecondary, textAlign: 'center', lineHeight: 20, marginBottom: 24 },
+  dialogActions: { flexDirection: 'row', gap: 8 },
+  cancelBtn: { flex: 1, backgroundColor: T.cardBorder, borderRadius: 12, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
+  cancelText: { fontSize: 16, fontWeight: '600', color: T.textSecondary },
+  confirmWithdrawBtn: { flex: 1, backgroundColor: T.red, borderRadius: 12, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
+  confirmWithdrawText: { fontSize: 16, fontWeight: '700', color: '#FFFFFF' },
 });

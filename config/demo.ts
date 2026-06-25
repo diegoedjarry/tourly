@@ -1,5 +1,6 @@
-// Set to false to use real InstantDB data and require login.
-export const DEMO_MODE = true;
+// Set EXPO_PUBLIC_DEMO_MODE=true in .env.local for local development.
+// Never set this in production builds.
+export const DEMO_MODE = process.env.EXPO_PUBLIC_DEMO_MODE === 'true';
 
 const T1 = 'd-t1'; // M25 Cuiabá    — ACTIVE today
 const T2 = 'd-t2'; // M25 Buenos Aires

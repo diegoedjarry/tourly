@@ -1,41 +1,50 @@
 import { QueryClient } from '@tanstack/react-query';
-import { MMKV } from 'react-native-mmkv';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export const mmkv = new MMKV({ id: 'tourly-query-cache' });
+const CACHE_KEY = 'react-query-cache';
+
+export async function clearPersistedCache() {
+  queryClient.clear();
+  await AsyncStorage.removeItem(CACHE_KEY).catch(() => {});
+}
 
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 1000 * 60 * 5,      // 5 min — don't refetch if data is fresh
-      gcTime: 1000 * 60 * 60 * 24,   // 24 hr — keep in memory
+      staleTime: 1000 * 60 * 5,
+      gcTime: 1000 * 60 * 60 * 24,
       retry: 2,
     },
   },
 });
 
-// Persist cache to MMKV so it survives app restarts
 export function persistCacheToMmkv() {
-  const CACHE_KEY = 'react-query-cache';
-  // Save on cache change
-  queryClient.getQueryCache().subscribe(() => {
+  if (typeof window === 'undefined') return;
+  // Restore persisted cache on startup
+  AsyncStorage.getItem(CACHE_KEY).then((raw) => {
+    if (!raw) return;
     try {
-      mmkv.set(CACHE_KEY, JSON.stringify(queryClient.getQueryCache().getAll().map(q => ({
-        queryKey: q.queryKey,
-        queryHash: q.queryHash,
-        state: q.state,
-      }))));
-    } catch {}
-  });
-  // Restore on startup
-  try {
-    const cached = mmkv.getString(CACHE_KEY);
-    if (cached) {
-      const entries = JSON.parse(cached);
+      const entries = JSON.parse(raw);
       entries.forEach((entry: any) => {
         if (entry.state?.data) {
           queryClient.setQueryData(entry.queryKey, entry.state.data);
         }
       });
-    }
-  } catch {}
+    } catch {}
+  });
+
+  let persistTimer: ReturnType<typeof setTimeout> | null = null;
+  queryClient.getQueryCache().subscribe(() => {
+    if (persistTimer) clearTimeout(persistTimer);
+    persistTimer = setTimeout(() => {
+      try {
+        const entries = queryClient.getQueryCache().getAll().map(q => ({
+          queryKey: q.queryKey,
+          queryHash: q.queryHash,
+          state: q.state,
+        }));
+        AsyncStorage.setItem(CACHE_KEY, JSON.stringify(entries)).catch(() => {});
+      } catch {}
+    }, 2000);
+  });
 }

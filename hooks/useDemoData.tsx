@@ -11,6 +11,8 @@ interface DemoCtx {
   patchTournament: (id: string, updates: Record<string, any>) => void;
   addTournament: (t: any) => void;
   addExpense: (e: any) => void;
+  patchExpense: (id: string, updates: Record<string, any>) => void;
+  deleteExpense: (id: string) => void;
 }
 
 const DemoContext = createContext<DemoCtx | null>(null);
@@ -67,8 +69,32 @@ export function DemoDataProvider({ children }: { children: React.ReactNode }) {
     });
   }
 
+  function patchExpense(expenseId: string, updates: Record<string, any>) {
+    setDemoData(prev => {
+      const next = {
+        ...prev,
+        expenses: (prev.expenses as any[]).map((e: any) =>
+          e.id === expenseId ? { ...e, ...updates } : e
+        ),
+      };
+      save(next);
+      return next;
+    });
+  }
+
+  function deleteExpense(expenseId: string) {
+    setDemoData(prev => {
+      const next = {
+        ...prev,
+        expenses: (prev.expenses as any[]).filter((e: any) => e.id !== expenseId),
+      };
+      save(next);
+      return next;
+    });
+  }
+
   return (
-    <DemoContext.Provider value={{ demoData, patchTournament, addTournament, addExpense }}>
+    <DemoContext.Provider value={{ demoData, patchTournament, addTournament, addExpense, patchExpense, deleteExpense }}>
       {children}
     </DemoContext.Provider>
   );

@@ -1,8 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   ScrollView,
   View,
-  Text,
   StyleSheet,
   TouchableOpacity,
   Modal,
@@ -13,37 +12,47 @@ import {
   ActivityIndicator,
   Switch,
 } from 'react-native';
+import { Text } from '@/components/ui/text';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useAppQuery } from '@/hooks/useAppQuery';
 import { apiPatchTournament, apiAddTournament } from '@/lib/api';
 import { DatePickerField } from '@/components/ui/date-picker-field';
 import { CourtIcon } from '@/components/ui/court-icon';
-import { calcDeadlines, fmtDeadline, fmtDate, fmtDateRange } from '@/utils/deadlines';
+import { AgentIcon } from '@/components/ui/agent-icon';
+import { calcDeadlines, fmtDeadline, fmtDate, fmtDateRange, getDeadlineLabels, getStoredDeadlineFields, getOnsiteDeadlines } from '@/utils/deadlines';
+import { T } from '@/constants/theme';
 import { DEMO_MODE } from '@/config/demo';
+import { useLanguage } from '@/hooks/useLanguage';
 import { useDemoData } from '@/hooks/useDemoData';
+import { useFirstVisit } from '@/hooks/useFirstVisit';
+import { useTabSwipe } from '@/hooks/useTabSwipe';
+import { ScreenWalkthrough } from '@/components/ui/screen-walkthrough';
+
+const TOURNAMENTS_WALKTHROUGH = [
+  { icon: '🎾', title: 'Your tournaments', body: 'Browse all your tournaments grouped by time — upcoming, in progress, and past. Each card is color-coded by surface.' },
+  { icon: '➕', title: 'Add a tournament', body: 'Tap the + button to add a new tournament. Deadlines are auto-calculated from the start date.' },
+  { icon: '📋', title: 'Tournament details', body: 'Tap any tournament to see its full breakdown — deadlines, expenses, prize money, and net result.' },
+];
+import { TournamentExpenseDetail } from '@/app/(tabs)/expenses';
+
+function genId(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
 
 // ─── Types & constants ────────────────────────────────────────────────────────
 
 type Surface = 'clay' | 'hard' | 'grass';
 type Filter  = 'all' | 'active' | 'upcoming' | 'past' | 'withdrawn';
 
-const SURFACE_BG:   Record<string, string> = { clay: '#FAEEDA', hard: '#E6F1FB', grass: '#EAF3DE' };
-const SURFACE_TEXT: Record<string, string> = { clay: '#854F0B', hard: '#185FA5', grass: '#3B6D11' };
+const SURFACE_BG:   Record<string, string> = { clay: '#2A1A08', hard: '#081828', grass: '#0A1E06' };
+const SURFACE_TEXT: Record<string, string> = { clay: T.clayText, hard: T.hardText, grass: T.grassText };
 
-const COUNTRY_NAME: Record<string, string> = {
-  AR: 'Argentina', AU: 'Australia', BR: 'Brazil',  CL: 'Chile',
-  DE: 'Germany',   ES: 'Spain',     FR: 'France',  GB: 'United Kingdom',
-  IT: 'Italy',     MX: 'Mexico',    PT: 'Portugal', US: 'United States',
-};
-
-const FILTERS: { key: Filter; label: string }[] = [
-  { key: 'all', label: 'All' },
-  { key: 'active', label: 'Active' },
-  { key: 'upcoming', label: 'Upcoming' },
-  { key: 'past', label: 'Past' },
-  { key: 'withdrawn', label: 'Withdrawn' },
-];
+// FILTERS is computed inside TournamentsScreen using t() — see getFilters() below
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -88,12 +97,12 @@ function getPill(t: any): { type: string; label: string } | null {
   if (getGroup(t) === 'active' && t.isRegistered) return null;
   if (!t.isRegistered) {
     const days = daysUntil(t.signUpDeadline);
-    if (days === null) return { type: 'signup', label: 'sign up' };
+    if (days === null) return { type: 'signup', label: 'Sign Up' };
     if (days < 0) return null;
-    return { type: 'signup', label: `sign up ${days}d` };
+    return { type: 'signup', label: `Sign Up ${days}d` };
   }
   const wd = daysUntil(t.withdrawalDeadline);
-  if (wd !== null && wd <= 0) return { type: 'withdraw', label: 'withdrawal today' };
+  if (wd !== null && wd <= 0) return { type: 'withdraw', label: 'Withdrawal Today' };
   return null;
 }
 
@@ -107,10 +116,10 @@ function calcEndDate(startDateStr: string): string {
 
 function deadlineColor(dateStr: string | undefined): string {
   const d = daysUntil(dateStr);
-  if (d === null) return '#CCCCCC';
-  if (d <= 0) return '#E24B4A';
-  if (d <= 7) return '#EF9F27';
-  return '#999999';
+  if (d === null) return T.textMuted;
+  if (d <= 0) return T.red;
+  if (d <= 7) return T.amber;
+  return T.textTertiary;
 }
 
 function deadlineLabel(dateStr: string | undefined): string {
@@ -122,42 +131,76 @@ function deadlineLabel(dateStr: string | undefined): string {
 }
 
 function countryFlag(country: string): string {
-  const map: Record<string, string> = {
-    BR: '🇧🇷', AR: '🇦🇷', US: '🇺🇸', ES: '🇪🇸', AU: '🇦🇺', FR: '🇫🇷',
-    GB: '🇬🇧', DE: '🇩🇪', IT: '🇮🇹', CL: '🇨🇱', MX: '🇲🇽', PT: '🇵🇹',
-  };
-  return map[(country ?? '').toUpperCase()] ?? '🌍';
+  const code = (country ?? '').toUpperCase();
+  if (code.length !== 2) return '🌍';
+  return String.fromCodePoint(...[...code].map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
 }
 
 function fmt(n: number) {
   return '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 0 });
 }
 
+function getWeekMonday(dateStr: string | undefined): string {
+  if (!dateStr) return '';
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  const dow = date.getDay();
+  date.setDate(date.getDate() - (dow === 0 ? 6 : dow - 1));
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function groupByWeek(tournaments: any[], noDateLabel: string): { weekLabel: string; weekKey: string; items: any[] }[] {
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const grouped: Record<string, any[]> = {};
+  for (const t of tournaments) {
+    const key = getWeekMonday(t.startDate) || 'unknown';
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(t);
+  }
+  return Object.entries(grouped)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, items]) => {
+      if (key === 'unknown') return { weekLabel: noDateLabel, weekKey: key, items };
+      const [y, m, d] = key.split('-').map(Number);
+      const mon = new Date(y, m - 1, d);
+      const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+      const label = mon.getMonth() === sun.getMonth()
+        ? `${d}–${sun.getDate()} ${MONTHS[m - 1]} ${y}`
+        : `${d} ${MONTHS[m - 1]} – ${sun.getDate()} ${MONTHS[sun.getMonth()]} ${y}`;
+      return { weekLabel: label, weekKey: key, items };
+    });
+}
+
 // ─── Tournament card (list) ───────────────────────────────────────────────────
 
-function TournamentCard({ item, onPress }: { item: any; onPress: () => void }) {
-  const dateRange = fmtDateRange(item.startDate, item.endDate);
+function TournamentCard({ item, onPress, selected, selectMode, onLongPress, t }: {
+  item: any; onPress: () => void; selected?: boolean; selectMode?: boolean; onLongPress?: () => void; t: (key: any) => string;
+}) {
+  const group     = getGroup(item);
   const pill      = getPill(item);
 
   return (
-    <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.8}>
+    <TouchableOpacity style={[styles.card, selected && styles.cardSelected]} onPress={onPress} onLongPress={onLongPress} activeOpacity={0.8}>
       <View style={styles.cardTopRow}>
-        <Text style={styles.cardTitle} numberOfLines={1}>
+        {selectMode && (
+          <View style={[styles.selectBox, selected && styles.selectBoxOn]}>
+            {selected && <Text style={styles.selectCheck}>✓</Text>}
+          </View>
+        )}
+        {item.surface && <CourtIcon surface={item.surface} size="sm" />}
+        <Text style={styles.cardTitle} numberOfLines={2}>
           {item.country ? countryFlag(item.country) + ' ' : ''}{item.name}
         </Text>
-        {getGroup(item) === 'past' ? (
+        {group === 'past' ? (
           item.isRegistered
-            ? <View style={styles.playedBadge}><Text style={styles.playedText}>Played</Text></View>
+            ? <View style={styles.playedBadge}><Text style={styles.playedText}>{t('tournaments.played')}</Text></View>
             : null
         ) : (
           item.isRegistered
-            ? <View style={styles.registeredBadge}><Text style={styles.registeredText}>Registered</Text></View>
-            : <View style={styles.notRegisteredBadge}><Text style={styles.notRegisteredText}>Not registered</Text></View>
+            ? <View style={styles.registeredBadge}><Text style={styles.registeredText}>{t('tournaments.registeredBadge')}</Text></View>
+            : <View style={styles.notRegisteredBadge}><Text style={styles.notRegisteredText}>{t('tournaments.notRegistered')}</Text></View>
         )}
-      </View>
-      <View style={styles.cardMetaRow}>
-        <Text style={styles.cardMeta}>{dateRange}</Text>
-        {item.surface && <CourtIcon surface={item.surface} />}
       </View>
       {pill && (
         <View style={styles.pillRow}>
@@ -172,29 +215,29 @@ function TournamentCard({ item, onPress }: { item: any; onPress: () => void }) {
 
 // ─── Withdraw confirmation dialog ─────────────────────────────────────────────
 
-function WithdrawDialog({ name, undoing, onConfirm, onCancel }: {
-  name: string; undoing?: boolean; onConfirm: () => void; onCancel: () => void;
+function WithdrawDialog({ name, undoing, onConfirm, onCancel, t }: {
+  name: string; undoing?: boolean; onConfirm: () => void; onCancel: () => void; t: (key: any) => string;
 }) {
   return (
     <Modal transparent animationType="fade" onRequestClose={onCancel}>
       <Pressable style={styles.dialogBackdrop} onPress={onCancel}>
         <Pressable style={styles.dialog} onPress={() => {}}>
           <Text style={styles.dialogTitle}>
-            {undoing ? 'Undo withdrawal?' : 'Withdraw from this tournament?'}
+            {undoing ? t('tournament.undoWithdraw') : t('alerts.withdrawConfirm')}
           </Text>
           <Text style={styles.dialogBody}>
             {undoing
-              ? `You will be marked as not withdrawn from ${name}.`
-              : `You will be marked as withdrawn from ${name}.`}
+              ? `${t('tournament.undoWithdrawMsg')} ${name}.`
+              : `${t('tournament.withdrawMsg')} ${name}.`}
           </Text>
           <View style={styles.dialogActions}>
             <TouchableOpacity style={styles.cancelBtn} onPress={onCancel} activeOpacity={0.7}>
-              <Text style={styles.cancelBtnText}>cancel</Text>
+              <Text style={styles.cancelBtnText}>{t('common.cancel')}</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.withdrawConfirmBtn, undoing && { backgroundColor: '#5B5BD6' }]}
+              style={[styles.withdrawConfirmBtn, undoing && { backgroundColor: T.teal }]}
               onPress={onConfirm} activeOpacity={0.8}>
-              <Text style={styles.withdrawConfirmText}>{undoing ? 'undo' : 'withdraw'}</Text>
+              <Text style={styles.withdrawConfirmText}>{undoing ? t('tournament.undo') : t('tournament.withdraw')}</Text>
             </TouchableOpacity>
           </View>
         </Pressable>
@@ -203,20 +246,285 @@ function WithdrawDialog({ name, undoing, onConfirm, onCancel }: {
   );
 }
 
-function formatDateRange(start: string | undefined, end: string | undefined): string {
-  return fmtDateRange(start, end);
-}
 
 // ─── Shared form constants ────────────────────────────────────────────────────
 
 const SURFACES   = ['clay', 'hard', 'grass'];
-const CATEGORIES = ['M15', 'M25', 'M100', 'ATP 250', 'ATP 500', 'ATP 1000', 'Grand Slam'];
-const COUNTRIES  = [
-  { code: 'AR', name: 'Argentina' }, { code: 'AU', name: 'Australia' }, { code: 'BR', name: 'Brazil' },
-  { code: 'CL', name: 'Chile' },     { code: 'FR', name: 'France' },    { code: 'DE', name: 'Germany' },
-  { code: 'IT', name: 'Italy' },     { code: 'MX', name: 'Mexico' },    { code: 'PT', name: 'Portugal' },
-  { code: 'ES', name: 'Spain' },     { code: 'GB', name: 'United Kingdom' }, { code: 'US', name: 'United States' },
+const CATEGORY_GROUPS = [
+  { label: 'ITF Men', items: ['M15', 'M25'] },
+  { label: 'ITF Women', items: ['W15', 'W25', 'W35', 'W50', 'W75', 'W100'] },
+  { label: 'ATP Challengers', items: ['Challenger 50', 'Challenger 75', 'Challenger 100', 'Challenger 125', 'Challenger 175'] },
+  { label: 'ATP Tour', items: ['ATP 250', 'ATP 500', 'Masters 1000', 'Grand Slam'] },
 ];
+const CATEGORIES = CATEGORY_GROUPS.flatMap(g => g.items);
+const COUNTRIES = [
+  {code:'AF',name:'Afghanistan'},{code:'AL',name:'Albania'},{code:'DZ',name:'Algeria'},{code:'AD',name:'Andorra'},
+  {code:'AO',name:'Angola'},{code:'AG',name:'Antigua and Barbuda'},{code:'AR',name:'Argentina'},{code:'AM',name:'Armenia'},
+  {code:'AU',name:'Australia'},{code:'AT',name:'Austria'},{code:'AZ',name:'Azerbaijan'},{code:'BS',name:'Bahamas'},
+  {code:'BH',name:'Bahrain'},{code:'BD',name:'Bangladesh'},{code:'BB',name:'Barbados'},{code:'BY',name:'Belarus'},
+  {code:'BE',name:'Belgium'},{code:'BZ',name:'Belize'},{code:'BJ',name:'Benin'},{code:'BT',name:'Bhutan'},
+  {code:'BO',name:'Bolivia'},{code:'BA',name:'Bosnia and Herzegovina'},{code:'BW',name:'Botswana'},{code:'BR',name:'Brazil'},
+  {code:'BN',name:'Brunei'},{code:'BG',name:'Bulgaria'},{code:'BF',name:'Burkina Faso'},{code:'BI',name:'Burundi'},
+  {code:'CV',name:'Cabo Verde'},{code:'KH',name:'Cambodia'},{code:'CM',name:'Cameroon'},{code:'CA',name:'Canada'},
+  {code:'CF',name:'Central African Republic'},{code:'TD',name:'Chad'},{code:'CL',name:'Chile'},{code:'CN',name:'China'},
+  {code:'CO',name:'Colombia'},{code:'KM',name:'Comoros'},{code:'CG',name:'Congo'},{code:'CR',name:'Costa Rica'},
+  {code:'CI',name:"Côte d'Ivoire"},{code:'HR',name:'Croatia'},{code:'CU',name:'Cuba'},{code:'CY',name:'Cyprus'},
+  {code:'CZ',name:'Czech Republic'},{code:'CD',name:'DR Congo'},{code:'DK',name:'Denmark'},{code:'DJ',name:'Djibouti'},
+  {code:'DM',name:'Dominica'},{code:'DO',name:'Dominican Republic'},{code:'EC',name:'Ecuador'},{code:'EG',name:'Egypt'},
+  {code:'SV',name:'El Salvador'},{code:'GQ',name:'Equatorial Guinea'},{code:'ER',name:'Eritrea'},{code:'EE',name:'Estonia'},
+  {code:'SZ',name:'Eswatini'},{code:'ET',name:'Ethiopia'},{code:'FJ',name:'Fiji'},{code:'FI',name:'Finland'},
+  {code:'FR',name:'France'},{code:'GA',name:'Gabon'},{code:'GM',name:'Gambia'},{code:'GE',name:'Georgia'},
+  {code:'DE',name:'Germany'},{code:'GH',name:'Ghana'},{code:'GR',name:'Greece'},{code:'GD',name:'Grenada'},
+  {code:'GT',name:'Guatemala'},{code:'GN',name:'Guinea'},{code:'GW',name:'Guinea-Bissau'},{code:'GY',name:'Guyana'},
+  {code:'HT',name:'Haiti'},{code:'HN',name:'Honduras'},{code:'HK',name:'Hong Kong'},{code:'HU',name:'Hungary'},
+  {code:'IS',name:'Iceland'},{code:'IN',name:'India'},{code:'ID',name:'Indonesia'},{code:'IR',name:'Iran'},
+  {code:'IQ',name:'Iraq'},{code:'IE',name:'Ireland'},{code:'IL',name:'Israel'},{code:'IT',name:'Italy'},
+  {code:'JM',name:'Jamaica'},{code:'JP',name:'Japan'},{code:'JO',name:'Jordan'},{code:'KZ',name:'Kazakhstan'},
+  {code:'KE',name:'Kenya'},{code:'KI',name:'Kiribati'},{code:'KW',name:'Kuwait'},{code:'KG',name:'Kyrgyzstan'},
+  {code:'LA',name:'Laos'},{code:'LV',name:'Latvia'},{code:'LB',name:'Lebanon'},{code:'LS',name:'Lesotho'},
+  {code:'LR',name:'Liberia'},{code:'LY',name:'Libya'},{code:'LI',name:'Liechtenstein'},{code:'LT',name:'Lithuania'},
+  {code:'LU',name:'Luxembourg'},{code:'MG',name:'Madagascar'},{code:'MW',name:'Malawi'},{code:'MY',name:'Malaysia'},
+  {code:'MV',name:'Maldives'},{code:'ML',name:'Mali'},{code:'MT',name:'Malta'},{code:'MH',name:'Marshall Islands'},
+  {code:'MR',name:'Mauritania'},{code:'MU',name:'Mauritius'},{code:'MX',name:'Mexico'},{code:'FM',name:'Micronesia'},
+  {code:'MD',name:'Moldova'},{code:'MC',name:'Monaco'},{code:'MN',name:'Mongolia'},{code:'ME',name:'Montenegro'},
+  {code:'MA',name:'Morocco'},{code:'MZ',name:'Mozambique'},{code:'MM',name:'Myanmar'},{code:'NA',name:'Namibia'},
+  {code:'NR',name:'Nauru'},{code:'NP',name:'Nepal'},{code:'NL',name:'Netherlands'},{code:'NZ',name:'New Zealand'},
+  {code:'NI',name:'Nicaragua'},{code:'NE',name:'Niger'},{code:'NG',name:'Nigeria'},{code:'KP',name:'North Korea'},
+  {code:'MK',name:'North Macedonia'},{code:'NO',name:'Norway'},{code:'OM',name:'Oman'},{code:'PK',name:'Pakistan'},
+  {code:'PW',name:'Palau'},{code:'PS',name:'Palestine'},{code:'PA',name:'Panama'},{code:'PG',name:'Papua New Guinea'},
+  {code:'PY',name:'Paraguay'},{code:'PE',name:'Peru'},{code:'PH',name:'Philippines'},{code:'PL',name:'Poland'},
+  {code:'PT',name:'Portugal'},{code:'QA',name:'Qatar'},{code:'RO',name:'Romania'},{code:'RU',name:'Russia'},
+  {code:'RW',name:'Rwanda'},{code:'KN',name:'Saint Kitts and Nevis'},{code:'LC',name:'Saint Lucia'},
+  {code:'VC',name:'Saint Vincent'},{code:'WS',name:'Samoa'},{code:'SM',name:'San Marino'},
+  {code:'ST',name:'Sao Tome and Principe'},{code:'SA',name:'Saudi Arabia'},{code:'SN',name:'Senegal'},
+  {code:'RS',name:'Serbia'},{code:'SC',name:'Seychelles'},{code:'SL',name:'Sierra Leone'},{code:'SG',name:'Singapore'},
+  {code:'SK',name:'Slovakia'},{code:'SI',name:'Slovenia'},{code:'SB',name:'Solomon Islands'},{code:'SO',name:'Somalia'},
+  {code:'ZA',name:'South Africa'},{code:'KR',name:'South Korea'},{code:'SS',name:'South Sudan'},{code:'ES',name:'Spain'},
+  {code:'LK',name:'Sri Lanka'},{code:'SD',name:'Sudan'},{code:'SR',name:'Suriname'},{code:'SE',name:'Sweden'},
+  {code:'CH',name:'Switzerland'},{code:'SY',name:'Syria'},{code:'TW',name:'Taiwan'},{code:'TJ',name:'Tajikistan'},
+  {code:'TZ',name:'Tanzania'},{code:'TH',name:'Thailand'},{code:'TL',name:'Timor-Leste'},{code:'TG',name:'Togo'},
+  {code:'TO',name:'Tonga'},{code:'TT',name:'Trinidad and Tobago'},{code:'TN',name:'Tunisia'},{code:'TR',name:'Turkey'},
+  {code:'TM',name:'Turkmenistan'},{code:'TV',name:'Tuvalu'},{code:'UG',name:'Uganda'},{code:'UA',name:'Ukraine'},
+  {code:'AE',name:'United Arab Emirates'},{code:'GB',name:'United Kingdom'},{code:'US',name:'United States'},
+  {code:'UY',name:'Uruguay'},{code:'UZ',name:'Uzbekistan'},{code:'VU',name:'Vanuatu'},{code:'VA',name:'Vatican City'},
+  {code:'VE',name:'Venezuela'},{code:'VN',name:'Vietnam'},{code:'YE',name:'Yemen'},{code:'ZM',name:'Zambia'},
+  {code:'ZW',name:'Zimbabwe'},
+];
+const COUNTRY_NAME: Record<string, string> = Object.fromEntries(COUNTRIES.map(c => [c.code, c.name]));
+
+// ─── Country Picker ──────────────────────────────────────────────────────────
+
+function CountryPicker({ value, onChange, label, t }: { value: string; onChange: (code: string) => void; label?: string; t: (key: any) => string }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const filtered = search.trim()
+    ? COUNTRIES.filter(c => c.name.toLowerCase().includes(search.toLowerCase()) || c.code.toLowerCase().includes(search.toLowerCase()))
+    : COUNTRIES;
+  const selected = COUNTRIES.find(c => c.code === value);
+
+  return (
+    <>
+      {label && <Text style={cpStyles.label}>{label}</Text>}
+      <TouchableOpacity style={cpStyles.trigger} onPress={() => { setOpen(true); setSearch(''); }} activeOpacity={0.7}>
+        <Text style={cpStyles.triggerText}>
+          {selected ? `${countryFlag(selected.code)} ${selected.name}` : t('tournament.selectCountry')}
+        </Text>
+        <Text style={cpStyles.triggerArrow}>▾</Text>
+      </TouchableOpacity>
+
+      <Modal visible={open} animationType="slide" transparent>
+        <Pressable style={cpStyles.backdrop} onPress={() => setOpen(false)} />
+        <View style={cpStyles.sheet}>
+          <View style={cpStyles.handle} />
+          <TextInput
+            style={cpStyles.searchInput}
+            placeholder="Search country…"
+            placeholderTextColor="#888"
+            value={search}
+            onChangeText={setSearch}
+            autoFocus
+          />
+          <ScrollView keyboardShouldPersistTaps="handled" style={cpStyles.list}>
+            {filtered.map(c => (
+              <TouchableOpacity key={c.code} style={[cpStyles.row, value === c.code && cpStyles.rowActive]}
+                onPress={() => { onChange(c.code); setOpen(false); }} activeOpacity={0.7}>
+                <Text style={cpStyles.rowFlag}>{countryFlag(c.code)}</Text>
+                <Text style={[cpStyles.rowName, value === c.code && cpStyles.rowNameActive]}>{c.name}</Text>
+                <Text style={cpStyles.rowCode}>{c.code}</Text>
+              </TouchableOpacity>
+            ))}
+            {filtered.length === 0 && <Text style={cpStyles.empty}>{t('tournament.noCountriesFound')}</Text>}
+          </ScrollView>
+        </View>
+      </Modal>
+    </>
+  );
+}
+
+const cpStyles = StyleSheet.create({
+  label: { color: T.textSecondary, fontSize: 11, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6, marginTop: 12 },
+  trigger: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: T.card, borderRadius: 12, paddingHorizontal: 16, paddingVertical: 14, borderWidth: 1, borderColor: T.cardBorder },
+  triggerText: { color: T.textPrimary, fontSize: 15 },
+  triggerArrow: { color: T.textTertiary, fontSize: 14 },
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' },
+  sheet: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: T.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '70%', paddingBottom: 30 },
+  handle: { width: 36, height: 4, borderRadius: 2, backgroundColor: '#3A3A5C', alignSelf: 'center', marginTop: 10, marginBottom: 10 },
+  searchInput: { backgroundColor: T.bg, color: T.textPrimary, fontSize: 15, borderRadius: 10, marginHorizontal: 16, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 8, borderWidth: 1, borderColor: T.cardBorder },
+  list: { paddingHorizontal: 8 },
+  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 12, borderRadius: 10 },
+  rowActive: { backgroundColor: '#1A2A28' },
+  rowFlag: { fontSize: 22, marginRight: 12 },
+  rowName: { flex: 1, color: T.textPrimary, fontSize: 15 },
+  rowNameActive: { color: T.teal, fontWeight: '600' },
+  rowCode: { color: T.textTertiary, fontSize: 13, marginLeft: 8 },
+  empty: { color: T.textTertiary, fontSize: 14, textAlign: 'center', marginTop: 20 },
+});
+
+// ─── Category Picker ─────────────────────────────────────────────────────────
+
+function CategoryPicker({ value, onChange, label, t }: { value: string; onChange: (v: string) => void; label?: string; t: (key: any) => string }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <>
+      {label && <Text style={cpStyles.label}>{label}</Text>}
+      <TouchableOpacity style={cpStyles.trigger} onPress={() => setOpen(true)} activeOpacity={0.7}>
+        <Text style={cpStyles.triggerText}>{value || t('tournament.selectCategoryAction')}</Text>
+        <Text style={cpStyles.triggerArrow}>▾</Text>
+      </TouchableOpacity>
+
+      <Modal visible={open} animationType="slide" transparent>
+        <Pressable style={cpStyles.backdrop} onPress={() => setOpen(false)} />
+        <View style={catStyles.sheet}>
+          <View style={cpStyles.handle} />
+          <Text style={catStyles.title}>{t('tournament.selectCategory')}</Text>
+          <ScrollView keyboardShouldPersistTaps="handled" style={catStyles.list}>
+            {CATEGORY_GROUPS.map(group => (
+              <View key={group.label} style={catStyles.group}>
+                <Text style={catStyles.groupLabel}>{group.label}</Text>
+                {group.items.map(item => (
+                  <TouchableOpacity key={item} style={[catStyles.row, value === item && catStyles.rowActive]}
+                    onPress={() => { onChange(item); setOpen(false); }} activeOpacity={0.7}>
+                    <Text style={[catStyles.rowText, value === item && catStyles.rowTextActive]}>{item}</Text>
+                    {value === item && <Text style={catStyles.check}>✓</Text>}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      </Modal>
+    </>
+  );
+}
+
+const catStyles = StyleSheet.create({
+  sheet: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: T.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '60%', paddingBottom: 30 },
+  title: { color: T.textPrimary, fontSize: 17, fontWeight: '700', textAlign: 'center', marginBottom: 12 },
+  list: { paddingHorizontal: 16 },
+  group: { marginBottom: 16 },
+  groupLabel: { color: T.teal, fontSize: 12, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6, paddingHorizontal: 4 },
+  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 13, paddingHorizontal: 12, borderRadius: 10 },
+  rowActive: { backgroundColor: '#1A2A28' },
+  rowText: { color: T.textPrimary, fontSize: 15 },
+  rowTextActive: { color: T.teal, fontWeight: '600' },
+  check: { color: T.teal, fontSize: 16, fontWeight: '700' },
+});
+
+// ─── Match Results Section ───────────────────────────────────────────────────
+
+// ─── Ranking Impact Section ──────────────────────────────────────────────────
+
+function RankingImpactSection({ tournament }: { tournament: any }) {
+  const { t } = useLanguage();
+  const [editing, setEditing] = useState(false);
+  const [rankBefore, setRankBefore] = useState(String(tournament.rankingBefore ?? ''));
+  const [rankAfter, setRankAfter] = useState(String(tournament.rankingAfter ?? ''));
+  const demoCtx = useDemoData();
+
+  const totalPoints = (tournament.matchResults ?? []).reduce((s: number, r: any) => s + (r.points ?? 0), 0) + (tournament.pointsEarned ?? 0);
+  const rb = parseInt(rankBefore) || 0;
+  const ra = parseInt(rankAfter) || 0;
+  const change = rb > 0 && ra > 0 ? rb - ra : 0;
+
+  async function save() {
+    const updates = { rankingBefore: parseInt(rankBefore) || null, rankingAfter: parseInt(rankAfter) || null };
+    if (DEMO_MODE) {
+      demoCtx?.patchTournament(tournament.id, updates);
+    } else {
+      await apiPatchTournament(tournament.id, updates);
+    }
+    setEditing(false);
+  }
+
+  return (
+    <>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Text style={det.sectionLabel}>{t('tournament.rankingImpact')}</Text>
+          <Text style={{ fontSize: 10, color: T.accent }}>⚡</Text>
+        </View>
+        <TouchableOpacity onPress={() => setEditing(!editing)} activeOpacity={0.7}>
+          <Text style={{ fontSize: 13, fontWeight: '600', color: T.teal }}>{editing ? t('common.cancel') : t('common.edit')}</Text>
+        </TouchableOpacity>
+      </View>
+      <Text style={{ fontSize: 11, color: T.textTertiary, fontStyle: 'italic', marginBottom: 10 }}>{t('tournament.autoFilled')}</Text>
+
+      <View style={det.prizeCard}>
+        <View style={det.prizeRow}>
+          <Text style={det.prizeLabel}>{t('tournament.pointsEarned')}</Text>
+          <Text style={{ fontSize: 15, fontWeight: '700', color: totalPoints > 0 ? T.green : T.textTertiary }}>
+            {totalPoints > 0 ? `+${totalPoints}` : '—'}
+          </Text>
+        </View>
+        <View style={det.deadlineDivider} />
+        {editing ? (
+          <>
+            <View style={{ padding: 16 }}>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: T.textTertiary, letterSpacing: 0.6, marginBottom: 8 }}>{t('tournament.rankingBefore')}</Text>
+              <TextInput style={det.editInput} value={rankBefore} onChangeText={setRankBefore}
+                placeholder="e.g. 450" placeholderTextColor={T.textTertiary} keyboardType="numeric" />
+              <Text style={{ fontSize: 11, fontWeight: '700', color: T.textTertiary, letterSpacing: 0.6, marginBottom: 8, marginTop: 14 }}>{t('tournament.rankingAfter')}</Text>
+              <TextInput style={det.editInput} value={rankAfter} onChangeText={setRankAfter}
+                placeholder="e.g. 420" placeholderTextColor={T.textTertiary} keyboardType="numeric" />
+              <TouchableOpacity onPress={save} activeOpacity={0.8}
+                style={{ backgroundColor: T.teal, borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 14 }}>
+                <Text style={{ color: T.textPrimary, fontSize: 15, fontWeight: '700' }}>{t('common.save')}</Text>
+              </TouchableOpacity>
+            </View>
+          </>
+        ) : (
+          <>
+            <View style={det.prizeRow}>
+              <Text style={det.prizeLabel}>{t('tournament.rankingBefore')}</Text>
+              <Text style={{ fontSize: 15, fontWeight: '600', color: rb > 0 ? T.textPrimary : T.textTertiary }}>
+                {rb > 0 ? `#${rb}` : '—'}
+              </Text>
+            </View>
+            <View style={det.deadlineDivider} />
+            <View style={det.prizeRow}>
+              <Text style={det.prizeLabel}>{t('tournament.rankingAfter')}</Text>
+              <Text style={{ fontSize: 15, fontWeight: '600', color: ra > 0 ? T.textPrimary : T.textTertiary }}>
+                {ra > 0 ? `#${ra}` : '—'}
+              </Text>
+            </View>
+            {change !== 0 && (
+              <>
+                <View style={det.deadlineDivider} />
+                <View style={det.prizeRow}>
+                  <Text style={[det.prizeLabel, { fontWeight: '700' }]}>{t('tournament.netChange')}</Text>
+                  <Text style={{ fontSize: 16, fontWeight: '800', color: change > 0 ? T.green : T.red }}>
+                    {change > 0 ? `+${change}` : `${change}`} {t('tournament.positions')}
+                  </Text>
+                </View>
+              </>
+            )}
+          </>
+        )}
+      </View>
+    </>
+  );
+}
 
 // ─── Tournament detail screen ─────────────────────────────────────────────────
 
@@ -224,12 +532,14 @@ interface EditState {
   name: string; country: string; city: string; surface: string; category: string;
   startDate: string; endDate: string; signUpDeadline: string; withdrawalDeadline: string;
   freezeDeadline: string;
+  singlesPrizeMoney: string; doublesPrizeMoney: string;
 }
 
 export function TournamentDetail({ tournamentId, onClose }: { tournamentId: string; onClose: () => void }) {
+  const { t } = useLanguage();
   const { data } = useAppQuery({ tournaments: {} });
 
-  const t = (data?.tournaments ?? []).find((x: any) => x.id === tournamentId);
+  const tournament = (data?.tournaments ?? []).find((x: any) => x.id === tournamentId);
 
   const [showWithdraw,    setShowWithdraw]    = useState(false);
   const [undoingWithdraw, setUndoingWithdraw] = useState(false);
@@ -241,28 +551,30 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
   const [editError,       setEditError]       = useState('');
   const demoCtx = useDemoData();
 
-  if (!t) { onClose(); return null; }
+  if (!tournament) return null;
 
-  const surfaceBg   = SURFACE_BG[(editing ? editState?.surface : t.surface) as Surface]   ?? '#FAEEDA';
-  const surfaceText = SURFACE_TEXT[(editing ? editState?.surface : t.surface) as Surface]  ?? '#854F0B';
-  const group       = getGroup(t);
-  const metaLine    = [formatDateRange(t.startDate, t.endDate), COUNTRY_NAME[t.country?.toUpperCase()] ?? t.country]
+  const surfaceBg   = SURFACE_BG[(editing ? editState?.surface : tournament.surface) as Surface]   ?? '#FAEEDA';
+  const surfaceText = SURFACE_TEXT[(editing ? editState?.surface : tournament.surface) as Surface]  ?? '#854F0B';
+  const group       = getGroup(tournament);
+  const metaLine    = [fmtDateRange(tournament.startDate, tournament.endDate), COUNTRY_NAME[tournament.country?.toUpperCase()] ?? tournament.country]
     .filter(Boolean).join('  ·  ');
 
   function startEdit() {
-    const start = t.startDate ?? '';
-    const calc  = start ? calcDeadlines(start) : null;
+    const start = tournament.startDate ?? '';
+    const calc  = start ? calcDeadlines(start, tournament.category) : null;
     setEditState({
-      name: t.name ?? '',
-      country: t.country ?? 'US',
-      city: t.city ?? '',
-      surface: t.surface ?? 'clay',
-      category: t.category ?? 'M25',
+      name: tournament.name ?? '',
+      country: tournament.country ?? 'US',
+      city: tournament.city ?? '',
+      surface: tournament.surface ?? 'clay',
+      category: tournament.category ?? 'M25',
       startDate: start,
-      endDate: t.endDate ?? '',
-      signUpDeadline:     t.signUpDeadline     ?? calc?.signUpDeadline     ?? '',
-      withdrawalDeadline: t.withdrawalDeadline ?? calc?.withdrawalDeadline ?? '',
-      freezeDeadline:     t.freezeDeadline     ?? calc?.freezeDeadline     ?? '',
+      endDate: tournament.endDate ?? '',
+      signUpDeadline:     tournament.signUpDeadline     ?? calc?.signUpDeadline     ?? '',
+      withdrawalDeadline: tournament.withdrawalDeadline ?? calc?.withdrawalDeadline ?? '',
+      freezeDeadline:     tournament.freezeDeadline     ?? calc?.freezeDeadline     ?? '',
+      singlesPrizeMoney:  (tournament.singlesPrizeMoney ?? 0) > 0 ? String(tournament.singlesPrizeMoney) : '',
+      doublesPrizeMoney:  (tournament.doublesPrizeMoney ?? 0) > 0 ? String(tournament.doublesPrizeMoney) : '',
     });
     setEditOverrides({ signUp: false, withdrawal: false, freeze: false });
     setEditError('');
@@ -277,14 +589,29 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
 
   function setEF(key: keyof EditState, value: string) {
     if (key === 'startDate' && value) {
-      const calc = calcDeadlines(value);
-      setEditState(prev => !prev ? prev : {
-        ...prev,
-        startDate: value,
-        endDate: calcEndDate(value),
-        ...(!editOverrides.signUp      ? { signUpDeadline:     calc.signUpDeadline }     : {}),
-        ...(!editOverrides.withdrawal  ? { withdrawalDeadline: calc.withdrawalDeadline } : {}),
-        ...(!editOverrides.freeze      ? { freezeDeadline:     calc.freezeDeadline }     : {}),
+      setEditState(prev => {
+        if (!prev) return prev;
+        const calc = calcDeadlines(value, prev.category);
+        return {
+          ...prev,
+          startDate: value,
+          endDate: calcEndDate(value),
+          ...(!editOverrides.signUp      ? { signUpDeadline:     calc.signUpDeadline }     : {}),
+          ...(!editOverrides.withdrawal  ? { withdrawalDeadline: calc.withdrawalDeadline } : {}),
+          ...(!editOverrides.freeze      ? { freezeDeadline:     calc.freezeDeadline }     : {}),
+        };
+      });
+    } else if (key === 'category') {
+      setEditState(prev => {
+        if (!prev) return prev;
+        const updated = { ...prev, category: value };
+        if (prev.startDate) {
+          const calc = calcDeadlines(prev.startDate, value);
+          if (!editOverrides.signUp)     updated.signUpDeadline     = calc.signUpDeadline;
+          if (!editOverrides.withdrawal) updated.withdrawalDeadline = calc.withdrawalDeadline;
+          if (!editOverrides.freeze)     updated.freezeDeadline     = calc.freezeDeadline;
+        }
+        return updated;
       });
     } else {
       setEditState((prev) => prev ? { ...prev, [key]: value } : prev);
@@ -296,6 +623,7 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
     if (!editState.name.trim()) { setEditError('Tournament name is required.'); return; }
     if (!editState.startDate)   { setEditError('Start date is required.'); return; }
     setSaving(true); setEditError('');
+    const editCalc = calcDeadlines(editState.startDate, editState.category);
     const updates = {
       name: editState.name.trim(),
       country: editState.country,
@@ -304,15 +632,17 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
       category: editState.category,
       startDate: editState.startDate,
       endDate: editState.endDate,
-      signUpDeadline: editState.signUpDeadline,
-      withdrawalDeadline: editState.withdrawalDeadline,
-      freezeDeadline: editState.freezeDeadline,
+      signUpDeadline: editOverrides.signUp ? editState.signUpDeadline : editCalc.signUpDeadline,
+      withdrawalDeadline: editOverrides.withdrawal ? editState.withdrawalDeadline : editCalc.withdrawalDeadline,
+      freezeDeadline: editOverrides.freeze ? editState.freezeDeadline : editCalc.freezeDeadline,
+      singlesPrizeMoney: parseFloat(editState.singlesPrizeMoney) || 0,
+      doublesPrizeMoney: parseFloat(editState.doublesPrizeMoney) || 0,
     };
     try {
       if (DEMO_MODE) {
-        demoCtx?.patchTournament(t.id, updates);
+        demoCtx?.patchTournament(tournament.id, updates);
       } else {
-        await apiPatchTournament(t.id, updates);
+        await apiPatchTournament(tournament.id, updates);
         const { rescheduleAllNotifications } = await import('@/utils/notifications');
         rescheduleAllNotifications(data?.tournaments ?? []);
       }
@@ -329,9 +659,9 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
     setSavingAction(key);
     try {
       if (DEMO_MODE) {
-        demoCtx?.patchTournament(t.id, updates);
+        demoCtx?.patchTournament(tournament.id, updates);
       } else {
-        await apiPatchTournament(t.id, updates);
+        await apiPatchTournament(tournament.id, updates);
       }
       onClose();
     } finally { setSavingAction(null); }
@@ -342,9 +672,16 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
     setSavingAction('withdraw');
     try {
       if (DEMO_MODE) {
-        demoCtx?.patchTournament(t.id, { isWithdrawn: newValue });
+        demoCtx?.patchTournament(tournament.id, { isWithdrawn: newValue });
       } else {
-        await apiPatchTournament(t.id, { isWithdrawn: newValue });
+        await apiPatchTournament(tournament.id, { isWithdrawn: newValue });
+        if (newValue) {
+          const { cancelTournamentNotifications } = await import('@/utils/notifications');
+          await cancelTournamentNotifications(tournament.id);
+        } else {
+          const { rescheduleAllNotifications } = await import('@/utils/notifications');
+          rescheduleAllNotifications(data?.tournaments ?? []);
+        }
       }
       setShowWithdraw(false);
       onClose();
@@ -358,7 +695,7 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
         {/* Nav bar */}
         <View style={det.navbar}>
           <TouchableOpacity onPress={editing ? cancelEdit : onClose} style={det.backBtn} activeOpacity={0.7}>
-            <Text style={det.backText}>{editing ? '← cancel' : '← back'}</Text>
+            <Text style={det.backText}>{editing ? t('common.cancel') : t('common.back')}</Text>
           </TouchableOpacity>
           {!editing && (
             <TouchableOpacity onPress={startEdit} style={det.editBtn} activeOpacity={0.7}>
@@ -390,11 +727,14 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
               </>
             ) : (
               <>
-                <Text style={[det.headerName, { color: surfaceText }]} numberOfLines={2}>
-                  {t.country ? countryFlag(t.country) + ' ' : ''}{t.name}
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6 }}>
+                  <Text style={[det.headerName, { color: surfaceText, flex: 1 }]} numberOfLines={2}>
+                    {tournament.country ? countryFlag(tournament.country) + ' ' : ''}{tournament.name}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: T.accent, marginTop: 4 }}>⚡</Text>
+                </View>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 }}>
-                  <CourtIcon surface={t.surface} />
+                  <CourtIcon surface={tournament.surface} />
                   <Text style={[det.headerMeta, { color: surfaceText + 'CC' }]}>
                     {metaLine}
                   </Text>
@@ -407,7 +747,7 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
             /* ── EDIT MODE ── */
             <View style={det.body}>
 
-              <Text style={det.sectionLabel}>SURFACE</Text>
+              <Text style={det.sectionLabel}>{t('tournament.surface').toUpperCase()}</Text>
               <View style={det.editChipRow}>
                 {SURFACES.map((s) => (
                   <TouchableOpacity key={s}
@@ -418,46 +758,22 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
                 ))}
               </View>
 
-              <Text style={det.sectionLabel}>CATEGORY</Text>
-              <View style={det.editChipRow}>
-                {CATEGORIES.map((c) => (
-                  <TouchableOpacity key={c}
-                    style={[det.editChip, editState.category === c && det.editChipActive]}
-                    onPress={() => setEF('category', c)} activeOpacity={0.7}>
-                    <Text style={[det.editChipText, editState.category === c && det.editChipTextActive]}>{c}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
+              <CategoryPicker label="CATEGORY" value={editState.category} onChange={(v) => setEF('category', v)} t={t} />
 
-              <Text style={det.sectionLabel}>COUNTRY</Text>
-              <View style={det.editChipRow}>
-                {COUNTRIES.map((c) => (
-                  <TouchableOpacity key={c.code}
-                    style={[det.editChip, editState.country === c.code && det.editChipActive]}
-                    onPress={() => setEF('country', c.code)} activeOpacity={0.7}>
-                    <Text style={[det.editChipText, editState.country === c.code && det.editChipTextActive]}>
-                      {countryFlag(c.code)} {c.code}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
+              <CountryPicker label="COUNTRY" value={editState.country} onChange={(v) => setEF('country', v)} t={t} />
 
-              <Text style={det.sectionLabel}>CITY</Text>
+              <Text style={det.sectionLabel}>{t('tournament.city').toUpperCase()}</Text>
               <TextInput style={det.editInput} value={editState.city} onChangeText={(v) => setEF('city', v)}
-                placeholder="City" placeholderTextColor="#BBBBBB" />
+                placeholder="City" placeholderTextColor={T.textSecondary} />
 
-              <Text style={det.sectionLabel}>DATES</Text>
-              <Text style={det.editDateLabel}>Start date (end date auto-calculated)</Text>
+              <Text style={det.sectionLabel}>{t('tournament.dates').toUpperCase()}</Text>
+              <Text style={det.editDateLabel}>{t('tournament.startDateHint')}</Text>
               <DatePickerField value={editState.startDate} onChange={(v) => setEF('startDate', v)} placeholder="YYYY-MM-DD" />
 
-              <Text style={det.sectionLabel}>DEADLINES</Text>
-              {(
-                [
-                  { ok: 'signUp' as const,     label: 'Singles entry',       field: 'signUpDeadline' as const },
-                  { ok: 'withdrawal' as const,  label: 'Withdrawal',          field: 'withdrawalDeadline' as const },
-                  { ok: 'freeze' as const,      label: 'Freeze / doubles',    field: 'freezeDeadline' as const },
-                ]
-              ).map(({ ok, label, field }) => (
+              <Text style={det.sectionLabel}>{t('tournament.deadlinesAuto')}</Text>
+              {getStoredDeadlineFields(editState.category).map(({ field, label }) => {
+                const ok = field === 'signUpDeadline' ? 'signUp' as const : field === 'withdrawalDeadline' ? 'withdrawal' as const : 'freeze' as const;
+                return (
                 <View key={field} style={det.editDeadlineItem}>
                   <View style={det.editDeadlineHeader}>
                     <Text style={det.editDateLabel}>{label}</Text>
@@ -469,25 +785,52 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
                     </TouchableOpacity>
                   </View>
                   {editOverrides[ok] ? (
-                    <DatePickerField value={editState[field]} onChange={(v) => setEF(field, v)} placeholder="YYYY-MM-DD" />
+                    <DatePickerField value={editState[field]} onChange={(v) => setEF(field as keyof EditState, v)} placeholder="YYYY-MM-DD" />
                   ) : (
                     <Text style={det.deadlinePreviewText}>
-                      {editState[field] ? fmtDeadline(editState[field]) : '— select start date first'}
+                      {editState[field as keyof EditState] ? fmtDeadline(editState[field as keyof EditState]) : t('tournament.selectStartFirst')}
                     </Text>
                   )}
                 </View>
-              ))}
+                );
+              })}
+
+              <Text style={det.sectionLabel}>{t('tournament.prizeMoneyWon')}</Text>
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={det.editDateLabel}>{t('prize.singles')}</Text>
+                  <TextInput
+                    style={det.editInput}
+                    value={editState.singlesPrizeMoney}
+                    onChangeText={(v) => setEditState(prev => prev ? { ...prev, singlesPrizeMoney: v } : prev)}
+                    placeholder="0"
+                    placeholderTextColor={T.textSecondary}
+                    keyboardType="numeric"
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={det.editDateLabel}>{t('prize.doubles')}</Text>
+                  <TextInput
+                    style={det.editInput}
+                    value={editState.doublesPrizeMoney}
+                    onChangeText={(v) => setEditState(prev => prev ? { ...prev, doublesPrizeMoney: v } : prev)}
+                    placeholder="0"
+                    placeholderTextColor={T.textSecondary}
+                    keyboardType="numeric"
+                  />
+                </View>
+              </View>
 
               {editError ? <Text style={det.editError}>{editError}</Text> : null}
 
               <View style={det.editActions}>
                 <TouchableOpacity style={det.editCancelBtn} onPress={cancelEdit} activeOpacity={0.7} disabled={saving}>
-                  <Text style={det.editCancelText}>Cancel</Text>
+                  <Text style={det.editCancelText}>{t('common.cancel')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={det.editSaveBtn} onPress={saveEdit} activeOpacity={0.8} disabled={saving}>
                   {saving
-                    ? <ActivityIndicator color="#FFFFFF" />
-                    : <Text style={det.editSaveText}>Save changes</Text>}
+                    ? <ActivityIndicator color={T.textPrimary} />
+                    : <Text style={det.editSaveText}>{t('tournament.saveChanges')}</Text>}
                 </TouchableOpacity>
               </View>
 
@@ -499,18 +842,18 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
               {/* FUTURE: registered toggle + withdraw toggle + all deadlines */}
               {group === 'upcoming' && (
                 <>
-                  <Text style={det.sectionLabel}>STATUS</Text>
+                  <Text style={det.sectionLabel}>{t('tournament.status')}</Text>
                   <View style={det.toggleCard}>
-                    {!t.isWithdrawn && (
+                    {!tournament.isWithdrawn && (
                       <View style={det.toggleRow}>
-                        <Text style={det.toggleLabel}>{t.isRegistered ? 'Registered' : 'Not registered'}</Text>
+                        <Text style={det.toggleLabel}>{tournament.isRegistered ? t('tournaments.registeredBadge') : t('tournaments.notRegistered')}</Text>
                         {savingAction === 'register' || savingAction === 'unregister'
-                          ? <ActivityIndicator size="small" color="#5B5BD6" />
+                          ? <ActivityIndicator size="small" color={T.teal} />
                           : <Switch
-                              value={!!t.isRegistered}
+                              value={!!tournament.isRegistered}
                               onValueChange={(v) => doAction(v ? 'register' : 'unregister', { isRegistered: v })}
-                              trackColor={{ false: '#E0E0EA', true: '#5B5BD6' }}
-                              thumbColor="#FFFFFF"
+                              trackColor={{ false: T.cardBorder, true: T.teal }}
+                              thumbColor={T.textPrimary}
                               disabled={!!savingAction}
                             />}
                       </View>
@@ -518,47 +861,70 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
                     <View style={det.toggleDivider} />
                     <View style={det.toggleRow}>
                       <Text style={[det.toggleLabel, det.toggleLabelWithdraw]}>
-                        {t.isWithdrawn ? 'Withdrawn' : 'Withdraw'}
+                        {tournament.isWithdrawn ? t('tournaments.withdrawn') : t('tournament.withdraw')}
                       </Text>
                       {savingAction === 'withdraw'
-                        ? <ActivityIndicator size="small" color="#E24B4A" />
+                        ? <ActivityIndicator size="small" color={T.red} />
                         : <Switch
-                            value={!!t.isWithdrawn}
+                            value={!!tournament.isWithdrawn}
                             onValueChange={(v) => { setUndoingWithdraw(!v); setShowWithdraw(true); }}
-                            trackColor={{ false: '#E0E0EA', true: '#E24B4A' }}
-                            thumbColor="#FFFFFF"
+                            trackColor={{ false: T.cardBorder, true: T.red }}
+                            thumbColor={T.textPrimary}
                             disabled={!!savingAction}
                           />}
                     </View>
                   </View>
 
-                  {(t.signUpDeadline || t.withdrawalDeadline || t.freezeDeadline) && (
-                    <>
-                      <Text style={det.sectionLabel}>DEADLINES</Text>
-                      <View style={det.deadlinesCard}>
-                        {(
-                          [
-                            { dateStr: t.signUpDeadline,     label: 'Singles entry' },
-                            { dateStr: t.withdrawalDeadline, label: 'Withdrawal' },
-                            { dateStr: t.freezeDeadline,     label: 'Freeze / doubles' },
-                          ] as { dateStr: string | undefined; label: string }[]
-                        ).filter(r => !!r.dateStr).map((r, idx, arr) => (
-                          <React.Fragment key={r.label}>
-                            <View style={det.deadlineRow}>
-                              <Text style={det.deadlineName}>{r.label}</Text>
-                              <View style={det.deadlineRight}>
-                                <Text style={det.deadlineDate}>{fmtDeadline(r.dateStr!)}</Text>
-                                <Text style={[det.deadlineDays, { color: deadlineColor(r.dateStr) }]}>
-                                  {deadlineLabel(r.dateStr)}
-                                </Text>
+                  {(tournament.signUpDeadline || tournament.withdrawalDeadline || tournament.freezeDeadline) && (() => {
+                    const stored = { signUpDeadline: tournament.signUpDeadline ?? '', withdrawalDeadline: tournament.withdrawalDeadline ?? '', freezeDeadline: tournament.freezeDeadline ?? '' };
+                    const allDeadlines = getDeadlineLabels(tournament.category, stored, tournament.startDate)
+                      .filter(d => d.dateStr);
+                    if (allDeadlines.length === 0) return null;
+                    return (
+                      <>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Text style={det.sectionLabel}>{t('tournament.deadlinesAuto')}</Text>
+                          <Text style={{ fontSize: 10, color: T.accent, marginBottom: 10 }}>⚡</Text>
+                        </View>
+                        <View style={det.deadlinesCard}>
+                          {allDeadlines.map((d, idx) => (
+                            <React.Fragment key={d.field}>
+                              <View style={det.deadlineRow}>
+                                <Text style={det.deadlineName}>{d.label}</Text>
+                                <View style={det.deadlineRight}>
+                                  <Text style={det.deadlineDate}>{fmtDeadline(d.dateStr, d.time)}</Text>
+                                  <Text style={[det.deadlineDays, { color: deadlineColor(d.dateStr) }]}>
+                                    {deadlineLabel(d.dateStr)}
+                                  </Text>
+                                </View>
                               </View>
+                              {idx < allDeadlines.length - 1 && <View style={det.deadlineDivider} />}
+                            </React.Fragment>
+                          ))}
+                        </View>
+                      </>
+                    );
+                  })()}
+
+                  {tournament.startDate && (() => {
+                    const onsiteDeadlines = getOnsiteDeadlines(tournament.startDate, tournament.category);
+                    if (onsiteDeadlines.length === 0) return null;
+                    return (
+                      <>
+                        <View style={{ height: 1, backgroundColor: T.cardBorder, marginVertical: 16 }} />
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: T.amber, letterSpacing: 1, marginBottom: 8, lineHeight: 16 }}>ON-SITE SIGN-INS</Text>
+                        {onsiteDeadlines.map((od, i) => (
+                          <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, gap: 12 }}>
+                            <Text style={{ fontSize: 14, color: T.amber, fontWeight: '500', lineHeight: 20, flex: 1 }}>{od.label}</Text>
+                            <View style={{ alignItems: 'flex-end', flexShrink: 0 }}>
+                              <Text style={{ fontSize: 13, color: T.textPrimary, lineHeight: 18 }}>{fmtDate(od.dateStr)}</Text>
+                              <Text style={{ fontSize: 12, color: T.textSecondary, lineHeight: 16, marginTop: 2 }}>{od.time}</Text>
                             </View>
-                            {idx < arr.length - 1 && <View style={det.deadlineDivider} />}
-                          </React.Fragment>
+                          </View>
                         ))}
-                      </View>
-                    </>
-                  )}
+                      </>
+                    );
+                  })()}
                 </>
               )}
 
@@ -566,12 +932,44 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
               {group === 'active' && (
                 <View style={det.playingPillWrap}>
                   <View style={det.playingPill}>
-                    <Text style={det.playingPillText}>Playing</Text>
+                    <Text style={det.playingPillText}>{t('tournament.playing')}</Text>
                   </View>
                 </View>
               )}
 
               {/* PAST: nothing here — header shows name/dates, expenses section (if added) below */}
+
+              {/* Prize money — shown for all groups if any prize money exists */}
+              {((tournament.singlesPrizeMoney ?? 0) > 0 || (tournament.doublesPrizeMoney ?? 0) > 0) && (
+                <>
+                  <Text style={det.sectionLabel}>{t('prize.prizeMoney')}</Text>
+                  <View style={det.prizeCard}>
+                    {(tournament.singlesPrizeMoney ?? 0) > 0 && (
+                      <View style={det.prizeRow}>
+                        <Text style={det.prizeLabel}>{t('prize.singles')}</Text>
+                        <Text style={det.prizeAmount}>${tournament.singlesPrizeMoney.toLocaleString()}</Text>
+                      </View>
+                    )}
+                    {(tournament.singlesPrizeMoney ?? 0) > 0 && (tournament.doublesPrizeMoney ?? 0) > 0 && <View style={det.deadlineDivider} />}
+                    {(tournament.doublesPrizeMoney ?? 0) > 0 && (
+                      <View style={det.prizeRow}>
+                        <Text style={det.prizeLabel}>{t('prize.doubles')}</Text>
+                        <Text style={det.prizeAmount}>${tournament.doublesPrizeMoney.toLocaleString()}</Text>
+                      </View>
+                    )}
+                    <View style={det.deadlineDivider} />
+                    <View style={det.prizeRow}>
+                      <Text style={[det.prizeLabel, { fontWeight: '700' }]}>{t('prize.total')}</Text>
+                      <Text style={[det.prizeAmount, { color: T.green, fontWeight: '700' }]}>
+                        ${((tournament.singlesPrizeMoney ?? 0) + (tournament.doublesPrizeMoney ?? 0)).toLocaleString()}
+                      </Text>
+                    </View>
+                  </View>
+                </>
+              )}
+
+              {/* ── Ranking Impact ── */}
+              <RankingImpactSection tournament={tournament} />
 
             </View>
           )}
@@ -582,10 +980,11 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
 
       {showWithdraw && (
         <WithdrawDialog
-          name={t.name}
+          name={tournament.name}
           undoing={undoingWithdraw}
           onConfirm={confirmWithdraw}
           onCancel={() => setShowWithdraw(false)}
+          t={t}
         />
       )}
     </Modal>
@@ -615,7 +1014,7 @@ function LabeledInput({ label, value, onChangeText, placeholder, hint }: {
       <Text style={form.label}>{label}</Text>
       {hint && <Text style={form.hint}>{hint}</Text>}
       <TextInput style={form.input} value={value} onChangeText={onChangeText}
-        placeholder={placeholder ?? ''} placeholderTextColor="#BBBBBB" />
+        placeholder={placeholder ?? ''} placeholderTextColor={T.textSecondary} />
     </View>
   );
 }
@@ -638,9 +1037,9 @@ function ChipPicker({ label, options, value, onChange }: {
   );
 }
 
-function DeadlineRow({ label, value, overridden, onToggle, onChange }: {
+function DeadlineRow({ label, value, overridden, onToggle, onChange, selectStartFirstLabel }: {
   label: string; value: string; overridden: boolean;
-  onToggle: () => void; onChange: (v: string) => void;
+  onToggle: () => void; onChange: (v: string) => void; selectStartFirstLabel: string;
 }) {
   return (
     <View style={form.deadlineItem}>
@@ -654,26 +1053,40 @@ function DeadlineRow({ label, value, overridden, onToggle, onChange }: {
         <DatePickerField value={value} onChange={onChange} placeholder="YYYY-MM-DD" />
       ) : (
         <Text style={form.deadlinePreviewText}>
-          {value ? fmtDeadline(value) : '— select start date first'}
+          {value ? fmtDeadline(value) : selectStartFirstLabel}
         </Text>
       )}
     </View>
   );
 }
 
-function AddTournamentModal({ onClose }: { onClose: () => void }) {
+export function AddTournamentModal({ onClose, defaultStartDate }: { onClose: () => void; defaultStartDate?: string }) {
+  const { t } = useLanguage();
   const { data } = useAppQuery({ tournaments: {} });
   const demoCtx  = useDemoData();
   const [query, setQuery]     = useState('');
   const [mode, setMode]       = useState<'search' | 'manual'>('search');
-  const [f, setF]             = useState<FormState>(EMPTY_FORM);
+  const [f, setF]             = useState<FormState>(() => {
+    if (defaultStartDate) {
+      const calc = calcDeadlines(defaultStartDate, EMPTY_FORM.category);
+      return {
+        ...EMPTY_FORM,
+        startDate: defaultStartDate,
+        endDate: calcEndDate(defaultStartDate),
+        signUpDeadline: calc.signUpDeadline,
+        withdrawalDeadline: calc.withdrawalDeadline,
+        freezeDeadline: calc.freezeDeadline,
+      };
+    }
+    return EMPTY_FORM;
+  });
   const [overrides, setOverrides] = useState({ signUp: false, withdrawal: false, freeze: false });
   const [saving, setSaving]   = useState(false);
   const [error, setError]     = useState('');
 
-  const pool = (data?.tournaments ?? []).filter((t: any) => t.isInMyList === false);
+  const pool = (data?.tournaments ?? []).filter((trn: any) => trn.isInMyList === false);
   const searchResults = query.trim().length > 0
-    ? pool.filter((t: any) => t.name?.toLowerCase().includes(query.trim().toLowerCase()))
+    ? pool.filter((trn: any) => trn.name?.toLowerCase().includes(query.trim().toLowerCase()))
     : [];
 
   // True when the sign-up deadline has already passed end-of-day
@@ -690,7 +1103,7 @@ function AddTournamentModal({ onClose }: { onClose: () => void }) {
   }
 
   function handleStartDateChange(v: string) {
-    const calc = v ? calcDeadlines(v) : null;
+    const calc = v ? calcDeadlines(v, f.category) : null;
     setF(prev => ({
       ...prev,
       startDate: v,
@@ -699,6 +1112,20 @@ function AddTournamentModal({ onClose }: { onClose: () => void }) {
       ...(calc && !overrides.withdrawal ? { withdrawalDeadline: calc.withdrawalDeadline } : {}),
       ...(calc && !overrides.freeze     ? { freezeDeadline:     calc.freezeDeadline }     : {}),
     }));
+  }
+
+  function handleCategoryChange(v: string) {
+    setField('category', v);
+    if (f.startDate) {
+      const calc = calcDeadlines(f.startDate, v);
+      setF(prev => ({
+        ...prev,
+        category: v,
+        ...(!overrides.signUp     ? { signUpDeadline:     calc.signUpDeadline }     : {}),
+        ...(!overrides.withdrawal ? { withdrawalDeadline: calc.withdrawalDeadline } : {}),
+        ...(!overrides.freeze     ? { freezeDeadline:     calc.freezeDeadline }     : {}),
+      }));
+    }
   }
 
   async function handleAddFromSearch(tournament: any) {
@@ -715,7 +1142,7 @@ function AddTournamentModal({ onClose }: { onClose: () => void }) {
         updates.isRegistered = true;
       }
       if (tournament.startDate && !tournament.freezeDeadline) {
-        const calc = calcDeadlines(tournament.startDate);
+        const calc = calcDeadlines(tournament.startDate, tournament.category);
         if (!tournament.signUpDeadline)     updates.signUpDeadline     = calc.signUpDeadline;
         if (!tournament.withdrawalDeadline) updates.withdrawalDeadline = calc.withdrawalDeadline;
         updates.freezeDeadline = calc.freezeDeadline;
@@ -731,15 +1158,18 @@ function AddTournamentModal({ onClose }: { onClose: () => void }) {
   }
 
   async function handleSaveManual() {
-    if (!f.name.trim()) { setError('Tournament name is required.'); return; }
-    if (!f.startDate)   { setError('Start date is required.'); return; }
+    if (!f.name.trim()) { setError(t('tournaments.nameRequired')); return; }
+    if (!f.startDate)   { setError(t('tournaments.dateRequired')); return; }
     setSaving(true); setError('');
-    // Auto-register if sign-up has passed or tournament has started/ended
+    const finalCalc = calcDeadlines(f.startDate, f.category);
+    const finalSignUp = overrides.signUp ? f.signUpDeadline : finalCalc.signUpDeadline;
+    const finalWithdrawal = overrides.withdrawal ? f.withdrawalDeadline : finalCalc.withdrawalDeadline;
+    const finalFreeze = overrides.freeze ? f.freezeDeadline : finalCalc.freezeDeadline;
     const _now = new Date();
     const _start = parseLocalDate(f.startDate);
     const _end   = f.endDate ? parseLocalDate(f.endDate) : null;
     if (_end) _end.setHours(23, 59, 59, 999);
-    const _signUp = f.signUpDeadline ? parseLocalDate(f.signUpDeadline) : null;
+    const _signUp = finalSignUp ? parseLocalDate(finalSignUp) : null;
     if (_signUp) _signUp.setHours(23, 59, 59, 999);
     const autoRegistered = f.isRegistered
       || (_signUp !== null && _now > _signUp)
@@ -748,13 +1178,13 @@ function AddTournamentModal({ onClose }: { onClose: () => void }) {
     try {
       if (DEMO_MODE) {
         demoCtx?.addTournament({
-          id: crypto.randomUUID(),
+          id: genId(),
           name: f.name.trim(), country: f.country, city: f.city.trim(),
           surface: f.surface, category: f.category, startDate: f.startDate,
           endDate: f.endDate,
-          signUpDeadline: f.signUpDeadline,
-          withdrawalDeadline: f.withdrawalDeadline,
-          freezeDeadline: f.freezeDeadline,
+          signUpDeadline: finalSignUp,
+          withdrawalDeadline: finalWithdrawal,
+          freezeDeadline: finalFreeze,
           isRegistered: autoRegistered,
           isWithdrawn: false, isInMyList: true, status: 'upcoming',
           prizeMoney: 0, singlesPrizeMoney: 0, doublesPrizeMoney: 0,
@@ -765,13 +1195,15 @@ function AddTournamentModal({ onClose }: { onClose: () => void }) {
           name: f.name.trim(), country: f.country, city: f.city.trim(),
           surface: f.surface, category: f.category, startDate: f.startDate,
           endDate: f.endDate,
-          signUpDeadline: f.signUpDeadline,
-          withdrawalDeadline: f.withdrawalDeadline,
-          freezeDeadline: f.freezeDeadline,
+          signUpDeadline: finalSignUp,
+          withdrawalDeadline: finalWithdrawal,
+          freezeDeadline: finalFreeze,
           isRegistered: autoRegistered,
           isWithdrawn: false, isInMyList: true, status: 'upcoming',
           prizeMoney: 0, singlesPrizeMoney: 0, doublesPrizeMoney: 0,
         });
+        const { rescheduleAllNotifications } = await import('@/utils/notifications');
+        rescheduleAllNotifications(data?.tournaments ?? []);
         onClose();
       }
     } catch (e: any) { setError(e?.message ?? 'Failed to save.'); setSaving(false); }
@@ -788,12 +1220,12 @@ function AddTournamentModal({ onClose }: { onClose: () => void }) {
           <View style={form.sheetHeader}>
             {mode === 'manual'
               ? <TouchableOpacity onPress={() => { setMode('search'); setError(''); }} activeOpacity={0.7} style={form.backBtn}>
-                  <Text style={form.backBtnText}>← back</Text>
+                  <Text style={form.backBtnText}>{t('common.back')}</Text>
                 </TouchableOpacity>
               : <TouchableOpacity onPress={onClose} activeOpacity={0.7} style={form.backBtn}>
-                  <Text style={form.backBtnText}>cancel</Text>
+                  <Text style={form.backBtnText}>{t('common.cancel')}</Text>
                 </TouchableOpacity>}
-            <Text style={form.sheetTitle}>{mode === 'manual' ? 'add manually' : 'add tournament'}</Text>
+            <Text style={form.sheetTitle}>{mode === 'manual' ? t('tournaments.addManually') : t('tournaments.addNew')}</Text>
           </View>
 
           {mode === 'search' ? (
@@ -801,7 +1233,7 @@ function AddTournamentModal({ onClose }: { onClose: () => void }) {
               <View style={form.searchWrap}>
                 <Text style={form.searchIcon}>🔍</Text>
                 <TextInput style={form.searchInput} value={query} onChangeText={setQuery}
-                  placeholder="search tournament name…" placeholderTextColor="#BBBBBB" autoFocus returnKeyType="search" />
+                  placeholder={t('tournaments.searchPlaceholder')} placeholderTextColor={T.textSecondary} autoFocus returnKeyType="search" />
                 {query.length > 0 && (
                   <TouchableOpacity onPress={() => setQuery('')} activeOpacity={0.7}>
                     <Text style={form.searchClear}>✕</Text>
@@ -809,34 +1241,34 @@ function AddTournamentModal({ onClose }: { onClose: () => void }) {
                 )}
               </View>
               <ScrollView showsVerticalScrollIndicator={false} style={form.scrollArea} keyboardShouldPersistTaps="handled">
-                {searchResults.map((t: any) => (
-                  <TouchableOpacity key={t.id} style={form.resultCard} onPress={() => handleAddFromSearch(t)}
+                {searchResults.map((trn: any) => (
+                  <TouchableOpacity key={trn.id} style={form.resultCard} onPress={() => handleAddFromSearch(trn)}
                     activeOpacity={0.75} disabled={saving}>
                     <View style={form.resultCardInner}>
                       <View style={{ flex: 1 }}>
                         <Text style={form.resultName} numberOfLines={1}>
-                          {t.country ? countryFlag(t.country) + ' ' : ''}{t.name}
+                          {trn.country ? countryFlag(trn.country) + ' ' : ''}{trn.name}
                         </Text>
-                        <Text style={form.resultMeta}>{[t.city, t.surface, fmtDate(t.startDate)].filter(Boolean).join(' · ')}</Text>
+                        <Text style={form.resultMeta}>{[trn.city, trn.surface, fmtDate(trn.startDate)].filter(Boolean).join(' · ')}</Text>
                       </View>
-                      {t.category && (
+                      {trn.category && (
                         <View style={form.categoryBadge}>
-                          <Text style={form.categoryBadgeText}>{t.category}</Text>
+                          <Text style={form.categoryBadgeText}>{trn.category}</Text>
                         </View>
                       )}
                     </View>
-                    <Text style={form.resultAddLabel}>tap to add →</Text>
+                    <Text style={form.resultAddLabel}>{t('tournaments.tapToAdd')}</Text>
                   </TouchableOpacity>
                 ))}
                 {query.trim().length > 0 && searchResults.length === 0 && (
-                  <View style={form.noResults}><Text style={form.noResultsText}>No matches for "{query}"</Text></View>
+                  <View style={form.noResults}><Text style={form.noResultsText}>{t('tournaments.noMatches')} "{query}"</Text></View>
                 )}
                 {(showManualPrompt || query.trim().length === 0) && (
                   <TouchableOpacity style={form.manualPrompt} onPress={() => setMode('manual')} activeOpacity={0.8}>
                     <Text style={form.manualPromptIcon}>✏️</Text>
                     <View>
-                      <Text style={form.manualPromptTitle}>Add manually</Text>
-                      <Text style={form.manualPromptSub}>Tournament not in the database? Fill in the details yourself.</Text>
+                      <Text style={form.manualPromptTitle}>{t('tournaments.addManually')}</Text>
+                      <Text style={form.manualPromptSub}>{t('tournaments.addManuallyDesc')}</Text>
                     </View>
                   </TouchableOpacity>
                 )}
@@ -846,55 +1278,39 @@ function AddTournamentModal({ onClose }: { onClose: () => void }) {
           ) : (
             <>
               <ScrollView showsVerticalScrollIndicator={false} style={form.scrollArea} keyboardShouldPersistTaps="handled">
-                <LabeledInput label="name" placeholder="e.g. M25 Cuiabá" value={f.name} onChangeText={(v) => setField('name', v)} />
-                <LabeledInput label="city" placeholder="e.g. Cuiabá" value={f.city} onChangeText={(v) => setField('city', v)} />
+                <Text style={{ fontSize: 11, color: T.accent, marginBottom: 12 }}>{t('tournaments.autoFillHint')}</Text>
+                <LabeledInput label={`Name ⚡`} placeholder="ex. M25 Cuiabá" value={f.name} onChangeText={(v) => setField('name', v)} />
+                <LabeledInput label={`City ⚡`} placeholder="ex. Cuiabá" value={f.city} onChangeText={(v) => setField('city', v)} />
                 <View style={form.field}>
-                  <Text style={form.label}>country</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                    <View style={form.chipRow}>
-                      {COUNTRIES.map((c) => (
-                        <TouchableOpacity key={c.code} style={[form.chip, f.country === c.code && form.chipActive]}
-                          onPress={() => setField('country', c.code)} activeOpacity={0.7}>
-                          <Text style={[form.chipText, f.country === c.code && form.chipTextActive]}>
-                            {countryFlag(c.code)} {c.code}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  </ScrollView>
+                  <CountryPicker label="Country ⚡" value={f.country} onChange={(v) => setField('country', v)} t={t} />
                 </View>
-                <ChipPicker label="surface" options={SURFACES} value={f.surface} onChange={(v) => setField('surface', v)} />
-                <ChipPicker label="category" options={CATEGORIES} value={f.category} onChange={(v) => setField('category', v)} />
-                <DatePickerField label="start date (end date auto-calculated)" value={f.startDate} onChange={handleStartDateChange} />
+                <ChipPicker label={`Surface ⚡`} options={SURFACES} value={f.surface} onChange={(v) => setField('surface', v)} />
                 <View style={form.field}>
-                  <Text style={form.label}>deadlines (auto-calculated)</Text>
-                  <DeadlineRow
-                    label="Singles entry"
-                    value={f.signUpDeadline}
-                    overridden={overrides.signUp}
-                    onToggle={() => setOverrides(p => ({ ...p, signUp: !p.signUp }))}
-                    onChange={(v) => setField('signUpDeadline', v)}
-                  />
-                  <DeadlineRow
-                    label="Withdrawal"
-                    value={f.withdrawalDeadline}
-                    overridden={overrides.withdrawal}
-                    onToggle={() => setOverrides(p => ({ ...p, withdrawal: !p.withdrawal }))}
-                    onChange={(v) => setField('withdrawalDeadline', v)}
-                  />
-                  <DeadlineRow
-                    label="Freeze / doubles"
-                    value={f.freezeDeadline}
-                    overridden={overrides.freeze}
-                    onToggle={() => setOverrides(p => ({ ...p, freeze: !p.freeze }))}
-                    onChange={(v) => setField('freezeDeadline', v)}
-                  />
+                  <CategoryPicker label="Category ⚡" value={f.category} onChange={handleCategoryChange} t={t} />
+                </View>
+                <DatePickerField label={`${t('tournament.startDateHint')} ⚡`} value={f.startDate} onChange={handleStartDateChange} />
+                <View style={form.field}>
+                  <Text style={form.label}>Deadlines ⚡ (auto-calculated)</Text>
+                  {getStoredDeadlineFields(f.category).map(({ field, label }) => {
+                    const ok = field === 'signUpDeadline' ? 'signUp' as const : field === 'withdrawalDeadline' ? 'withdrawal' as const : 'freeze' as const;
+                    return (
+                      <DeadlineRow
+                        key={field}
+                        label={label}
+                        value={f[field as keyof typeof f] as string}
+                        overridden={overrides[ok]}
+                        onToggle={() => setOverrides(p => ({ ...p, [ok]: !p[ok] }))}
+                        onChange={(v) => setField(field as any, v)}
+                        selectStartFirstLabel={t('tournament.selectStartFirst')}
+                      />
+                    );
+                  })}
                 </View>
                 {signUpPassed ? (
                   <View style={form.deadlineWarning}>
-                    <Text style={form.deadlineWarningTitle}>⚠️ Sign-up deadline has passed</Text>
+                    <Text style={form.deadlineWarningTitle}>{t('tournaments.signupPassed')}</Text>
                     <Text style={form.deadlineWarningBody}>
-                      This will be added as a past tournament. Still competing? (wildcard, late entry, or forgot to log it) — tap below to keep it active.
+                      {t('tournaments.signupPassedDesc')}
                     </Text>
                     <TouchableOpacity
                       style={[form.playingBtn, f.isRegistered && form.playingBtnActive]}
@@ -902,20 +1318,20 @@ function AddTournamentModal({ onClose }: { onClose: () => void }) {
                       activeOpacity={0.8}
                     >
                       <Text style={[form.playingBtnText, f.isRegistered && form.playingBtnTextActive]}>
-                        {f.isRegistered ? '✓  I\'m playing this' : 'I\'m playing this'}
+                        {f.isRegistered ? `✓  ${t('tournaments.imPlaying')}` : t('tournaments.imPlaying')}
                       </Text>
                     </TouchableOpacity>
                   </View>
                 ) : (
                   <View style={form.field}>
-                    <Text style={form.label}>already registered?</Text>
+                    <Text style={form.label}>{t('tournaments.alreadyRegistered')}</Text>
                     <View style={form.chipRow}>
-                      {(['yes', 'no'] as const).map((opt) => {
-                        const active = f.isRegistered === (opt === 'yes');
+                      {[{ key: 'yes' as const, label: t('tournaments.yes') }, { key: 'no' as const, label: t('tournaments.no') }].map((opt) => {
+                        const active = f.isRegistered === (opt.key === 'yes');
                         return (
-                          <TouchableOpacity key={opt} style={[form.chip, active && form.chipActive]}
-                            onPress={() => setField('isRegistered', opt === 'yes')} activeOpacity={0.7}>
-                            <Text style={[form.chipText, active && form.chipTextActive]}>{opt}</Text>
+                          <TouchableOpacity key={opt.key} style={[form.chip, active && form.chipActive]}
+                            onPress={() => setField('isRegistered', opt.key === 'yes')} activeOpacity={0.7}>
+                            <Text style={[form.chipText, active && form.chipTextActive]}>{opt.label}</Text>
                           </TouchableOpacity>
                         );
                       })}
@@ -925,7 +1341,7 @@ function AddTournamentModal({ onClose }: { onClose: () => void }) {
                 {error ? <Text style={form.error}>{error}</Text> : null}
               </ScrollView>
               <TouchableOpacity style={form.saveBtn} onPress={handleSaveManual} activeOpacity={0.8} disabled={saving}>
-                {saving ? <ActivityIndicator color="#FFF" /> : <Text style={form.saveBtnText}>add tournament</Text>}
+                {saving ? <ActivityIndicator color={T.textPrimary} /> : <Text style={form.saveBtnText}>{t('tournaments.addNew')}</Text>}
               </TouchableOpacity>
             </>
           )}
@@ -938,43 +1354,110 @@ function AddTournamentModal({ onClose }: { onClose: () => void }) {
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function TournamentsScreen() {
+  const { t } = useLanguage();
+  const filters: { key: Filter; label: string }[] = [
+    { key: 'all', label: t('tournaments.all') },
+    { key: 'active', label: t('tournaments.active') },
+    { key: 'upcoming', label: t('tournaments.upcoming') },
+    { key: 'past', label: t('tournaments.past') },
+    { key: 'withdrawn', label: t('tournaments.withdrawn') },
+  ];
   const { data, isLoading } = useAppQuery({ tournaments: {} });
   const [activeFilter, setActiveFilter]   = useState<Filter>('all');
   const [showAddForm, setShowAddForm]      = useState(false);
   const [detailId, setDetailId]           = useState<string | null>(null);
+  const [expenseDetailId, setExpenseDetailId] = useState<string | null>(null);
+  const { isFirstVisit, markVisited } = useFirstVisit('tournaments');
+  const swipeHandlers = useTabSwipe();
+  const router = useRouter();
+  const demoCtx = useDemoData();
+  const [selectedTournaments, setSelectedTournaments] = useState<Set<string>>(new Set());
+  const tournamentSelectMode = selectedTournaments.size > 0;
+  const [removingTournaments, setRemovingTournaments] = useState(false);
+
+  function toggleTournamentSelect(id: string) {
+    setSelectedTournaments(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  async function removeSelectedTournaments() {
+    setRemovingTournaments(true);
+    try {
+      for (const id of selectedTournaments) {
+        if (DEMO_MODE) {
+          demoCtx?.patchTournament(id, { isInMyList: false });
+        } else {
+          await apiPatchTournament(id, { isInMyList: false });
+        }
+      }
+    } finally {
+      setRemovingTournaments(false);
+      setSelectedTournaments(new Set());
+    }
+  }
 
   const { openTournament } = useLocalSearchParams<{ openTournament?: string }>();
   useEffect(() => {
     if (openTournament) setDetailId(openTournament);
   }, [openTournament]);
 
+  const reconciledRef = useRef(new Set<string>());
+  useEffect(() => {
+    const tournaments = data?.tournaments ?? [];
+    for (const trn of tournaments) {
+      if (!trn.startDate || !trn.category || reconciledRef.current.has(trn.id)) continue;
+      const correct = calcDeadlines(trn.startDate, trn.category);
+      const needsFix =
+        (trn.signUpDeadline && trn.signUpDeadline !== correct.signUpDeadline) ||
+        (trn.withdrawalDeadline && trn.withdrawalDeadline !== correct.withdrawalDeadline) ||
+        (trn.freezeDeadline && trn.freezeDeadline !== correct.freezeDeadline);
+      if (!needsFix) { reconciledRef.current.add(trn.id); continue; }
+      reconciledRef.current.add(trn.id);
+      const updates: any = {};
+      if (trn.signUpDeadline !== correct.signUpDeadline) updates.signUpDeadline = correct.signUpDeadline;
+      if (trn.withdrawalDeadline !== correct.withdrawalDeadline) updates.withdrawalDeadline = correct.withdrawalDeadline;
+      if (trn.freezeDeadline !== correct.freezeDeadline) updates.freezeDeadline = correct.freezeDeadline;
+      if (DEMO_MODE) {
+        demoCtx?.patchTournament(trn.id, updates);
+      } else {
+        apiPatchTournament(trn.id, updates);
+      }
+    }
+  }, [data?.tournaments]);
+
   const allMyTournaments = (data?.tournaments ?? []).filter(
-    (t: any) => t.isInMyList !== false
+    (trn: any) => trn.isInMyList !== false
   );
-  const nonWithdrawn   = allMyTournaments.filter((t: any) => !t.isWithdrawn);
-  const withdrawnGroup = allMyTournaments.filter((t: any) => t.isWithdrawn);
+  const nonWithdrawn   = allMyTournaments.filter((trn: any) => !trn.isWithdrawn);
+  const withdrawnGroup = allMyTournaments.filter((trn: any) => trn.isWithdrawn);
 
   const filtered = activeFilter === 'withdrawn' || activeFilter === 'all'
     ? nonWithdrawn
-    : nonWithdrawn.filter((t: any) => getGroup(t) === activeFilter);
+    : nonWithdrawn.filter((trn: any) => getGroup(trn) === activeFilter);
 
-  const activeGroup   = filtered.filter((t: any) => getGroup(t) === 'active');
-  const upcomingGroup = filtered.filter((t: any) => getGroup(t) === 'upcoming');
-  const pastGroup     = filtered.filter((t: any) => getGroup(t) === 'past');
+  const activeGroup   = filtered.filter((trn: any) => getGroup(trn) === 'active');
+  const upcomingGroup = filtered.filter((trn: any) => getGroup(trn) === 'upcoming');
+  const pastGroup     = filtered.filter((trn: any) => getGroup(trn) === 'past');
 
   return (
     <SafeAreaView style={styles.safe}>
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false} {...swipeHandlers}>
 
         <View style={styles.topBar}>
-          <Text style={styles.topTitle}>My Tournaments</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <AgentIcon size={70} />
+            <Text style={styles.topTitle}>{t('tournaments.title')}</Text>
+          </View>
           <TouchableOpacity style={styles.addButton} onPress={() => setShowAddForm(true)} activeOpacity={0.8}>
             <Text style={styles.addIcon}>+</Text>
           </TouchableOpacity>
         </View>
 
         <View style={styles.filterRow}>
-          {FILTERS.map((f) => (
+          {filters.map((f) => (
             <TouchableOpacity key={f.key}
               style={[styles.filterChip, activeFilter === f.key ? styles.filterChipActive : styles.filterChipInactive]}
               onPress={() => setActiveFilter(f.key)} activeOpacity={0.7}>
@@ -985,62 +1468,118 @@ export default function TournamentsScreen() {
           ))}
         </View>
 
-        {isLoading && <ActivityIndicator color="#5B5BD6" style={{ marginTop: 40 }} />}
+        {tournamentSelectMode && (
+          <View style={styles.selectBar}>
+            <Text style={styles.selectCount}>{selectedTournaments.size} {t('tournaments.selected')}</Text>
+            <TouchableOpacity onPress={() => setSelectedTournaments(new Set())} activeOpacity={0.7}>
+              <Text style={styles.selectCancel}>{t('common.cancel')}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {isLoading && <ActivityIndicator color={T.teal} style={{ marginTop: 40 }} />}
 
         {!isLoading && activeFilter !== 'withdrawn' && filtered.length === 0 && (
-          <Text style={styles.emptyText}>No tournaments yet. Tap + to add one.</Text>
+          <Text style={styles.emptyText}>{t('tournaments.noTournamentsYet')}</Text>
         )}
         {!isLoading && activeFilter === 'withdrawn' && withdrawnGroup.length === 0 && (
-          <Text style={styles.emptyText}>No withdrawn tournaments.</Text>
+          <Text style={styles.emptyText}>{t('tournaments.noWithdrawn')}</Text>
         )}
 
         {activeFilter !== 'withdrawn' && activeGroup.length > 0 && (
           <>
-            <Text style={styles.sectionLabel}>ACTIVE</Text>
-            {activeGroup.map((t: any) => (
-              <TournamentCard key={t.id} item={t} onPress={() => setDetailId(t.id)} />
+            <Text style={styles.sectionLabel}>{t('tournaments.active').toUpperCase()}</Text>
+            {groupByWeek(activeGroup, t('tournaments.noDate')).map(week => (
+              <View key={week.weekKey}>
+                <Text style={styles.weekLabel}>{week.weekLabel}</Text>
+                {week.items.map((item: any) => (
+                  <TournamentCard key={item.id} item={item} t={t}
+                    selected={selectedTournaments.has(item.id)} selectMode={tournamentSelectMode}
+                    onPress={() => tournamentSelectMode ? toggleTournamentSelect(item.id) : setDetailId(item.id)}
+                    onLongPress={() => toggleTournamentSelect(item.id)} />
+                ))}
+              </View>
             ))}
           </>
         )}
         {activeFilter !== 'withdrawn' && upcomingGroup.length > 0 && (
           <>
-            <Text style={styles.sectionLabel}>UPCOMING</Text>
-            {upcomingGroup.map((t: any) => (
-              <TournamentCard key={t.id} item={t} onPress={() => setDetailId(t.id)} />
+            <Text style={styles.sectionLabel}>{t('tournaments.upcoming').toUpperCase()}</Text>
+            {groupByWeek(upcomingGroup, t('tournaments.noDate')).map(week => (
+              <View key={week.weekKey}>
+                <Text style={styles.weekLabel}>{week.weekLabel}</Text>
+                {week.items.map((item: any) => (
+                  <TournamentCard key={item.id} item={item} t={t}
+                    selected={selectedTournaments.has(item.id)} selectMode={tournamentSelectMode}
+                    onPress={() => tournamentSelectMode ? toggleTournamentSelect(item.id) : setDetailId(item.id)}
+                    onLongPress={() => toggleTournamentSelect(item.id)} />
+                ))}
+              </View>
             ))}
           </>
         )}
         {activeFilter !== 'withdrawn' && pastGroup.length > 0 && (
           <>
-            <Text style={styles.sectionLabel}>PAST</Text>
-            {pastGroup.map((t: any) => (
-              <TournamentCard key={t.id} item={t} onPress={() => setDetailId(t.id)} />
+            <Text style={styles.sectionLabel}>{t('tournaments.past').toUpperCase()}</Text>
+            {groupByWeek(pastGroup, t('tournaments.noDate')).reverse().map(week => (
+              <View key={week.weekKey}>
+                <Text style={styles.weekLabel}>{week.weekLabel}</Text>
+                {week.items.map((item: any) => (
+                  <TournamentCard key={item.id} item={item} t={t}
+                    selected={selectedTournaments.has(item.id)} selectMode={tournamentSelectMode}
+                    onPress={() => tournamentSelectMode ? toggleTournamentSelect(item.id) : setExpenseDetailId(item.id)}
+                    onLongPress={() => toggleTournamentSelect(item.id)} />
+                ))}
+              </View>
             ))}
           </>
         )}
         {activeFilter === 'withdrawn' && withdrawnGroup.length > 0 && (
           <>
-            <Text style={styles.sectionLabel}>WITHDRAWN</Text>
-            {withdrawnGroup.map((t: any) => (
-              <TouchableOpacity key={t.id} style={styles.cardWithdrawn}
-                onPress={() => setDetailId(t.id)} activeOpacity={0.7}>
+            <Text style={styles.sectionLabel}>{t('tournaments.withdrawn').toUpperCase()}</Text>
+            {withdrawnGroup.map((item: any) => (
+              <TouchableOpacity key={item.id} style={styles.cardWithdrawn}
+                onPress={() => setDetailId(item.id)} activeOpacity={0.7}>
                 <View style={styles.cardTopRow}>
                   <Text style={styles.cardTitleMuted} numberOfLines={1}>
-                    {t.country ? countryFlag(t.country) + ' ' : ''}{t.name}
+                    {item.country ? countryFlag(item.country) + ' ' : ''}{item.name}
                   </Text>
-                  <View style={styles.withdrawnBadge}><Text style={styles.withdrawnBadgeText}>withdrawn</Text></View>
+                  <View style={styles.withdrawnBadge}><Text style={styles.withdrawnBadgeText}>{t('tournaments.withdrawn')}</Text></View>
                 </View>
                 <Text style={styles.cardMetaMuted}>
-                  {fmtDateRange(t.startDate, t.endDate)}{t.surface ? ` · ${t.surface}` : ''}
+                  {fmtDateRange(item.startDate, item.endDate)}{item.surface ? ` · ${item.surface}` : ''}
                 </Text>
               </TouchableOpacity>
             ))}
           </>
         )}
+
+        {tournamentSelectMode && (
+          <TouchableOpacity
+            style={[styles.removeBtn, removingTournaments && { opacity: 0.5 }]}
+            onPress={removeSelectedTournaments}
+            disabled={removingTournaments}
+            activeOpacity={0.8}>
+            {removingTournaments
+              ? <ActivityIndicator color={T.textPrimary} />
+              : <Text style={styles.removeBtnText}>Remove {selectedTournaments.size} tournament{selectedTournaments.size !== 1 ? 's' : ''}</Text>}
+          </TouchableOpacity>
+        )}
       </ScrollView>
 
       {showAddForm && <AddTournamentModal onClose={() => setShowAddForm(false)} />}
-      {detailId   && <TournamentDetail tournamentId={detailId} onClose={() => setDetailId(null)} />}
+      {detailId && <TournamentDetail tournamentId={detailId} onClose={() => setDetailId(null)} />}
+      {expenseDetailId && (() => {
+        const trn = allMyTournaments.find((x: any) => x.id === expenseDetailId);
+        return trn ? (
+          <TournamentExpenseDetail
+            tournament={trn}
+            allTournaments={allMyTournaments}
+            onClose={() => setExpenseDetailId(null)}
+          />
+        ) : null;
+      })()}
+      <ScreenWalkthrough steps={TOURNAMENTS_WALKTHROUGH} visible={isFirstVisit} onDismiss={markVisited} />
     </SafeAreaView>
   );
 }
@@ -1048,181 +1587,197 @@ export default function TournamentsScreen() {
 // ─── List styles ──────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#FAFAFA' },
+  safe: { flex: 1, backgroundColor: T.bg },
   scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: 20, paddingBottom: 32 },
   topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 18, paddingBottom: 20 },
-  topTitle: { fontSize: 20, fontWeight: '700', color: '#2D2B55' },
-  addButton: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#5B5BD6', alignItems: 'center', justifyContent: 'center' },
-  addIcon: { color: '#FFFFFF', fontSize: 22, lineHeight: 26, fontWeight: '300' },
+  topTitle: { fontSize: 18, fontWeight: '700', color: T.textPrimary },
+  avatarBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: T.card, borderWidth: 1.5, borderColor: T.teal, alignItems: 'center', justifyContent: 'center' },
+  avatarInitials: { fontSize: 13, fontWeight: '800', color: T.teal },
+  addButton: { width: 34, height: 34, borderRadius: 17, backgroundColor: T.teal, alignItems: 'center', justifyContent: 'center' },
+  addIcon: { color: T.textPrimary, fontSize: 22, lineHeight: 26, fontWeight: '300' },
   filterRow: { flexDirection: 'row', gap: 8, marginBottom: 24 },
   filterChip: { borderRadius: 20, paddingHorizontal: 16, paddingVertical: 7 },
-  filterChipActive: { backgroundColor: '#5B5BD6' },
-  filterChipInactive: { backgroundColor: '#F0F0F8' },
+  filterChipActive: { backgroundColor: T.teal },
+  filterChipInactive: { backgroundColor: T.card },
   filterChipText: { fontSize: 13, fontWeight: '600' },
-  filterChipTextActive: { color: '#FFFFFF' },
-  filterChipTextInactive: { color: '#999999' },
-  sectionLabel: { fontSize: 11, fontWeight: '600', color: '#AAAAAA', letterSpacing: 0.8, marginBottom: 10, marginTop: 4 },
-  card: { borderRadius: 14, padding: 14, marginBottom: 10, backgroundColor: '#FFFFFF' },
-  cardTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
-  cardTitle: { fontSize: 15, fontWeight: '600', color: '#2D2B55', flex: 1, marginRight: 8 },
-  cardMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
-  cardMeta: { fontSize: 12, color: '#999999' },
-  registeredBadge: { backgroundColor: '#EDEDFF', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3 },
-  registeredText: { fontSize: 11, fontWeight: '600', color: '#5B5BD6' },
-  notRegisteredBadge: { backgroundColor: '#F0F0F0', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3 },
-  notRegisteredText: { fontSize: 11, fontWeight: '600', color: '#999999' },
-  playedBadge: { backgroundColor: '#E8F5EE', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3 },
-  playedText: { fontSize: 11, fontWeight: '600', color: '#2D9E6B' },
+  filterChipTextActive: { color: T.textPrimary },
+  filterChipTextInactive: { color: T.textTertiary },
+  sectionLabel: { fontSize: 11, fontWeight: '600', color: T.textTertiary, letterSpacing: 0.8, marginBottom: 10, marginTop: 4 },
+  weekLabel: { fontSize: 13, fontWeight: '700', color: T.textSecondary, marginBottom: 8, marginTop: 12, paddingLeft: 2 },
+  selectBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, paddingHorizontal: 4 },
+  selectCount: { fontSize: 14, fontWeight: '600', color: T.teal },
+  selectCancel: { fontSize: 14, fontWeight: '600', color: T.textSecondary },
+  selectBox: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: T.textMuted, alignItems: 'center', justifyContent: 'center', marginRight: 10 },
+  selectBoxOn: { backgroundColor: T.teal, borderColor: T.teal },
+  selectCheck: { color: T.textPrimary, fontSize: 13, fontWeight: '700' },
+  cardSelected: { borderWidth: 1.5, borderColor: T.teal },
+  removeBtn: { backgroundColor: T.red, borderRadius: 14, paddingVertical: 16, alignItems: 'center', marginTop: 8, marginBottom: 16 },
+  removeBtnText: { fontSize: 15, fontWeight: '700', color: T.textPrimary },
+  card: { borderRadius: 12, padding: 12, marginBottom: 6, backgroundColor: T.card },
+  cardTopRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2, gap: 6 },
+  cardTitle: { fontSize: 14, fontWeight: '600', color: T.textPrimary, flex: 1, flexShrink: 1 },
+  cardMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
+  cardMeta: { fontSize: 11, color: T.textTertiary },
+  registeredBadge: { backgroundColor: T.cardBorder, borderRadius: 20, paddingHorizontal: 8, paddingVertical: 2, flexShrink: 0 },
+  registeredText: { fontSize: 10, fontWeight: '600', color: T.teal },
+  notRegisteredBadge: { backgroundColor: T.card, borderRadius: 20, paddingHorizontal: 8, paddingVertical: 2, flexShrink: 0 },
+  notRegisteredText: { fontSize: 10, fontWeight: '600', color: T.textTertiary },
+  playedBadge: { backgroundColor: '#0A2010', borderRadius: 20, paddingHorizontal: 8, paddingVertical: 2, flexShrink: 0 },
+  playedText: { fontSize: 10, fontWeight: '600', color: T.green },
   pillRow: { flexDirection: 'row', gap: 6 },
   pill: { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 },
-  pillRed: { backgroundColor: '#E24B4A' },
-  pillAmber: { backgroundColor: '#EF9F27' },
-  pillText: { fontSize: 11, color: '#FFFFFF', fontWeight: '600' },
-  emptyText: { fontSize: 14, color: '#AAAAAA', textAlign: 'center', marginTop: 40 },
+  pillRed: { backgroundColor: T.red },
+  pillAmber: { backgroundColor: T.amber },
+  pillText: { fontSize: 11, color: T.textPrimary, fontWeight: '600' },
+  emptyText: { fontSize: 14, color: T.textTertiary, textAlign: 'center', marginTop: 40 },
   cardWithdrawn: {
-    borderRadius: 14, padding: 14, marginBottom: 10,
-    backgroundColor: '#F5F0EE', borderWidth: 1, borderColor: '#E8DEDA',
+    borderRadius: 12, padding: 10, marginBottom: 5,
+    backgroundColor: '#1E1610', borderWidth: 1, borderColor: '#2A2018',
   },
-  cardTitleMuted: { fontSize: 15, fontWeight: '600', color: '#AAAAAA', flex: 1, marginRight: 8 },
-  cardMetaMuted: { fontSize: 12, color: '#CCCCCC' },
-  withdrawnBadge: { backgroundColor: '#F9ECEA', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3 },
-  withdrawnBadgeText: { fontSize: 11, fontWeight: '600', color: '#C0524A' },
-  dialogBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 28 },
-  dialog: { backgroundColor: '#FFFFFF', borderRadius: 20, padding: 24, width: '100%' },
-  dialogTitle: { fontSize: 17, fontWeight: '700', color: '#2D2B55', marginBottom: 10, textAlign: 'center' },
-  dialogBody: { fontSize: 14, color: '#777777', textAlign: 'center', lineHeight: 20, marginBottom: 24 },
+  cardTitleMuted: { fontSize: 14, fontWeight: '600', color: T.textTertiary, flex: 1, marginRight: 8 },
+  cardMetaMuted: { fontSize: 11, color: T.textMuted },
+  withdrawnBadge: { backgroundColor: '#280E0E', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3 },
+  withdrawnBadgeText: { fontSize: 11, fontWeight: '600', color: '#E06858' },
+  dialogBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 28 },
+  dialog: { backgroundColor: T.card, borderRadius: 20, padding: 24, width: '100%' },
+  dialogTitle: { fontSize: 17, fontWeight: '700', color: T.textPrimary, marginBottom: 10, textAlign: 'center' },
+  dialogBody: { fontSize: 14, color: T.textTertiary, textAlign: 'center', lineHeight: 20, marginBottom: 24 },
   dialogActions: { flexDirection: 'row', gap: 10 },
-  cancelBtn: { flex: 1, backgroundColor: '#F0F0F8', borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
-  cancelBtnText: { fontSize: 15, fontWeight: '600', color: '#666666' },
-  withdrawConfirmBtn: { flex: 1, backgroundColor: '#E24B4A', borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
-  withdrawConfirmText: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
+  cancelBtn: { flex: 1, backgroundColor: T.card, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  cancelBtnText: { fontSize: 15, fontWeight: '600', color: T.textSecondary },
+  withdrawConfirmBtn: { flex: 1, backgroundColor: T.red, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  withdrawConfirmText: { fontSize: 15, fontWeight: '700', color: T.textPrimary },
 });
 
 // ─── Add-tournament form styles ───────────────────────────────────────────────
 
 const form = StyleSheet.create({
   kav: { flex: 1, justifyContent: 'flex-end' },
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.35)' },
-  sheet: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingBottom: 36, paddingTop: 16, maxHeight: '92%' },
-  sheetHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: '#DDDDDD', alignSelf: 'center', marginBottom: 12 },
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.65)' },
+  sheet: { backgroundColor: T.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingBottom: 36, paddingTop: 16, maxHeight: '92%' },
+  sheetHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: T.cardBorder, alignSelf: 'center', marginBottom: 12 },
   sheetHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 18 },
   backBtn: { marginRight: 12 },
-  backBtnText: { fontSize: 14, color: '#5B5BD6', fontWeight: '600' },
-  sheetTitle: { fontSize: 18, fontWeight: '700', color: '#2D2B55' },
-  searchWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F4F4F8', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 16 },
+  backBtnText: { fontSize: 14, color: T.teal, fontWeight: '600' },
+  sheetTitle: { fontSize: 18, fontWeight: '700', color: T.textPrimary },
+  searchWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: T.card, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 16 },
   searchIcon: { fontSize: 14, marginRight: 8 },
-  searchInput: { flex: 1, fontSize: 15, color: '#2D2B55' },
-  searchClear: { fontSize: 13, color: '#BBBBBB', paddingLeft: 8 },
-  resultCard: { backgroundColor: '#F7F7FC', borderRadius: 12, padding: 14, marginBottom: 8 },
+  searchInput: { flex: 1, fontSize: 15, color: T.textPrimary },
+  searchClear: { fontSize: 13, color: T.textTertiary, paddingLeft: 8 },
+  resultCard: { backgroundColor: T.card, borderRadius: 12, padding: 14, marginBottom: 8 },
   resultCardInner: { flexDirection: 'row', alignItems: 'center' },
-  resultName: { fontSize: 14, fontWeight: '600', color: '#2D2B55', marginBottom: 3 },
-  resultMeta: { fontSize: 12, color: '#999999' },
-  resultAddLabel: { fontSize: 12, color: '#5B5BD6', fontWeight: '600', marginTop: 8, textAlign: 'right' },
-  categoryBadge: { backgroundColor: '#EDEDFF', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3, marginLeft: 10 },
-  categoryBadgeText: { fontSize: 11, fontWeight: '700', color: '#5B5BD6' },
+  resultName: { fontSize: 14, fontWeight: '600', color: T.textPrimary, marginBottom: 3 },
+  resultMeta: { fontSize: 12, color: T.textTertiary },
+  resultAddLabel: { fontSize: 12, color: T.teal, fontWeight: '600', marginTop: 8, textAlign: 'right' },
+  categoryBadge: { backgroundColor: T.cardBorder, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3, marginLeft: 10 },
+  categoryBadgeText: { fontSize: 11, fontWeight: '700', color: T.teal },
   noResults: { paddingVertical: 16, alignItems: 'center' },
-  noResultsText: { fontSize: 14, color: '#BBBBBB' },
-  manualPrompt: { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: '#F4F4F8', borderRadius: 14, padding: 16, marginTop: 8, marginBottom: 8 },
+  noResultsText: { fontSize: 14, color: T.textTertiary },
+  manualPrompt: { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: T.card, borderRadius: 14, padding: 16, marginTop: 8, marginBottom: 8 },
   manualPromptIcon: { fontSize: 22 },
-  manualPromptTitle: { fontSize: 15, fontWeight: '700', color: '#2D2B55', marginBottom: 2 },
-  manualPromptSub: { fontSize: 12, color: '#999999', lineHeight: 16 },
+  manualPromptTitle: { fontSize: 15, fontWeight: '700', color: T.textPrimary, marginBottom: 2 },
+  manualPromptSub: { fontSize: 12, color: T.textTertiary, lineHeight: 16 },
   scrollArea: { flexGrow: 0 },
   field: { marginBottom: 18 },
-  label: { fontSize: 12, fontWeight: '600', color: '#AAAAAA', letterSpacing: 0.5, marginBottom: 6, textTransform: 'uppercase' },
-  hint: { fontSize: 11, color: '#BBBBBB', marginBottom: 4 },
-  input: { backgroundColor: '#F4F4F8', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: '#2D2B55' },
+  label: { fontSize: 12, fontWeight: '600', color: T.textTertiary, letterSpacing: 0.5, marginBottom: 6, textTransform: 'uppercase' },
+  hint: { fontSize: 11, color: T.textTertiary, marginBottom: 4 },
+  input: { backgroundColor: T.card, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: T.textPrimary },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7, backgroundColor: '#F0F0F8' },
-  chipActive: { backgroundColor: '#5B5BD6' },
-  chipText: { fontSize: 13, fontWeight: '600', color: '#999999' },
-  chipTextActive: { color: '#FFFFFF' },
-  error: { fontSize: 13, color: '#E24B4A', marginBottom: 12, textAlign: 'center' },
-  deadlineWarning: { backgroundColor: '#FFF8EC', borderRadius: 12, padding: 14, marginBottom: 4, borderWidth: 1, borderColor: '#F5D68A' },
-  deadlineWarningTitle: { fontSize: 13, fontWeight: '700', color: '#8B6914', marginBottom: 4 },
-  deadlineWarningBody: { fontSize: 12, color: '#7A5C0F', lineHeight: 17 },
+  chip: { borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7, backgroundColor: T.card },
+  chipActive: { backgroundColor: T.teal },
+  chipText: { fontSize: 13, fontWeight: '600', color: T.textTertiary },
+  chipTextActive: { color: T.textPrimary },
+  error: { fontSize: 13, color: T.red, marginBottom: 12, textAlign: 'center' },
+  deadlineWarning: { backgroundColor: '#201808', borderRadius: 12, padding: 14, marginBottom: 4, borderWidth: 1, borderColor: '#604A10' },
+  deadlineWarningTitle: { fontSize: 13, fontWeight: '700', color: '#D4A030', marginBottom: 4 },
+  deadlineWarningBody: { fontSize: 12, color: '#C09020', lineHeight: 17 },
   playingBtn: {
     marginTop: 10, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14,
-    backgroundColor: '#FFF0D4', borderWidth: 1, borderColor: '#F0C840', alignItems: 'center',
+    backgroundColor: '#2A1A04', borderWidth: 1, borderColor: '#C8A020', alignItems: 'center',
   },
-  playingBtnActive: { backgroundColor: '#5B5BD6', borderColor: '#5B5BD6' },
-  playingBtnText: { fontSize: 14, fontWeight: '700', color: '#8B6914' },
-  playingBtnTextActive: { color: '#FFFFFF' },
-  saveBtn: { backgroundColor: '#5B5BD6', borderRadius: 14, paddingVertical: 16, alignItems: 'center', marginTop: 8 },
-  saveBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+  playingBtnActive: { backgroundColor: T.teal, borderColor: T.teal },
+  playingBtnText: { fontSize: 14, fontWeight: '700', color: '#D4A030' },
+  playingBtnTextActive: { color: T.textPrimary },
+  saveBtn: { backgroundColor: T.teal, borderRadius: 14, paddingVertical: 16, alignItems: 'center', marginTop: 8 },
+  saveBtnText: { color: T.textPrimary, fontSize: 16, fontWeight: '700' },
   // Deadline rows in manual form
   deadlineItem: { marginBottom: 14 },
   deadlineHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  deadlineItemLabel: { fontSize: 12, color: '#555555', fontWeight: '500' },
-  overrideBtn: { fontSize: 12, color: '#5B5BD6', fontWeight: '600' },
-  deadlinePreviewText: { fontSize: 13, color: '#444444', paddingVertical: 6, paddingHorizontal: 2 },
+  deadlineItemLabel: { fontSize: 12, color: T.textSecondary, fontWeight: '500' },
+  overrideBtn: { fontSize: 12, color: T.teal, fontWeight: '600' },
+  deadlinePreviewText: { fontSize: 13, color: T.textSecondary, paddingVertical: 6, paddingHorizontal: 2 },
 });
 
 // ─── Detail screen styles ─────────────────────────────────────────────────────
 
 const det = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#FAFAFA' },
+  safe: { flex: 1, backgroundColor: T.bg },
   navbar: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: 20, paddingVertical: 14,
-    backgroundColor: '#FAFAFA',
-    borderBottomWidth: 1, borderBottomColor: '#EBEBF0',
+    backgroundColor: T.bg,
+    borderBottomWidth: 1, borderBottomColor: T.cardBorder,
   },
   backBtn: { paddingRight: 16 },
-  backText: { fontSize: 15, fontWeight: '600', color: '#5B5BD6' },
+  backText: { fontSize: 15, fontWeight: '600', color: T.teal },
   // Header band
   headerBand: { paddingHorizontal: 24, paddingTop: 24, paddingBottom: 28 },
-  headerName: { fontSize: 22, fontWeight: '800', lineHeight: 28, marginBottom: 6 },
-  headerMeta: { fontSize: 13, fontWeight: '500', lineHeight: 18 },
+  headerName: { fontSize: 22, fontWeight: '800', lineHeight: 32, letterSpacing: 0.2, marginBottom: 6 },
+  headerMeta: { fontSize: 13, fontWeight: '500', lineHeight: 20 },
   // Body
   body: { paddingHorizontal: 20, paddingTop: 24 },
-  sectionLabel: { fontSize: 11, fontWeight: '700', color: '#AAAAAA', letterSpacing: 0.8, marginBottom: 12, marginTop: 8 },
+  sectionLabel: { fontSize: 11, fontWeight: '700', color: T.textTertiary, letterSpacing: 0.8, lineHeight: 16, marginBottom: 12, marginTop: 8 },
   // Toggle card (settings-style rows)
   toggleCard: {
-    backgroundColor: '#FFFFFF', borderRadius: 14, overflow: 'hidden',
-    borderWidth: 1, borderColor: '#EBEBF0', marginBottom: 8,
+    backgroundColor: T.card, borderRadius: 14, overflow: 'hidden',
+    borderWidth: 1, borderColor: T.cardBorder, marginBottom: 8,
   },
   toggleRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingVertical: 13,
   },
-  toggleDivider: { height: 1, backgroundColor: '#F3F3F6', marginHorizontal: 16 },
-  toggleLabel: { fontSize: 15, fontWeight: '500', color: '#2D2B55' },
-  toggleLabelWithdraw: { color: '#E24B4A' },
+  toggleDivider: { height: 1, backgroundColor: T.cardBorder, marginHorizontal: 16 },
+  toggleLabel: { fontSize: 15, fontWeight: '500', color: T.textPrimary, lineHeight: 22 },
+  toggleLabelWithdraw: { color: T.red },
   // Deadlines
-  deadlinesCard: { backgroundColor: '#FFFFFF', borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: '#EBEBF0', marginBottom: 8 },
-  deadlineRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16 },
-  deadlineDivider: { height: 1, backgroundColor: '#F5F5F5', marginHorizontal: 16 },
-  deadlineName: { fontSize: 14, color: '#2D2B55', fontWeight: '500' },
-  deadlineRight: { alignItems: 'flex-end' },
-  deadlineDate: { fontSize: 13, color: '#666666', marginBottom: 2 },
-  deadlineDays: { fontSize: 12, fontWeight: '600' },
+  deadlinesCard: { backgroundColor: T.card, borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: T.cardBorder, marginBottom: 8 },
+  deadlineRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, gap: 12 },
+  deadlineDivider: { height: 1, backgroundColor: T.cardBorder, marginHorizontal: 16 },
+  deadlineName: { fontSize: 14, color: T.textPrimary, fontWeight: '500', flex: 1, lineHeight: 20 },
+  deadlineRight: { alignItems: 'flex-end', flexShrink: 0 },
+  deadlineDate: { fontSize: 13, color: T.textSecondary, marginBottom: 3, lineHeight: 18 },
+  deadlineDays: { fontSize: 12, fontWeight: '600', lineHeight: 16 },
   // Edit mode
   editBtn: { marginLeft: 'auto', paddingLeft: 16, paddingVertical: 4 },
   editBtnText: { fontSize: 20 },
   editChipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 20 },
-  editChip: { borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7, backgroundColor: '#F0F0F8' },
-  editChipActive: { backgroundColor: '#5B5BD6' },
-  editChipText: { fontSize: 13, fontWeight: '600', color: '#999999' },
-  editChipTextActive: { color: '#FFFFFF' },
+  editChip: { borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7, backgroundColor: T.card },
+  editChipActive: { backgroundColor: T.teal },
+  editChipText: { fontSize: 13, fontWeight: '600', color: T.textTertiary },
+  editChipTextActive: { color: T.textPrimary },
   editInput: {
-    backgroundColor: '#FFFFFF', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12,
-    fontSize: 15, color: '#2D2B55', borderWidth: 1, borderColor: '#EBEBF0', marginBottom: 20,
+    backgroundColor: T.card, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12,
+    fontSize: 15, color: T.textPrimary, borderWidth: 1, borderColor: T.cardBorder, marginBottom: 20,
   },
   editDateRow: { flexDirection: 'row', marginBottom: 20 },
-  editDateLabel: { fontSize: 11, fontWeight: '600', color: '#AAAAAA', marginBottom: 6, letterSpacing: 0.4 },
-  editError: { fontSize: 13, color: '#E24B4A', textAlign: 'center', marginBottom: 12 },
+  editDateLabel: { fontSize: 11, fontWeight: '600', color: T.textTertiary, marginBottom: 6, letterSpacing: 0.4 },
+  editError: { fontSize: 13, color: T.red, textAlign: 'center', marginBottom: 12 },
   editActions: { flexDirection: 'row', gap: 10, marginTop: 8 },
-  editCancelBtn: { flex: 1, backgroundColor: '#F0F0F8', borderRadius: 14, paddingVertical: 16, alignItems: 'center' },
-  editCancelText: { fontSize: 15, fontWeight: '600', color: '#666666' },
-  editSaveBtn: { flex: 2, backgroundColor: '#5B5BD6', borderRadius: 14, paddingVertical: 16, alignItems: 'center' },
-  editSaveText: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
+  editCancelBtn: { flex: 1, backgroundColor: T.card, borderRadius: 14, paddingVertical: 16, alignItems: 'center' },
+  editCancelText: { fontSize: 15, fontWeight: '600', color: T.textSecondary },
+  editSaveBtn: { flex: 2, backgroundColor: T.teal, borderRadius: 14, paddingVertical: 16, alignItems: 'center' },
+  editSaveText: { fontSize: 15, fontWeight: '700', color: T.textPrimary },
   // Deadline override rows in edit mode
   editDeadlineItem: { marginBottom: 16 },
   editDeadlineHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  overrideBtn: { fontSize: 12, color: '#5B5BD6', fontWeight: '600' },
-  deadlinePreviewText: { fontSize: 13, color: '#444444', paddingVertical: 6, paddingHorizontal: 2 },
+  overrideBtn: { fontSize: 12, color: T.teal, fontWeight: '600' },
+  deadlinePreviewText: { fontSize: 13, color: T.textSecondary, paddingVertical: 6, paddingHorizontal: 2 },
   playingPillWrap: { paddingVertical: 12, paddingHorizontal: 16 },
-  playingPill: { backgroundColor: '#EDEDFF', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 6, alignSelf: 'flex-start' },
-  playingPillText: { fontSize: 13, fontWeight: '700', color: '#5B5BD6' },
+  playingPill: { backgroundColor: T.cardBorder, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 6, alignSelf: 'flex-start' },
+  playingPillText: { fontSize: 13, fontWeight: '700', color: T.teal },
+  prizeCard: { backgroundColor: T.bg, borderRadius: 16, borderWidth: 1, borderColor: T.cardBorder, overflow: 'hidden' },
+  prizeRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12 },
+  prizeLabel: { fontSize: 14, color: T.textSecondary },
+  prizeAmount: { fontSize: 15, fontWeight: '600', color: T.textPrimary },
 });

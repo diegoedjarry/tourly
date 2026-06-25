@@ -1,27 +1,43 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   ScrollView,
   View,
-  Text,
-  Image,
+
   StyleSheet,
   StatusBar,
   TouchableOpacity,
   ActivityIndicator,
 } from 'react-native';
+import { Text } from '@/components/ui/text';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useAppQuery } from '@/hooks/useAppQuery';
 import { CourtIcon } from '@/components/ui/court-icon';
 import { TournamentDetail } from '@/app/(tabs)/tournaments';
 import { fmtDateRange } from '@/utils/deadlines';
+import { useInsights, useGenerateInsight } from '@/hooks/useInsights';
+import { DEMO_MODE } from '@/config/demo';
+import { useFirstVisit } from '@/hooks/useFirstVisit';
+import { useTabSwipe } from '@/hooks/useTabSwipe';
+import { ScreenWalkthrough } from '@/components/ui/screen-walkthrough';
+import { useOfflineSync } from '@/hooks/useOfflineSync';
+
+import { FloatingInsight } from '@/components/ui/floating-insight';
+import { useProfile } from '@/hooks/useProfile';
+import { T, SURFACE_STRIPE } from '@/constants/theme';
+import { TourlyLogo } from '@/components/ui/tourly-logo';
+import { useLanguage } from '@/hooks/useLanguage';
+
+const HOME_WALKTHROUGH = [
+  { icon: '🏠', title: 'Your dashboard', body: 'See your upcoming deadlines, active tournament, and season financial snapshot all in one place.' },
+  { icon: '🤖', title: 'AI insights', body: 'Scroll down for personalized coaching tips and spending analysis powered by AI.' },
+  { icon: '📊', title: 'Season summary', body: 'Track your prize money, expenses, and net profit across the entire season at a glance.' },
+];
 
 function countryFlag(country: string): string {
-  const map: Record<string, string> = {
-    BR: '🇧🇷', AR: '🇦🇷', US: '🇺🇸', ES: '🇪🇸', AU: '🇦🇺', FR: '🇫🇷',
-    GB: '🇬🇧', DE: '🇩🇪', IT: '🇮🇹', CL: '🇨🇱', MX: '🇲🇽', PT: '🇵🇹',
-  };
-  return map[(country ?? '').toUpperCase()] ?? '🌍';
+  const code = (country ?? '').toUpperCase();
+  if (code.length !== 2) return '🌍';
+  return String.fromCodePoint(...[...code].map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
 }
 
 function daysUntil(dateStr: string | undefined): number | null {
@@ -39,13 +55,13 @@ function getUpcomingDeadlines(tournaments: any[]) {
     if (t.isWithdrawn) continue;
     if (t.withdrawalDeadline) {
       const d = daysUntil(t.withdrawalDeadline);
-      if (d !== null && d >= 0 && d <= 30) {
+      if (d !== null && d >= 0 && d <= 7) {
         items.push({ t, type: 'Withdrawal', date: t.withdrawalDeadline, days: d, isToday: d === 0 });
       }
     }
     if (!t.isRegistered && t.signUpDeadline) {
       const d = daysUntil(t.signUpDeadline);
-      if (d !== null && d >= 0 && d <= 30) {
+      if (d !== null && d >= 0 && d <= 7) {
         items.push({ t, type: 'Sign up', date: t.signUpDeadline, days: d, isToday: d === 0 });
       }
     }
@@ -53,58 +69,34 @@ function getUpcomingDeadlines(tournaments: any[]) {
   return items.sort((a, b) => (a.days ?? 99) - (b.days ?? 99)).slice(0, 5);
 }
 
-// Parse a date value into a LOCAL midnight Date, avoiding the UTC-parse timezone trap.
-// "2026-06-14" via new Date() → UTC midnight → wrong local day in negative-offset zones.
-// This always gives local midnight so comparisons against new Date() work correctly.
 function parseLocalDate(val: any): Date | null {
   if (!val) return null;
   if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val)) {
     const [y, m, d] = val.split('-').map(Number);
-    return new Date(y, m - 1, d); // local midnight — no UTC shift
+    return new Date(y, m - 1, d);
   }
-  // Timestamp (ms) or other string — let the Date constructor handle it
   const d = new Date(typeof val === 'number' ? val : String(val));
   return isNaN(d.getTime()) ? null : d;
 }
 
 function deadlineUrgencyColor(days: number | null): string {
-  if (days === null) return '#AAAAAA';
-  if (days <= 3) return '#E24B4A';
-  if (days <= 7) return '#EF9F27';
-  return '#AAAAAA';
+  if (days === null) return T.textTertiary;
+  if (days <= 3) return T.red;
+  if (days <= 7) return T.amber;
+  return T.textTertiary;
 }
 
 function getActiveTournament(tournaments: any[]): any | null {
   const now = new Date();
-
-  console.log('[HomeScreen] ── date debug ──────────────────────────────');
-  console.log('[HomeScreen] now =', now.toString());
-  console.log('[HomeScreen] tournament count =', tournaments.length);
-
-  let result: any = null;
-
   for (const t of tournaments) {
-    console.log(`[HomeScreen] "${t.name}" raw: startDate=${JSON.stringify(t.startDate)} endDate=${JSON.stringify(t.endDate)} isWithdrawn=${t.isWithdrawn}`);
-
-    if (t.isWithdrawn) { console.log('  → skip: withdrawn'); continue; }
-    if (!t.startDate || !t.endDate) { console.log('  → skip: missing dates'); continue; }
-
+    if (t.isWithdrawn || !t.startDate || !t.endDate) continue;
     const start = parseLocalDate(t.startDate);
     const end   = parseLocalDate(t.endDate);
-    if (!start || !end) { console.log('  → skip: unparseable dates'); continue; }
-
-    // End of the last day (local time) — include the full final day
+    if (!start || !end) continue;
     end.setHours(23, 59, 59, 999);
-
-    const match = now >= start && now <= end;
-    console.log(`  → start=${start.toLocaleDateString()} end=${end.toLocaleDateString()} match=${match}`);
-
-    if (match) { result = t; break; }
+    if (now >= start && now <= end) return t;
   }
-
-  console.log('[HomeScreen] active tournament =', result ? result.name : 'none');
-  console.log('[HomeScreen] ──────────────────────────────────────────────');
-  return result;
+  return null;
 }
 
 export default function HomeScreen() {
@@ -112,163 +104,346 @@ export default function HomeScreen() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const router = useRouter();
 
+  const { data: insights, isLoading: insightsLoading } = useInsights();
+  const generateInsight = useGenerateInsight();
+  const { isFirstVisit, markVisited } = useFirstVisit('home');
+  const swipeHandlers = useTabSwipe();
+  const { isOnline, pendingCount } = useOfflineSync();
+  const { t } = useLanguage();
+  const { data: profileData } = useProfile();
+  const profileInitials = (() => {
+    const n = profileData?.full_name;
+    if (!n) return '?';
+    const parts = n.trim().split(/\s+/);
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+    return parts[0].substring(0, 2).toUpperCase();
+  })();
+  const hasGeneratedRef = useRef(false);
+
   const tournaments = data?.tournaments ?? [];
   const expenses = data?.expenses ?? [];
 
-  const deadlines = getUpcomingDeadlines(tournaments);
-  const activeTournament = getActiveTournament(tournaments);
+  const deadlines = useMemo(() => getUpcomingDeadlines(tournaments), [tournaments]);
+  const activeTournament = useMemo(() => getActiveTournament(tournaments), [tournaments]);
 
-  const activeTournamentExpenses = activeTournament
-    ? expenses.filter((e: any) => e.tournamentId === activeTournament.id)
-    : [];
-  const activeTournamentSpent = activeTournamentExpenses.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
-  // Most recent 3 expenses for the mini list (sort descending by creation order if available)
-  const recentExpenses = [...activeTournamentExpenses]
-    .sort((a: any, b: any) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
-    .slice(0, 3);
-  const activeSingles    = activeTournament?.singlesPrizeMoney ?? 0;
-  const activeDoubles    = activeTournament?.doublesPrizeMoney ?? 0;
-  const activePrizeMoney = activeSingles + activeDoubles > 0
-    ? activeSingles + activeDoubles
-    : (activeTournament?.prizeMoney ?? 0);
-  const activeNet = activePrizeMoney - activeTournamentSpent;
+  const upcomingTournaments = useMemo(() => {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    return tournaments
+      .filter((t: any) => {
+        if (t.isWithdrawn) return false;
+        const start = parseLocalDate(t.startDate);
+        return start && start > today;
+      })
+      .sort((a: any, b: any) => (a.startDate ?? '').localeCompare(b.startDate ?? ''))
+      .slice(0, 4);
+  }, [tournaments]);
+
+  const seasonStats = useMemo(() => {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const played = tournaments.filter((t: any) => {
+      const d = parseLocalDate(t.startDate);
+      return d && d <= today && !t.isWithdrawn;
+    }).length;
+    const totalSpent = expenses.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
+    const totalPrize = tournaments.reduce((s: number, t: any) => {
+      const singles = t.singlesPrizeMoney ?? 0;
+      const doubles = t.doublesPrizeMoney ?? 0;
+      return s + (singles + doubles > 0 ? singles + doubles : (t.prizeMoney ?? 0));
+    }, 0);
+    return { played, totalSpent, totalPrize, net: totalPrize - totalSpent };
+  }, [tournaments, expenses]);
+
+  const { activeTournamentSpent, recentExpenses, activePrizeMoney, activeNet } = useMemo(() => {
+    const atExpenses = activeTournament
+      ? expenses.filter((e: any) => e.tournamentId === activeTournament.id)
+      : [];
+    const spent = atExpenses.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
+    const recent = [...atExpenses]
+      .sort((a: any, b: any) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+      .slice(0, 3);
+    const singles = activeTournament?.singlesPrizeMoney ?? 0;
+    const doubles = activeTournament?.doublesPrizeMoney ?? 0;
+    const prize = singles + doubles > 0 ? singles + doubles : (activeTournament?.prizeMoney ?? 0);
+    return { activeTournamentSpent: spent, recentExpenses: recent, activePrizeMoney: prize, activeNet: prize - spent };
+  }, [activeTournament, expenses]);
+
+  useEffect(() => {
+    if (DEMO_MODE || insightsLoading || generateInsight.isPending) return;
+    if (hasGeneratedRef.current) return;
+    const now = new Date();
+    const isMonday = now.getDay() === 1;
+    const insightsList = insights ?? [];
+    const recentlyEnded = tournaments.find((t: any) => {
+      if (!t.endDate || t.isWithdrawn) return false;
+      const end = parseLocalDate(t.endDate);
+      if (!end) return false;
+      const hoursSince = (now.getTime() - end.getTime()) / 3600000;
+      return hoursSince >= 0 && hoursSince <= 48;
+    });
+    const hasRecentTournamentInsight = insightsList.some((i) => {
+      const hours = (now.getTime() - new Date(i.generated_at).getTime()) / 3600000;
+      return i.insight_type === 'tournament_roi' && hours < 48;
+    });
+    const safeMutate = (args: { trigger: string }) => {
+      generateInsight.mutate(args, { onError: () => {} });
+    };
+    if (recentlyEnded && !hasRecentTournamentInsight) {
+      hasGeneratedRef.current = true;
+      safeMutate({ trigger: 'tournament_ended' });
+      return;
+    }
+    const latest = insightsList[0];
+    if (!latest) {
+      hasGeneratedRef.current = true;
+      safeMutate({ trigger: isMonday ? 'monday' : 'daily' });
+      return;
+    }
+    const hoursSince = (now.getTime() - new Date(latest.generated_at).getTime()) / 3600000;
+    if (hoursSince >= 24) {
+      hasGeneratedRef.current = true;
+      safeMutate({ trigger: isMonday ? 'monday' : 'daily' });
+    }
+  }, [insights, insightsLoading]);
+
+  const latestInsight = insights?.[0]?.content ?? '';
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FAFAFA" />
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+    <SafeAreaView style={st.safe}>
+      <StatusBar barStyle="light-content" backgroundColor={T.bg} />
+      <View style={{ flex: 1 }}>
+        <ScrollView style={st.scroll} contentContainerStyle={st.scrollContent} showsVerticalScrollIndicator={false} {...swipeHandlers}>
 
-        {/* Top bar */}
-        <View style={styles.topBar}>
-          <Image source={require('@/assets/images/tourly-logo.png')} style={styles.logo} resizeMode="contain" />
-        </View>
+          {/* Top bar */}
+          <View style={st.topBar}>
+            <TourlyLogo width={200} height={52} />
+            <TouchableOpacity onPress={() => router.push('/profile' as any)} activeOpacity={0.7} style={st.avatarBtn}>
+              <Text style={st.avatarInitials}>{profileInitials}</Text>
+            </TouchableOpacity>
+          </View>
 
-        {isLoading ? (
-          <ActivityIndicator color="#5B5BD6" style={{ marginTop: 40 }} />
-        ) : (
-          <>
-            {/* Section 1: Upcoming deadlines */}
-            <Text style={styles.sectionLabel}>UPCOMING DEADLINES</Text>
+          {!isOnline && (
+            <View style={st.offlineBanner}>
+              <Text style={st.offlineText}>
+                {t('home.offline')}{pendingCount > 0 ? ` — ${pendingCount} ${pendingCount > 1 ? t('home.changesQueuedPlural') : t('home.changesQueued')}` : ''}
+              </Text>
+            </View>
+          )}
 
-            {deadlines.length === 0 ? (
-              <Text style={styles.emptyNote}>No upcoming deadlines in the next 30 days.</Text>
-            ) : (
-              deadlines.map((item, idx) => {
-                return (
+          {isLoading ? (
+            <ActivityIndicator color={T.accent} style={{ marginTop: 48 }} />
+          ) : (
+            <>
+              {/* Upcoming Deadlines */}
+              <View style={st.section}>
+                <Text style={st.sectionLabel}>{t('home.upcomingDeadlines')}</Text>
+                {deadlines.length === 0 ? (
+                  <Text style={st.emptyNote}>{t('home.noUrgentDeadlines')}</Text>
+                ) : (
+                  deadlines.map((item, idx) => {
+                    const stripe = SURFACE_STRIPE[item.t.surface] ?? T.cardBorder;
+                    return (
+                      <TouchableOpacity
+                        key={idx}
+                        style={[st.deadlineCard, { borderLeftColor: stripe }]}
+                        onPress={() => setDetailId(item.t.id)}
+                        activeOpacity={0.8}
+                      >
+                        <View style={st.cardLeft}>
+                          <Text style={st.cardTitle}>
+                            {item.t.country ? countryFlag(item.t.country) + ' ' : ''}{item.t.name}
+                          </Text>
+                          <View style={st.cardSubRow}>
+                            <Text style={st.cardSub}>{item.type}</Text>
+                            {item.t.surface ? <CourtIcon surface={item.t.surface} /> : null}
+                          </View>
+                        </View>
+                        {item.isToday ? (
+                          <View style={st.todayPill}><Text style={st.todayPillText}>{t('home.today')}</Text></View>
+                        ) : (
+                          <Text style={[st.daysText, { color: deadlineUrgencyColor(item.days) }]}>{item.days}d</Text>
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })
+                )}
+              </View>
+
+              {/* Current Tournament */}
+              {activeTournament && (
+                <View style={st.section}>
+                  <Text style={st.sectionLabel}>{t('home.currentTournament')}</Text>
                   <TouchableOpacity
-                    key={idx}
-                    style={styles.card}
-                    onPress={() => setDetailId(item.t.id)}
-                    activeOpacity={0.8}>
-                    <View style={styles.cardLeft}>
-                      <Text style={styles.cardTitle}>
-                        {item.t.country ? countryFlag(item.t.country) + ' ' : ''}{item.t.name}
-                      </Text>
-                      <View style={styles.cardSubRow}>
-                        <Text style={styles.cardSub}>{item.type}</Text>
-                        {item.t.surface ? <CourtIcon surface={item.t.surface} /> : null}
+                    style={[st.activeCard, { borderLeftColor: SURFACE_STRIPE[activeTournament.surface] ?? T.cardBorder }]}
+                    onPress={() => router.push({ pathname: '/(tabs)/expenses', params: { openTournament: activeTournament.id } })}
+                    activeOpacity={0.8}
+                  >
+                    <View style={st.activeTop}>
+                      <View style={st.cardLeft}>
+                        <Text style={st.cardTitle}>
+                          {activeTournament.country ? countryFlag(activeTournament.country) + ' ' : ''}{activeTournament.name}
+                        </Text>
+                        <View style={st.cardSubRow}>
+                          <Text style={st.cardSub}>{fmtDateRange(activeTournament.startDate, activeTournament.endDate)}</Text>
+                          {activeTournament.surface ? <CourtIcon surface={activeTournament.surface} /> : null}
+                        </View>
+                      </View>
+                      <View style={st.expenseRight}>
+                        <Text style={st.spentAmount}>${activeTournamentSpent.toLocaleString('en-US')}</Text>
+                        <Text style={[st.netResult, activeNet >= 0 && st.netPositive]}>
+                          {activeNet >= 0 ? '+' : '-'}${Math.abs(activeNet).toLocaleString('en-US')} net
+                        </Text>
                       </View>
                     </View>
-                    {item.isToday ? (
-                      <View style={styles.todayPill}><Text style={styles.todayPillText}>today</Text></View>
-                    ) : (
-                      <Text style={[styles.daysText, { color: deadlineUrgencyColor(item.days) }]}>{item.days}d</Text>
+                    {recentExpenses.length > 0 && (
+                      <View style={st.miniList}>
+                        {recentExpenses.map((e: any, i: number) => (
+                          <View key={e.id ?? i} style={st.miniRow}>
+                            <Text style={st.miniCat}>{e.category ?? 'expense'}</Text>
+                            <Text style={st.miniAmt}>-${(e.amount ?? 0).toLocaleString('en-US')}</Text>
+                          </View>
+                        ))}
+                      </View>
                     )}
                   </TouchableOpacity>
-                );
-              })
-            )}
+                  <TouchableOpacity
+                    activeOpacity={0.7}
+                    onPress={() => router.push({ pathname: '/(tabs)/expenses', params: { openTournament: activeTournament.id } })}
+                  >
+                    <Text style={st.seeAll}>{t('home.seeAllExpenses')}</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
 
-            <View style={styles.divider} />
-
-            {/* Section 2: Current tournament */}
-            {activeTournament && (
-              <>
-                <Text style={styles.sectionLabel}>CURRENT TOURNAMENT</Text>
-
-                {/* Active tournament card — taps into expenses for this tournament */}
-                <TouchableOpacity
-                  style={styles.activeTournamentCard}
-                  onPress={() => router.push({ pathname: '/(tabs)/expenses', params: { openTournament: activeTournament.id } })}
-                  activeOpacity={0.8}>
-                  <View style={styles.activeTournamentTop}>
-                    <View style={styles.cardLeft}>
-                      <Text style={styles.cardTitle}>
-                        {activeTournament.country ? countryFlag(activeTournament.country) + ' ' : ''}{activeTournament.name}
-                      </Text>
-                      <View style={styles.cardSubRow}>
-                        <Text style={styles.cardSub}>
-                          {fmtDateRange(activeTournament.startDate, activeTournament.endDate)}
-                        </Text>
-                        {activeTournament.surface ? <CourtIcon surface={activeTournament.surface} /> : null}
-                      </View>
-                    </View>
-                    <View style={styles.expenseRight}>
-                      <Text style={styles.spentAmount}>${activeTournamentSpent.toLocaleString('en-US')} spent</Text>
-                      <Text style={[styles.netResult, activeNet >= 0 && styles.netPositive]}>
-                        {activeNet >= 0 ? '+' : ''}{activeNet < 0 ? '-' : ''}${Math.abs(activeNet).toLocaleString('en-US')} net
-                      </Text>
-                    </View>
-                  </View>
-
-                  {/* Mini expenses list — last 3 */}
-                  {recentExpenses.length > 0 && (
-                    <View style={styles.miniExpenseList}>
-                      {recentExpenses.map((e: any, i: number) => (
-                        <View key={e.id ?? i} style={styles.miniExpenseRow}>
-                          <Text style={styles.miniExpenseCategory}>{e.category ?? 'expense'}</Text>
-                          <Text style={styles.miniExpenseAmount}>-${(e.amount ?? 0).toLocaleString('en-US')}</Text>
+              {/* Upcoming Tournaments */}
+              {upcomingTournaments.length > 0 && (
+                <View style={st.section}>
+                  <Text style={st.sectionLabel}>{t('home.upcomingTournaments')}</Text>
+                  {upcomingTournaments.map((t: any) => {
+                    const d = daysUntil(t.startDate);
+                    const stripe = SURFACE_STRIPE[t.surface] ?? T.cardBorder;
+                    return (
+                      <TouchableOpacity
+                        key={t.id}
+                        style={[st.deadlineCard, { borderLeftColor: stripe }]}
+                        onPress={() => setDetailId(t.id)}
+                        activeOpacity={0.8}
+                      >
+                        <View style={st.cardLeft}>
+                          <Text style={st.cardTitle}>
+                            {t.country ? countryFlag(t.country) + ' ' : ''}{t.name}
+                          </Text>
+                          <View style={st.cardSubRow}>
+                            <Text style={st.cardSub}>{fmtDateRange(t.startDate, t.endDate)}</Text>
+                            {t.surface ? <CourtIcon surface={t.surface} /> : null}
+                          </View>
                         </View>
-                      ))}
-                    </View>
-                  )}
-                </TouchableOpacity>
+                        <Text style={st.upcomingDays}>{d !== null ? `${d}d` : ''}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                  <TouchableOpacity activeOpacity={0.7} onPress={() => router.push('/(tabs)/tournaments' as any)}>
+                    <Text style={st.seeAll}>{t('home.viewAllTournaments')}</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
 
-                <TouchableOpacity activeOpacity={0.7} onPress={() => router.push({ pathname: '/(tabs)/expenses', params: { openTournament: activeTournament.id } })}>
-                  <Text style={styles.seeAll}>see all expenses →</Text>
-                </TouchableOpacity>
-              </>
-            )}
+              {/* Season Snapshot */}
+              <View style={st.section}>
+                <Text style={st.sectionLabel}>{t('home.seasonSnapshot')}</Text>
+                <View style={st.seasonBar}>
+                  <View style={st.seasonStat}>
+                    <Text style={st.seasonStatLabel}>{t('home.played')}</Text>
+                    <Text style={st.seasonStatValue}>{seasonStats.played}</Text>
+                  </View>
+                  <View style={st.seasonDivider} />
+                  <View style={st.seasonStat}>
+                    <Text style={st.seasonStatLabel}>{t('home.spent')}</Text>
+                    <Text style={st.seasonStatValue}>${seasonStats.totalSpent > 999 ? `${(seasonStats.totalSpent / 1000).toFixed(1)}k` : seasonStats.totalSpent}</Text>
+                  </View>
+                  <View style={st.seasonDivider} />
+                  <View style={st.seasonStat}>
+                    <Text style={st.seasonStatLabel}>{t('home.prize')}</Text>
+                    <Text style={st.seasonStatValue}>${seasonStats.totalPrize > 999 ? `${(seasonStats.totalPrize / 1000).toFixed(1)}k` : seasonStats.totalPrize}</Text>
+                  </View>
+                  <View style={st.seasonDivider} />
+                  <View style={st.seasonStat}>
+                    <Text style={st.seasonStatLabel}>{t('home.net')}</Text>
+                    <Text style={[st.seasonStatValue, seasonStats.net >= 0 ? st.netPositive : st.netResult]}>
+                      {seasonStats.net >= 0 ? '+' : '-'}${Math.abs(seasonStats.net) > 999 ? `${(Math.abs(seasonStats.net) / 1000).toFixed(1)}k` : Math.abs(seasonStats.net)}
+                    </Text>
+                  </View>
+                </View>
+              </View>
 
-          </>
-        )}
+              <View style={{ height: 80 }} />
+            </>
+          )}
+        </ScrollView>
 
-      </ScrollView>
+        {latestInsight ? <FloatingInsight content={latestInsight} /> : null}
+      </View>
 
       {detailId && (
         <TournamentDetail tournamentId={detailId} onClose={() => setDetailId(null)} />
       )}
+      <ScreenWalkthrough steps={HOME_WALKTHROUGH} visible={isFirstVisit} onDismiss={markVisited} />
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#FAFAFA' },
+const st = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: T.bg },
   scroll: { flex: 1 },
-  scrollContent: { paddingHorizontal: 20, paddingBottom: 32 },
-  topBar: { paddingTop: 18, paddingBottom: 24 },
-  logo: { height: 64, width: 220 },
-  sectionLabel: { fontSize: 11, fontWeight: '600', color: '#AAAAAA', letterSpacing: 0.8, marginBottom: 12 },
-  card: { borderRadius: 14, paddingVertical: 14, paddingHorizontal: 16, marginBottom: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#FFFFFF' },
+  scrollContent: { paddingHorizontal: 16, paddingBottom: 32 },
+
+  topBar: { paddingTop: 16, paddingBottom: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  avatarBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: T.card, borderWidth: 1.5, borderColor: T.accent, alignItems: 'center', justifyContent: 'center' },
+  avatarInitials: { fontSize: 13, fontWeight: '700', color: T.accent },
+
+  section: { marginBottom: 16 },
+  sectionLabel: { fontSize: 11, fontWeight: '600', color: T.textSecondary, letterSpacing: 1, marginBottom: 6, textTransform: 'uppercase' },
+
+  deadlineCard: {
+    borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12, marginBottom: 6,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: T.card, borderLeftWidth: 3, borderLeftColor: T.cardBorder,
+  },
   cardLeft: { flex: 1, marginRight: 12 },
-  cardTitle: { fontSize: 15, fontWeight: '600', color: '#2D2B55', marginBottom: 3 },
-  cardSubRow: { flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 3 },
-  cardSub: { fontSize: 12, color: '#999999', fontWeight: '400' },
-  todayPill: { backgroundColor: '#E24B4A', borderRadius: 20, paddingHorizontal: 11, paddingVertical: 4 },
-  todayPillText: { color: '#FFFFFF', fontSize: 12, fontWeight: '600' },
+  cardTitle: { fontSize: 14, fontWeight: '600', color: T.textPrimary, marginBottom: 2 },
+  cardSubRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  cardSub: { fontSize: 12, color: T.textSecondary, fontWeight: '400' },
+
+  todayPill: { backgroundColor: T.accent, borderRadius: 12, paddingHorizontal: 8, height: 24, alignItems: 'center', justifyContent: 'center' },
+  todayPillText: { color: '#FFF', fontSize: 11, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase' },
   daysText: { fontSize: 13, fontWeight: '700' },
+
+  activeCard: {
+    borderRadius: 12, padding: 14, marginBottom: 6,
+    backgroundColor: T.card, borderLeftWidth: 3, borderLeftColor: T.cardBorder,
+  },
+  activeTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   expenseRight: { alignItems: 'flex-end' },
-  spentAmount: { fontSize: 16, fontWeight: '700', color: '#2D2B55', marginBottom: 2 },
-  netResult: { fontSize: 12, color: '#E24B4A', fontWeight: '500' },
-  netPositive: { color: '#2D9E6B' },
-  divider: { height: 1, backgroundColor: '#EBEBEB', marginVertical: 22 },
-  emptyNote: { fontSize: 13, color: '#BBBBBB', marginBottom: 12 },
-  // Active tournament card (taller — includes mini expense list)
-  activeTournamentCard: { borderRadius: 14, paddingVertical: 14, paddingHorizontal: 16, marginBottom: 8, backgroundColor: '#FFFFFF' },
-  activeTournamentTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
-  miniExpenseList: { marginTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(0,0,0,0.07)', paddingTop: 10, gap: 6 },
-  miniExpenseRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  miniExpenseCategory: { fontSize: 13, color: '#555555', fontWeight: '400', textTransform: 'capitalize' },
-  miniExpenseAmount: { fontSize: 13, color: '#E24B4A', fontWeight: '600' },
-  seeAll: { fontSize: 13, color: '#5B5BD6', fontWeight: '500', marginTop: 4, marginBottom: 4 },
+  spentAmount: { fontSize: 16, fontWeight: '600', color: T.textPrimary, marginBottom: 2 },
+  netResult: { fontSize: 12, color: T.red, fontWeight: '600' },
+  netPositive: { color: T.green },
+
+  miniList: { marginTop: 10, borderTopWidth: 1, borderTopColor: T.cardBorder, paddingTop: 10, gap: 4 },
+  miniRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  miniCat: { fontSize: 13, color: T.textSecondary, fontWeight: '400', textTransform: 'capitalize' },
+  miniAmt: { fontSize: 13, color: T.red, fontWeight: '600' },
+
+  seeAll: { fontSize: 13, color: T.accent, fontWeight: '600', marginTop: 8 },
+
+  offlineBanner: { backgroundColor: T.amber, borderRadius: 12, paddingVertical: 8, paddingHorizontal: 16, marginBottom: 16, alignItems: 'center' },
+  offlineText: { fontSize: 13, fontWeight: '600', color: '#FFF' },
+
+  emptyNote: { fontSize: 13, color: T.textTertiary, fontStyle: 'italic', marginBottom: 16 },
+
+  upcomingDays: { fontSize: 13, fontWeight: '600', color: T.textSecondary },
+
+  seasonBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: T.card, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 8 },
+  seasonStat: { flex: 1, alignItems: 'center' },
+  seasonStatLabel: { fontSize: 10, fontWeight: '600', color: T.textTertiary, letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 4 },
+  seasonStatValue: { fontSize: 14, fontWeight: '700', color: T.textPrimary },
+  seasonDivider: { width: 1, height: 24, backgroundColor: T.cardBorder },
 });

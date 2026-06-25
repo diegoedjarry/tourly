@@ -22,6 +22,17 @@ export interface Tournament {
   updated_at: string;
 }
 
+export interface TrainingBlock {
+  id: string;
+  user_id: string;
+  title: string;
+  start_date: string;       // YYYY-MM-DD
+  end_date: string;         // YYYY-MM-DD
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Expense {
   id: string;
   user_id: string;

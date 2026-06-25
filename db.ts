@@ -25,7 +25,7 @@ class AsyncStorageStore extends StoreInterface {
   }
 }
 
-const APP_ID = 'f819fcd1-f0da-4658-ac5c-a190539808f6';
+const APP_ID = process.env.EXPO_PUBLIC_INSTANTDB_APP_ID ?? 'f819fcd1-f0da-4658-ac5c-a190539808f6';
 
 const schema = i.schema({
   entities: {

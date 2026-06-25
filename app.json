@@ -22,7 +22,7 @@
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "output": "static",
+      "output": "single",
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
@@ -31,13 +31,13 @@
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 220,
+          "imageWidth": 280,
           "resizeMode": "contain",
-          "backgroundColor": "#FFFFFF",
+          "backgroundColor": "#0F0F1A",
           "dark": {
             "image": "./assets/images/splash-icon.png",
-            "imageWidth": 220,
-            "backgroundColor": "#2D2B55"
+            "imageWidth": 280,
+            "backgroundColor": "#0F0F1A"
           }
         }
       ],

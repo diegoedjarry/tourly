@@ -3,22 +3,24 @@ import React from 'react';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-
-const INDIGO = '#5B5BD6';
-const TAB_INACTIVE = '#A0A0B0';
+import { T } from '@/constants/theme';
+import { useLanguage } from '@/hooks/useLanguage';
 
 export default function TabLayout() {
+  const { t } = useLanguage();
+
   return (
     <Tabs
+      initialRouteName="index"
       screenOptions={{
         headerShown: false,
         tabBarButton: HapticTab,
-        tabBarActiveTintColor: INDIGO,
-        tabBarInactiveTintColor: TAB_INACTIVE,
+        tabBarActiveTintColor: T.accent,
+        tabBarInactiveTintColor: T.textTertiary,
         tabBarStyle: {
-          backgroundColor: '#FFFFFF',
+          backgroundColor: T.bg,
           borderTopWidth: 1,
-          borderTopColor: '#EBEBF0',
+          borderTopColor: T.cardBorder,
         },
         tabBarLabelStyle: {
           fontSize: 11,
@@ -26,37 +28,37 @@ export default function TabLayout() {
         },
       }}>
       <Tabs.Screen
-        name="index"
+        name="alerts"
         options={{
-          title: 'Home',
-          tabBarIcon: ({ color }) => <IconSymbol size={24} name="house.fill" color={color} />,
+          title: t('tab.alerts'),
+          tabBarIcon: ({ color }) => <IconSymbol size={24} name="bell.fill" color={color} />,
         }}
       />
       <Tabs.Screen
         name="tournaments"
         options={{
-          title: 'Tournaments',
+          title: t('tab.tournaments'),
           tabBarIcon: ({ color }) => <IconSymbol size={24} name="calendar" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="index"
+        options={{
+          title: t('tab.home'),
+          tabBarIcon: ({ color }) => <IconSymbol size={24} name="house.fill" color={color} />,
         }}
       />
       <Tabs.Screen
         name="expenses"
         options={{
-          title: 'Expenses',
+          title: t('tab.expenses'),
           tabBarIcon: ({ color }) => <IconSymbol size={24} name="chart.bar.fill" color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="alerts"
-        options={{
-          title: 'Alerts',
-          tabBarIcon: ({ color }) => <IconSymbol size={24} name="bell.fill" color={color} />,
         }}
       />
       <Tabs.Screen
         name="calendar"
         options={{
-          title: 'Calendar',
+          title: t('tab.calendar'),
           tabBarIcon: ({ color }) => <IconSymbol size={24} name="calendar.grid" color={color} />,
         }}
       />

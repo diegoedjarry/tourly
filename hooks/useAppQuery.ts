@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { DEMO_MODE } from '@/config/demo';
 import { useDemoData } from './useDemoData';
 import { useTournaments } from './useTournaments';
@@ -50,10 +51,19 @@ export function useAppQuery(_query: any) {
     return { data: demoCtx.demoData as any, isLoading: false, error: null };
   }
 
+  const mappedTournaments = useMemo(
+    () => (tournaments ?? []).map(mapTournament),
+    [tournaments],
+  );
+  const mappedExpenses = useMemo(
+    () => (expenses ?? []).map(mapExpense),
+    [expenses],
+  );
+
   return {
     data: {
-      tournaments: (tournaments ?? []).map(mapTournament),
-      expenses: (expenses ?? []).map(mapExpense),
+      tournaments: mappedTournaments,
+      expenses: mappedExpenses,
     },
     isLoading: tLoading || eLoading,
     error: null,

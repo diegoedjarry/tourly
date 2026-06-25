@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, Platform, Modal,
+  View, Text, TouchableOpacity, StyleSheet, Platform, Modal, TextInput,
 } from 'react-native';
-import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -29,15 +28,15 @@ function formatDisplay(iso: string): string {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 interface Props {
-  label: string;
+  label?: string;
   value: string;        // YYYY-MM-DD, or '' for unset
   onChange: (iso: string) => void;
   optional?: boolean;   // show "optional" hint next to label
+  placeholder?: string;
 }
 
-export function DatePickerField({ label, value, onChange, optional }: Props) {
+export function DatePickerField({ label, value, onChange, optional, placeholder }: Props) {
   const [show, setShow] = useState(false);
-  // tempDate tracks in-progress iOS spinner selection before Done is tapped
   const [tempDate, setTempDate] = useState<Date>(() => parseIso(value));
 
   const display = value ? formatDisplay(value) : '';
@@ -47,12 +46,54 @@ export function DatePickerField({ label, value, onChange, optional }: Props) {
     setShow(true);
   }
 
-  function handleAndroidChange(event: DateTimePickerEvent, date?: Date) {
+  if (Platform.OS === 'web') {
+    return (
+      <View style={s.field}>
+        <View style={s.labelRow}>
+          <Text style={s.label}>{label}</Text>
+          {optional && <Text style={s.optionalHint}>optional</Text>}
+        </View>
+        <View style={s.input}>
+          <TextInput
+            style={[s.valueText, { flex: 1, outlineStyle: 'none' } as any]}
+            value={value}
+            onChangeText={(text) => {
+              if (/^\d{4}-\d{2}-\d{2}$/.test(text)) onChange(text);
+              else onChange(text);
+            }}
+            placeholder={placeholder || 'YYYY-MM-DD'}
+            placeholderTextColor="#BBBBBB"
+          />
+          <input
+            type="date"
+            value={value}
+            onChange={(e) => {
+              if (e.target.value) onChange(e.target.value);
+            }}
+            style={{
+              position: 'absolute',
+              right: 10,
+              top: 0,
+              bottom: 0,
+              width: 30,
+              opacity: 0,
+              cursor: 'pointer',
+            }}
+          />
+          <Text style={s.icon}>📅</Text>
+        </View>
+      </View>
+    );
+  }
+
+  const DateTimePicker = require('@react-native-community/datetimepicker').default;
+
+  function handleAndroidChange(event: any, date?: Date) {
     setShow(false);
     if (event.type === 'set' && date) onChange(toIso(date));
   }
 
-  function handleIosChange(_event: DateTimePickerEvent, date?: Date) {
+  function handleIosChange(_event: any, date?: Date) {
     if (date) setTempDate(date);
   }
 
@@ -75,23 +116,21 @@ export function DatePickerField({ label, value, onChange, optional }: Props) {
 
       <TouchableOpacity style={s.input} onPress={openPicker} activeOpacity={0.7}>
         <Text style={display ? s.valueText : s.placeholder}>
-          {display || 'Select date'}
+          {display || placeholder || 'Select date'}
         </Text>
         <Text style={s.icon}>📅</Text>
       </TouchableOpacity>
 
-      {/* Android — system dialog, renders directly */}
       {Platform.OS === 'android' && show && (
         <DateTimePicker
           mode="date"
           display="default"
           value={tempDate}
           onChange={handleAndroidChange}
-          accentColor="#5B5BD6"
+          accentColor="#00D4AA"
         />
       )}
 
-      {/* iOS — inline calendar inside a bottom-sheet modal */}
       {Platform.OS === 'ios' && (
         <Modal
           transparent
@@ -115,7 +154,7 @@ export function DatePickerField({ label, value, onChange, optional }: Props) {
                 display="inline"
                 value={tempDate}
                 onChange={handleIosChange}
-                accentColor="#5B5BD6"
+                accentColor="#00D4AA"
                 style={s.picker}
               />
             </View>
@@ -146,7 +185,6 @@ const s = StyleSheet.create({
   placeholder: { fontSize: 15, color: '#BBBBBB' },
   icon: { fontSize: 16 },
 
-  // iOS modal
   overlay: { flex: 1, justifyContent: 'flex-end' },
   overlayBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)' },
   sheet: {
@@ -161,6 +199,6 @@ const s = StyleSheet.create({
   },
   sheetTitle: { fontSize: 16, fontWeight: '600', color: '#2D2B55' },
   clearText: { fontSize: 15, color: '#AAAAAA' },
-  doneText: { fontSize: 15, fontWeight: '700', color: '#5B5BD6' },
+  doneText: { fontSize: 15, fontWeight: '700', color: '#00D4AA' },
   picker: { alignSelf: 'stretch' },
 });
