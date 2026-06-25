@@ -33,7 +33,6 @@ export function FloatingInsight({ content, label, generatedAt, locked, onPress }
   const [open, setOpen] = useState(false);
 
   const handleFabPress = () => {
-    if (locked || !content) return;
     setOpen(true);
   };
 
@@ -78,16 +77,28 @@ export function FloatingInsight({ content, label, generatedAt, locked, onPress }
             </View>
 
             {/* Content */}
-            <Text style={s.content}>{content}</Text>
+            {locked ? (
+              <Text style={[s.content, { color: T.textSecondary }]}>
+                Add 2+ tournaments and 5+ expenses to unlock personalized AI coaching insights.
+              </Text>
+            ) : !content ? (
+              <Text style={[s.content, { color: T.textSecondary }]}>
+                Generating your first insight… check back in a moment.
+              </Text>
+            ) : (
+              <Text style={s.content}>{content}</Text>
+            )}
 
             {/* Actions */}
             <View style={s.actions}>
               <TouchableOpacity style={s.dismissBtn} onPress={() => setOpen(false)} activeOpacity={0.7}>
                 <Text style={s.dismissText}>Dismiss</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={s.viewBtn} onPress={handleViewAll} activeOpacity={0.85}>
-                <Text style={s.viewBtnText}>View all insights</Text>
-              </TouchableOpacity>
+              {!locked && content ? (
+                <TouchableOpacity style={s.viewBtn} onPress={handleViewAll} activeOpacity={0.85}>
+                  <Text style={s.viewBtnText}>View all insights</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           </Pressable>
         </Pressable>

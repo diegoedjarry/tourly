@@ -1,6 +1,7 @@
 import React, { useRef, useState, useMemo, useCallback, useEffect } from 'react';
 import {
   View,
+  ScrollView,
   StyleSheet,
   Text,
   Animated,
@@ -367,29 +368,35 @@ export function TournamentMap({
               {selectedGroup.length} tournaments · {selectedGroup[0].city ?? selectedGroup[0].country}
             </Text>
           )}
-          {selectedGroup.map((t, i) => (
-            <View key={t.id} style={[styles.sheetItem, i > 0 && styles.sheetItemBorder]}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.sheetName}>{t.name}</Text>
-                <Text style={styles.sheetDates}>
-                  {fmtDateRange(t.startDate, t.endDate)}
-                </Text>
-                {(t.category || t.country) && (
-                  <Text style={styles.sheetMeta}>
-                    {[t.category, t.country].filter(Boolean).join('  ·  ')}
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            bounces={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            {selectedGroup.map((t, i) => (
+              <View key={t.id} style={[styles.sheetItem, i > 0 && styles.sheetItemBorder]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.sheetName}>{t.name}</Text>
+                  <Text style={styles.sheetDates}>
+                    {fmtDateRange(t.startDate, t.endDate)}
                   </Text>
-                )}
-                <DeadlinePill t={t} />
+                  {(t.category || t.country) && (
+                    <Text style={styles.sheetMeta}>
+                      {[t.category, t.country].filter(Boolean).join('  ·  ')}
+                    </Text>
+                  )}
+                  <DeadlinePill t={t} />
+                </View>
+                <TouchableOpacity
+                  style={styles.viewBtnSmall}
+                  activeOpacity={0.85}
+                  onPress={() => handleOpen(t.id)}
+                >
+                  <Text style={styles.viewBtnText}>View</Text>
+                </TouchableOpacity>
               </View>
-              <TouchableOpacity
-                style={styles.viewBtnSmall}
-                activeOpacity={0.85}
-                onPress={() => handleOpen(t.id)}
-              >
-                <Text style={styles.viewBtnText}>View</Text>
-              </TouchableOpacity>
-            </View>
-          ))}
+            ))}
+          </ScrollView>
         </Animated.View>
       )}
     </View>
