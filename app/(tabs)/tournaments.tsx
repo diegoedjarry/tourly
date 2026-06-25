@@ -1578,10 +1578,10 @@ function TournamentDiscoveryModal({
   function CheckRow({ label, checked, onToggle }: { label: string; checked: boolean; onToggle: () => void }) {
     return (
       <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10 }} onPress={onToggle} activeOpacity={0.7}>
-        <View style={{ width: 22, height: 22, borderRadius: 4, borderWidth: 2, borderColor: checked ? '#5B5BD6' : '#555', backgroundColor: checked ? '#5B5BD6' : 'transparent', marginRight: 12, alignItems: 'center', justifyContent: 'center' }}>
+        <View style={{ width: 22, height: 22, borderRadius: 4, borderWidth: 2, borderColor: checked ? '#5B5BD6' : '#3A3A5A', backgroundColor: checked ? '#5B5BD6' : '#1A1A2E', marginRight: 12, alignItems: 'center', justifyContent: 'center' }}>
           {checked && <Text style={{ color: '#FFF', fontSize: 13, fontWeight: '700' }}>✓</Text>}
         </View>
-        <Text style={{ fontSize: 15, color: '#2D2B55' }}>{label}</Text>
+        <Text style={{ fontSize: 15, color: '#E0E0E0' }}>{label}</Text>
       </TouchableOpacity>
     );
   }
@@ -1694,12 +1694,12 @@ function TournamentDiscoveryModal({
 
       {/* ── Filter panel modal ── */}
       <Modal visible={showFilterPanel} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowFilterPanel(false)}>
-        <SafeAreaView style={[disc.safe, { backgroundColor: '#FAFAFA' }]}>
-          <View style={[disc.header, { backgroundColor: '#FAFAFA', borderBottomColor: '#E0E0E0' }]}>
+        <SafeAreaView style={disc.safe}>
+          <View style={disc.header}>
             <TouchableOpacity onPress={() => setShowFilterPanel(false)} activeOpacity={0.7} style={disc.closeBtn}>
               <IconSymbol name="xmark" size={18} color="#555" />
             </TouchableOpacity>
-            <Text style={[disc.headerTitle, { color: '#2D2B55' }]}>{t('discovery.filterTitle')}</Text>
+            <Text style={disc.headerTitle}>{t('discovery.filterTitle')}</Text>
             <View style={disc.closeBtn} />
           </View>
           <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 120 }}>
@@ -1741,12 +1741,12 @@ function TournamentDiscoveryModal({
 
       {/* ── Date range modal ── */}
       <Modal visible={showDatePanel} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowDatePanel(false)}>
-        <SafeAreaView style={[disc.safe, { backgroundColor: '#FAFAFA' }]}>
-          <View style={[disc.header, { backgroundColor: '#FAFAFA', borderBottomColor: '#E0E0E0' }]}>
+        <SafeAreaView style={disc.safe}>
+          <View style={disc.header}>
             <TouchableOpacity onPress={() => setShowDatePanel(false)} activeOpacity={0.7} style={disc.closeBtn}>
               <IconSymbol name="xmark" size={18} color="#555" />
             </TouchableOpacity>
-            <Text style={[disc.headerTitle, { color: '#2D2B55' }]}>{t('discovery.dateRange')}</Text>
+            <Text style={disc.headerTitle}>{t('discovery.dateRange')}</Text>
             <View style={disc.closeBtn} />
           </View>
           <ScrollView contentContainerStyle={{ padding: 24, gap: 20 }}>
@@ -1823,9 +1823,9 @@ const disc = StyleSheet.create({
   closeBtn:        { padding: 4, minWidth: 30 },
   searchWrap:      { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1A1A2E', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, marginHorizontal: 20, marginTop: 16, marginBottom: 12 },
   searchInput:     { flex: 1, fontSize: 15, color: '#FAFAFA' },
-  filterChip:      { flexDirection: 'row', alignItems: 'center', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#F0F0F8', borderWidth: 1, borderColor: '#DDD' },
+  filterChip:      { flexDirection: 'row', alignItems: 'center', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#1A1A2E', borderWidth: 1, borderColor: '#2A2A4A' },
   filterChipActive:{ backgroundColor: '#5B5BD6', borderColor: '#5B5BD6' },
-  filterChipText:  { fontSize: 14, fontWeight: '600', color: '#555' },
+  filterChipText:  { fontSize: 14, fontWeight: '600', color: '#888' },
   sectionLabel:    { fontSize: 11, fontWeight: '700', color: '#666', letterSpacing: 1, marginHorizontal: 20, marginBottom: 10 },
   emptyText:       { fontSize: 13, color: '#666', textAlign: 'center', marginHorizontal: 24, marginTop: 16, marginBottom: 24, lineHeight: 20, fontStyle: 'italic' },
   trnRow:          { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#1A1A2E' },
@@ -1844,15 +1844,15 @@ const disc = StyleSheet.create({
   saveBtn:         { backgroundColor: '#5B5BD6', borderRadius: 14, paddingVertical: 16, alignItems: 'center', marginTop: 24 },
   saveBtnText:     { color: '#FAFAFA', fontSize: 16, fontWeight: '700' },
   // Filter panel
-  filterSectionLabel: { fontSize: 16, fontWeight: '700', color: '#2D2B55', marginTop: 8, marginBottom: 4 },
-  filterInputWrap: { borderWidth: 1, borderColor: '#DDD', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 4 },
-  filterInput:     { fontSize: 15, color: '#2D2B55' },
-  filterDivider:   { height: 1, backgroundColor: '#E8E8E8', marginVertical: 16 },
-  filterActions:   { position: 'absolute', bottom: 0, left: 0, right: 0, flexDirection: 'row', gap: 12, padding: 20, backgroundColor: '#FAFAFA', borderTopWidth: 1, borderTopColor: '#E0E0E0' },
-  clearBtn:        { flex: 1, borderRadius: 24, paddingVertical: 14, alignItems: 'center', backgroundColor: '#E0E0E0' },
-  clearBtnText:    { fontSize: 13, fontWeight: '700', color: '#555', letterSpacing: 0.5 },
-  applyBtn:        { flex: 2, borderRadius: 24, paddingVertical: 14, alignItems: 'center', backgroundColor: '#C8E6A0' },
-  applyBtnText:    { fontSize: 13, fontWeight: '700', color: '#2D5A00', letterSpacing: 0.5 },
+  filterSectionLabel: { fontSize: 13, fontWeight: '700', color: '#888', letterSpacing: 0.8, marginTop: 12, marginBottom: 6, textTransform: 'uppercase' },
+  filterInputWrap: { borderWidth: 1, borderColor: '#2A2A4A', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 4, backgroundColor: '#1A1A2E' },
+  filterInput:     { fontSize: 15, color: '#FAFAFA' },
+  filterDivider:   { height: 1, backgroundColor: '#1E1E32', marginVertical: 14 },
+  filterActions:   { position: 'absolute', bottom: 0, left: 0, right: 0, flexDirection: 'row', gap: 12, padding: 20, backgroundColor: '#0D0D1A', borderTopWidth: 1, borderTopColor: '#1E1E32' },
+  clearBtn:        { flex: 1, borderRadius: 24, paddingVertical: 14, alignItems: 'center', backgroundColor: '#2A2A4A' },
+  clearBtnText:    { fontSize: 13, fontWeight: '700', color: '#AAA', letterSpacing: 0.5 },
+  applyBtn:        { flex: 2, borderRadius: 24, paddingVertical: 14, alignItems: 'center', backgroundColor: '#5B5BD6' },
+  applyBtnText:    { fontSize: 13, fontWeight: '700', color: '#FAFAFA', letterSpacing: 0.5 },
 });
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
