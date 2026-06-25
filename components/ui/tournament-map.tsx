@@ -115,7 +115,7 @@ export function TournamentMap({
   onClose,
 }: TournamentMapProps) {
   const mapRef = useRef<MapView>(null);
-  const [selectedTournament, setSelectedTournament] = useState<any | null>(null);
+  const [selectedGroup, setSelectedGroup] = useState<any[] | null>(null);
   const slideAnim = useRef(new Animated.Value(300)).current;
 
   // Resolve open-tournament callback (support both prop names)
@@ -123,7 +123,7 @@ export function TournamentMap({
     (id: string) => {
       onOpenTournament?.(id);
       onSelectTournament?.(id);
-      setSelectedTournament(null);
+      setSelectedGroup(null);
       slideAnim.setValue(300);
     },
     [onOpenTournament, onSelectTournament, slideAnim],
@@ -141,9 +141,20 @@ export function TournamentMap({
       .filter(Boolean) as { t: any; lat: number; lon: number }[];
   }, [tournaments]);
 
+  // Group tournaments by coordinate so stacked ones share one marker
+  const groups = useMemo(() => {
+    const map = new Map<string, { lat: number; lon: number; items: any[] }>();
+    for (const { t, lat, lon } of mapped) {
+      const key = `${lat.toFixed(4)},${lon.toFixed(4)}`;
+      if (!map.has(key)) map.set(key, { lat, lon, items: [] });
+      map.get(key)!.items.push(t);
+    }
+    return Array.from(map.values());
+  }, [mapped]);
+
   const allCoords = useMemo(
-    () => mapped.map(({ lat, lon }) => ({ latitude: lat, longitude: lon })),
-    [mapped],
+    () => groups.map(({ lat, lon }) => ({ latitude: lat, longitude: lon })),
+    [groups],
   );
 
   // Initial region
@@ -163,10 +174,10 @@ export function TournamentMap({
   }, [allCoords]);
 
   // Re-fit when tournament list changes
-  const prevLen = useRef(mapped.length);
+  const prevLen = useRef(groups.length);
   useEffect(() => {
-    if (mapped.length !== prevLen.current) {
-      prevLen.current = mapped.length;
+    if (groups.length !== prevLen.current) {
+      prevLen.current = groups.length;
       if (allCoords.length > 0) {
         mapRef.current?.fitToCoordinates(allCoords, {
           edgePadding: { top: 60, right: 40, bottom: 60, left: 40 },
@@ -174,12 +185,12 @@ export function TournamentMap({
         });
       }
     }
-  }, [mapped.length, allCoords]);
+  }, [groups.length, allCoords]);
 
-  // Show bottom sheet when tournament is selected
+  // Show bottom sheet for a group of tournaments at the same location
   const openSheet = useCallback(
-    (t: any) => {
-      setSelectedTournament(t);
+    (items: any[]) => {
+      setSelectedGroup(items);
       slideAnim.setValue(300);
       Animated.timing(slideAnim, {
         toValue: 0,
@@ -196,7 +207,7 @@ export function TournamentMap({
       duration: 250,
       useNativeDriver: true,
     }).start(() => {
-      setSelectedTournament(null);
+      setSelectedGroup(null);
       slideAnim.setValue(300);
     });
   }, [slideAnim]);
@@ -212,7 +223,7 @@ export function TournamentMap({
             duration: 250,
             useNativeDriver: true,
           }).start(() => {
-            setSelectedTournament(null);
+            setSelectedGroup(null);
             slideAnim.setValue(300);
           });
         } else {
@@ -278,21 +289,29 @@ export function TournamentMap({
         showsScale={false}
         toolbarEnabled={false}
       >
-        {mapped.map(({ t, lat, lon }) => (
-          <Marker
-            key={t.id}
-            coordinate={{ latitude: lat, longitude: lon }}
-            onPress={() => openSheet(t)}
-            anchor={{ x: 0.5, y: 0.5 }}
-          >
-            <View style={styles.dotOuter}>
-              <View style={[
-                styles.dotInner,
-                { backgroundColor: t.surface === 'clay' ? '#D4915A' : t.surface === 'grass' ? '#5ABE6E' : '#5A8CD4' }
-              ]} />
-            </View>
-          </Marker>
-        ))}
+        {groups.map(({ lat, lon, items }) => {
+          const key = `${lat.toFixed(4)},${lon.toFixed(4)}`;
+          const first = items[0];
+          const dotColor = first.surface === 'clay' ? '#D4915A' : first.surface === 'grass' ? '#5ABE6E' : '#5A8CD4';
+          const count = items.length;
+          return (
+            <Marker
+              key={key}
+              coordinate={{ latitude: lat, longitude: lon }}
+              onPress={() => openSheet(items)}
+              anchor={{ x: 0.5, y: 0.5 }}
+            >
+              <View style={styles.dotOuter}>
+                <View style={[styles.dotInner, { backgroundColor: dotColor }]} />
+                {count > 1 && (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>{count}</Text>
+                  </View>
+                )}
+              </View>
+            </Marker>
+          );
+        })}
       </MapView>
 
       {/* Empty state overlay */}
@@ -332,36 +351,45 @@ export function TournamentMap({
       )}
 
       {/* Backdrop dismiss overlay */}
-      {selectedTournament && (
+      {selectedGroup && (
         <Pressable style={styles.sheetBackdrop} onPress={closeSheet} />
       )}
 
       {/* Bottom sheet */}
-      {selectedTournament && (
+      {selectedGroup && (
         <Animated.View
           style={[styles.sheet, { transform: [{ translateY: slideAnim }] }]}
           {...panResponder.panHandlers}
         >
           <View style={styles.handle} />
-          <Text style={styles.sheetName}>{selectedTournament.name}</Text>
-          <Text style={styles.sheetDates}>
-            {fmtDateRange(selectedTournament.startDate, selectedTournament.endDate)}
-          </Text>
-          {(selectedTournament.category || selectedTournament.country) && (
-            <Text style={styles.sheetMeta}>
-              {[selectedTournament.category, selectedTournament.country]
-                .filter(Boolean)
-                .join('  ·  ')}
+          {selectedGroup.length > 1 && (
+            <Text style={styles.sheetGroupLabel}>
+              {selectedGroup.length} tournaments · {selectedGroup[0].city ?? selectedGroup[0].country}
             </Text>
           )}
-          <DeadlinePill t={selectedTournament} />
-          <TouchableOpacity
-            style={styles.viewBtn}
-            activeOpacity={0.85}
-            onPress={() => handleOpen(selectedTournament.id)}
-          >
-            <Text style={styles.viewBtnText}>View Tournament</Text>
-          </TouchableOpacity>
+          {selectedGroup.map((t, i) => (
+            <View key={t.id} style={[styles.sheetItem, i > 0 && styles.sheetItemBorder]}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.sheetName}>{t.name}</Text>
+                <Text style={styles.sheetDates}>
+                  {fmtDateRange(t.startDate, t.endDate)}
+                </Text>
+                {(t.category || t.country) && (
+                  <Text style={styles.sheetMeta}>
+                    {[t.category, t.country].filter(Boolean).join('  ·  ')}
+                  </Text>
+                )}
+                <DeadlinePill t={t} />
+              </View>
+              <TouchableOpacity
+                style={styles.viewBtnSmall}
+                activeOpacity={0.85}
+                onPress={() => handleOpen(t.id)}
+              >
+                <Text style={styles.viewBtnText}>View</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
         </Animated.View>
       )}
     </View>
@@ -471,6 +499,24 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'transparent',
   },
+  // Cluster badge
+  badge: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#E24B4A',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+  },
+  badgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#FAFAFA',
+  },
   // Bottom sheet
   sheet: {
     position: 'absolute',
@@ -482,51 +528,71 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 24,
     padding: 20,
     paddingBottom: 36,
+    maxHeight: '70%',
   },
   handle: {
     width: 36,
     height: 4,
     backgroundColor: '#3A3A5A',
     borderRadius: 2,
-    marginBottom: 16,
+    marginBottom: 12,
     alignSelf: 'center',
   },
+  sheetGroupLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#A0A0C8',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 12,
+  },
+  sheetItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    gap: 12,
+  },
+  sheetItemBorder: {
+    borderTopWidth: 1,
+    borderTopColor: '#2A2A4A',
+  },
   sheetName: {
-    fontSize: 17,
+    fontSize: 15,
     fontWeight: '700',
     color: '#FAFAFA',
   },
   sheetDates: {
-    fontSize: 13,
-    color: '#A0A0C8',
-    marginTop: 4,
-  },
-  sheetMeta: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#A0A0C8',
     marginTop: 2,
+  },
+  sheetMeta: {
+    fontSize: 12,
+    color: '#A0A0C8',
+    marginTop: 1,
   },
   pill: {
     alignSelf: 'flex-start',
     borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    marginTop: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginTop: 6,
   },
   pillText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
   },
-  viewBtn: {
+  viewBtnSmall: {
     backgroundColor: '#5B5BD6',
-    borderRadius: 12,
-    paddingVertical: 14,
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
     alignItems: 'center',
-    marginTop: 16,
+    alignSelf: 'center',
   },
   viewBtnText: {
     color: '#FAFAFA',
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '700',
   },
 });
