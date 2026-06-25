@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   ScrollView,
@@ -12,10 +12,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { Text } from '@/components/ui/text';
 import { useAppQuery } from '@/hooks/useAppQuery';
 
-const SURFACES: Array<{ key: 'clay' | 'hard' | 'grass'; label: string; color: string }> = [
-  { key: 'clay',  label: 'Clay',  color: '#D4915A' },
-  { key: 'hard',  label: 'Hard',  color: '#5A8CD4' },
-  { key: 'grass', label: 'Grass', color: '#5ABE6E' },
+const SURFACES: Array<{ key: 'clay' | 'hard'; label: string; color: string }> = [
+  { key: 'clay', label: 'Clay', color: '#D4915A' },
+  { key: 'hard', label: 'Hard', color: '#5A8CD4' },
 ];
 
 const CATEGORY_ORDER = ['M15', 'M25', 'M50', 'M60', 'Challenger', 'ATP 250', 'ATP 500', 'ATP 1000'];
@@ -30,13 +29,29 @@ export default function MyPerformanceScreen() {
   const tournaments = data?.tournaments ?? [];
   const expenses    = data?.expenses ?? [];
 
+  const [expandedSurface, setExpandedSurface] = useState<'clay' | 'hard' | null>(null);
+
+  const today = useMemo(() => { const d = new Date(); d.setHours(0,0,0,0); return d; }, []);
+
   const bySurface = useMemo(() => {
-    const map: Record<string, any[]> = { clay: [], hard: [], grass: [] };
+    const map: Record<string, any[]> = { clay: [], hard: [] };
     tournaments.forEach((t: any) => {
       if (t.surface && map[t.surface]) map[t.surface].push(t);
     });
     return map;
   }, [tournaments]);
+
+  // Past tournaments per surface (for expandable results)
+  const pastBySurface = useMemo(() => {
+    const map: Record<string, any[]> = { clay: [], hard: [] };
+    tournaments.forEach((t: any) => {
+      if (!t.surface || !map[t.surface]) return;
+      if (!t.startDate) return;
+      const [y, m, d] = t.startDate.split('-').map(Number);
+      if (new Date(y, m - 1, d) < today) map[t.surface].push(t);
+    });
+    return map;
+  }, [tournaments, today]);
 
   function expensesForTournament(tId: string): number {
     return expenses
@@ -44,10 +59,11 @@ export default function MyPerformanceScreen() {
       .reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
   }
 
-  // Best conditions
+  // Best conditions (clay/hard only)
   const bestSurface = useMemo(() => {
-    const entries = Object.entries(bySurface).sort((a, b) => b[1].length - a[1].length);
-    return entries[0]?.[0] ?? null;
+    return ['clay', 'hard'].reduce((best, sf) =>
+      (bySurface[sf]?.length ?? 0) > (bySurface[best]?.length ?? 0) ? sf : best
+    , 'clay');
   }, [bySurface]);
 
   const bestCategory = useMemo(() => {
@@ -59,7 +75,7 @@ export default function MyPerformanceScreen() {
 
   // Expense efficiency by surface
   const surfaceExpenses = useMemo(() => {
-    const map: Record<string, { total: number; count: number }> = { clay: { total: 0, count: 0 }, hard: { total: 0, count: 0 }, grass: { total: 0, count: 0 } };
+    const map: Record<string, { total: number; count: number }> = { clay: { total: 0, count: 0 }, hard: { total: 0, count: 0 } };
     Object.entries(bySurface).forEach(([surf, ts]) => {
       ts.forEach((t: any) => {
         const cost = expensesForTournament(t.id);
@@ -175,22 +191,53 @@ export default function MyPerformanceScreen() {
           )}
         </View>
 
-        {/* WIN RATE BY SURFACE */}
+        {/* WIN RATE BY SURFACE — tap to see past results */}
         <View style={s.section}>
           <Text style={s.sectionLabel}>WIN RATE BY SURFACE</Text>
           <View style={s.card}>
-            {SURFACES.map(({ key, label, color }) => (
-              <View key={key} style={s.surfaceRow}>
-                <View style={[s.surfaceDot, { backgroundColor: color }]} />
-                <Text style={s.surfaceLabel}>{label}</Text>
-                <Text style={s.surfaceCount}>({bySurface[key].length})</Text>
-                <View style={s.barTrack}>
-                  <View style={[s.barFill, { width: '0%', backgroundColor: color }]} />
+            {SURFACES.map(({ key, label, color }) => {
+              const past = pastBySurface[key] ?? [];
+              const isOpen = expandedSurface === key;
+              return (
+                <View key={key}>
+                  <TouchableOpacity
+                    style={s.surfaceRow}
+                    onPress={() => setExpandedSurface(v => v === key ? null : key as any)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[s.surfaceDot, { backgroundColor: color }]} />
+                    <Text style={s.surfaceLabel}>{label}</Text>
+                    <Text style={s.surfaceCount}>({bySurface[key].length} total)</Text>
+                    <View style={s.barTrack}>
+                      <View style={[s.barFill, { width: '0%', backgroundColor: color }]} />
+                    </View>
+                    <Ionicons name="lock-closed" size={11} color="#6060A0" style={{ marginRight: 4 }} />
+                    <Ionicons name={isOpen ? 'chevron-up' : 'chevron-down'} size={13} color="#6060A0" />
+                  </TouchableOpacity>
+
+                  {isOpen && (
+                    <View style={s.resultsPanel}>
+                      {past.length === 0 ? (
+                        <Text style={s.lockedText}>No past {label} tournaments yet</Text>
+                      ) : (
+                        past.map((t: any) => {
+                          const prize = (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0) || (t.prizeMoney ?? 0);
+                          return (
+                            <View key={t.id} style={s.resultRow}>
+                              <View style={{ flex: 1 }}>
+                                <Text style={s.resultCity}>{t.city ?? t.name}</Text>
+                                <Text style={s.resultDate}>{abbrevDate(t.startDate)} · {t.category}</Text>
+                              </View>
+                              {prize > 0 && <Text style={s.resultPrize}>{fmtUSD(prize)}</Text>}
+                            </View>
+                          );
+                        })
+                      )}
+                    </View>
+                  )}
                 </View>
-                <Ionicons name="lock-closed" size={12} color="#6060A0" style={{ marginRight: 4 }} />
-                <Text style={s.lockedSmall}>Log results</Text>
-              </View>
-            ))}
+              );
+            })}
           </View>
         </View>
 
@@ -371,6 +418,25 @@ const s = StyleSheet.create({
 
   lockedText: { fontSize: 13, color: '#6060A0', textAlign: 'center', lineHeight: 22 },
   lockedSmall: { fontSize: 11, color: '#6060A0' },
+
+  resultsPanel: {
+    backgroundColor: '#0F0F1A',
+    borderRadius: 8,
+    marginTop: 4,
+    marginBottom: 6,
+    padding: 10,
+    gap: 8,
+  },
+  resultRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E1E38',
+  },
+  resultCity: { fontSize: 13, fontWeight: '600', color: '#FAFAFA' },
+  resultDate: { fontSize: 11, color: '#A0A0C8', marginTop: 1 },
+  resultPrize: { fontSize: 12, fontWeight: '700', color: '#5B5BD6' },
   effValue: { fontSize: 13, fontWeight: '600', color: '#FAFAFA' },
 
   catRow: {

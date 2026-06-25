@@ -17,15 +17,29 @@ const DEMO_OPPONENT = {
   name: 'R. Nadal',
   ranking: 672,
   winRate: '84%',
-  clayWR: '91%',
-  hardWR: '78%',
-  grassWR: '74%',
+  surfaceWR: { clay: '91%', hard: '78%', grass: '74%' },
   bestCategory: 'Challenger',
+  // Scraper fields — placeholder until integration is live
+  dob: 'Jun 3, 1986',
+  height: '1.85 m',
+  previousResults: 'Coming soon',
+};
+
+type ViewMode = 'player' | 'compare';
+type Surface = 'clay' | 'hard' | 'grass';
+
+const SURFACE_COLORS: Record<Surface, string> = {
+  clay: '#D4915A',
+  hard: '#5A8CD4',
+  grass: '#5ABE6E',
 };
 
 export default function ComparePlayersScreen() {
   const router = useRouter();
   const [query, setQuery] = useState('');
+  const [viewMode, setViewMode] = useState<ViewMode>('player');
+  const [surfaceExpanded, setSurfaceExpanded] = useState(false);
+  const [selectedSurface, setSelectedSurface] = useState<Surface | null>(null);
 
   const { data } = useAppQuery({});
   const tournaments = data?.tournaments ?? [];
@@ -37,18 +51,15 @@ export default function ComparePlayersScreen() {
       const cat = t.category ?? 'Unknown';
       counts[cat] = (counts[cat] ?? 0) + 1;
     });
-    const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-    return sorted[0]?.[0] ?? '—';
+    return Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? '—';
   }, [tournaments]);
 
-  const STATS = [
-    { label: 'Ranking',      you: '—',         note: 'Set in profile',      opp: String(DEMO_OPPONENT.ranking) },
-    { label: 'Win Rate',     you: '—',         note: 'Log results to unlock', opp: DEMO_OPPONENT.winRate },
-    { label: 'Clay W/R',     you: '—',         note: 'Log results to unlock', opp: DEMO_OPPONENT.clayWR },
-    { label: 'Hard W/R',     you: '—',         note: 'Log results to unlock', opp: DEMO_OPPONENT.hardWR },
-    { label: 'Grass W/R',    you: '—',         note: 'Log results to unlock', opp: DEMO_OPPONENT.grassWR },
-    { label: 'Best Category', you: bestCategory, note: null,                   opp: DEMO_OPPONENT.bestCategory },
-  ];
+  const showCompare = viewMode === 'compare';
+
+  // Surface win rate display value for the main row
+  const surfaceRowOpp = selectedSurface
+    ? DEMO_OPPONENT.surfaceWR[selectedSurface]
+    : 'Tap to expand';
 
   return (
     <SafeAreaView style={s.safe}>
@@ -85,7 +96,6 @@ export default function ComparePlayersScreen() {
           )}
         </View>
 
-        {/* Search results / empty state */}
         {query.length === 0 ? (
           <Text style={s.searchHint}>Type a player's name to search</Text>
         ) : (
@@ -95,16 +105,40 @@ export default function ComparePlayersScreen() {
           </View>
         )}
 
-        {/* Comparison preview */}
+        {/* View mode toggle */}
+        <View style={s.modeToggle}>
+          <TouchableOpacity
+            style={[s.modeBtn, viewMode === 'player' && s.modeBtnActive]}
+            onPress={() => setViewMode('player')}
+            activeOpacity={0.7}
+          >
+            <Text style={[s.modeBtnText, viewMode === 'player' && s.modeBtnTextActive]}>
+              Player Stats
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[s.modeBtn, viewMode === 'compare' && s.modeBtnActive]}
+            onPress={() => setViewMode('compare')}
+            activeOpacity={0.7}
+          >
+            <Text style={[s.modeBtnText, viewMode === 'compare' && s.modeBtnTextActive]}>
+              Compare to Me
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Stats table */}
         <View style={s.section}>
           <Text style={s.sectionLabel}>PREVIEW — DEMO DATA</Text>
 
           {/* Column headers */}
           <View style={[s.statRow, s.statHeader]}>
             <View style={s.statLabelCell} />
-            <View style={[s.statDataCell, s.youCol]}>
-              <Text style={s.colHeaderYou}>You</Text>
-            </View>
+            {showCompare && (
+              <View style={[s.statDataCell, s.youCol]}>
+                <Text style={s.colHeaderYou}>You</Text>
+              </View>
+            )}
             <View style={[s.statDataCell, s.oppCol]}>
               <Text style={s.colHeaderOpp}>{DEMO_OPPONENT.name}</Text>
               <View style={s.previewBadge}>
@@ -113,27 +147,97 @@ export default function ComparePlayersScreen() {
             </View>
           </View>
 
-          {STATS.map((row, idx) => (
-            <View key={row.label} style={[s.statRow, idx % 2 === 0 ? s.rowEven : s.rowOdd]}>
-              <View style={s.statLabelCell}>
-                <Text style={s.statLabel}>{row.label}</Text>
-              </View>
-              <View style={[s.statDataCell, s.youCol]}>
-                <Text style={s.statValue}>{row.you}</Text>
-                {row.note && row.you === '—' && (
-                  <Text style={s.statNote}>{row.note}</Text>
-                )}
-              </View>
-              <View style={[s.statDataCell, s.oppCol]}>
-                <Text style={s.statValue}>{row.opp}</Text>
-              </View>
+          {/* Ranking */}
+          <StatRow label="Ranking" opp={String(DEMO_OPPONENT.ranking)} you="—" youNote="Set in profile" showYou={showCompare} even />
+
+          {/* Win Rate */}
+          <StatRow label="Win Rate" opp={DEMO_OPPONENT.winRate} you="—" youNote="Log results" showYou={showCompare} />
+
+          {/* Surface Win Rate — expandable */}
+          <TouchableOpacity
+            style={[s.statRow, s.rowEven]}
+            onPress={() => setSurfaceExpanded(v => !v)}
+            activeOpacity={0.8}
+          >
+            <View style={s.statLabelCell}>
+              <Text style={s.statLabel}>Surface W/R</Text>
             </View>
-          ))}
+            {showCompare && (
+              <View style={[s.statDataCell, s.youCol]}>
+                <Text style={s.statValue}>{selectedSurface ? '—' : '—'}</Text>
+              </View>
+            )}
+            <View style={[s.statDataCell, s.oppCol, { flexDirection: 'row', justifyContent: 'center', gap: 4 }]}>
+              <Text style={s.statValue}>
+                {selectedSurface ? DEMO_OPPONENT.surfaceWR[selectedSurface] : '—'}
+              </Text>
+              <Ionicons name={surfaceExpanded ? 'chevron-up' : 'chevron-down'} size={14} color="#A0A0C8" />
+            </View>
+          </TouchableOpacity>
+
+          {/* Surface pills */}
+          {surfaceExpanded && (
+            <View style={s.surfacePillRow}>
+              {(['clay', 'hard', 'grass'] as Surface[]).map(sf => (
+                <TouchableOpacity
+                  key={sf}
+                  style={[
+                    s.surfacePill,
+                    { borderColor: SURFACE_COLORS[sf] },
+                    selectedSurface === sf && { backgroundColor: SURFACE_COLORS[sf] },
+                  ]}
+                  onPress={() => setSelectedSurface(v => v === sf ? null : sf)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[
+                    s.surfacePillText,
+                    { color: selectedSurface === sf ? '#FFF' : SURFACE_COLORS[sf] },
+                  ]}>
+                    {sf.charAt(0).toUpperCase() + sf.slice(1)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          {/* Best Category */}
+          <StatRow label="Best Category" opp={DEMO_OPPONENT.bestCategory} you={bestCategory} showYou={showCompare} even />
+
+          {/* ── Coming soon once scraper is live ── */}
+          <View style={s.futureHeader}>
+            <Text style={s.futureSep}>Coming soon — ITF data</Text>
+          </View>
+          <StatRow label="Date of Birth" opp={DEMO_OPPONENT.dob} you="—" youNote="From profile" showYou={showCompare} even />
+          <StatRow label="Height" opp={DEMO_OPPONENT.height} you="—" youNote="From profile" showYou={showCompare} />
+          <StatRow label="Prev. Results" opp="—" you="—" youNote="Scraper pending" showYou={showCompare} even />
         </View>
 
         <View style={{ height: 40 }} />
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function StatRow({
+  label, opp, you, youNote, showYou, even,
+}: {
+  label: string; opp: string; you: string; youNote?: string; showYou: boolean; even?: boolean;
+}) {
+  return (
+    <View style={[s.statRow, even ? s.rowEven : s.rowOdd]}>
+      <View style={s.statLabelCell}>
+        <Text style={s.statLabel}>{label}</Text>
+      </View>
+      {showYou && (
+        <View style={[s.statDataCell, s.youCol]}>
+          <Text style={s.statValue}>{you}</Text>
+          {youNote && you === '—' && <Text style={s.statNote}>{youNote}</Text>}
+        </View>
+      )}
+      <View style={[s.statDataCell, s.oppCol]}>
+        <Text style={s.statValue}>{opp}</Text>
+      </View>
+    </View>
   );
 }
 
@@ -174,14 +278,8 @@ const s = StyleSheet.create({
     paddingHorizontal: 14,
   },
   searchIcon: { marginRight: 8 },
-  searchInput: {
-    flex: 1,
-    color: '#FAFAFA',
-    fontSize: 15,
-    paddingVertical: 14,
-  },
-
-  searchHint: { fontSize: 13, color: '#A0A0C8', textAlign: 'center', marginTop: 12, marginBottom: 16 },
+  searchInput: { flex: 1, color: '#FAFAFA', fontSize: 15, paddingVertical: 14 },
+  searchHint: { fontSize: 13, color: '#A0A0C8', textAlign: 'center', marginTop: 12, marginBottom: 4 },
 
   comingSoonBox: {
     backgroundColor: '#1A1A2E',
@@ -196,14 +294,25 @@ const s = StyleSheet.create({
   comingSoonTitle: { fontSize: 15, fontWeight: '600', color: '#FAFAFA', marginBottom: 4 },
   comingSoonSub: { fontSize: 13, color: '#A0A0C8' },
 
-  section: { marginHorizontal: 16, marginTop: 20 },
+  modeToggle: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginTop: 16,
+    backgroundColor: '#1A1A2E',
+    borderRadius: 10,
+    padding: 3,
+    borderWidth: 1,
+    borderColor: '#2A2A4A',
+  },
+  modeBtn: { flex: 1, paddingVertical: 9, borderRadius: 8, alignItems: 'center' },
+  modeBtnActive: { backgroundColor: '#5B5BD6' },
+  modeBtnText: { fontSize: 13, fontWeight: '600', color: '#A0A0C8' },
+  modeBtnTextActive: { color: '#FAFAFA' },
+
+  section: { marginHorizontal: 16, marginTop: 16 },
   sectionLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#A0A0C8',
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-    marginBottom: 10,
+    fontSize: 11, fontWeight: '600', color: '#A0A0C8',
+    letterSpacing: 1, textTransform: 'uppercase', marginBottom: 10,
   },
 
   statRow: { flexDirection: 'row', alignItems: 'center', borderRadius: 6 },
@@ -219,17 +328,37 @@ const s = StyleSheet.create({
 
   colHeaderYou: { fontSize: 13, fontWeight: '700', color: '#5B5BD6', textAlign: 'center' },
   colHeaderOpp: { fontSize: 13, fontWeight: '700', color: '#FAFAFA', textAlign: 'center' },
-
   previewBadge: {
-    backgroundColor: '#2A2A4A',
-    borderRadius: 8,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    alignSelf: 'center',
-    marginTop: 2,
+    backgroundColor: '#2A2A4A', borderRadius: 8,
+    paddingHorizontal: 6, paddingVertical: 2, alignSelf: 'center', marginTop: 2,
   },
   previewBadgeText: { fontSize: 9, fontWeight: '700', color: '#A0A0C8', textTransform: 'uppercase', letterSpacing: 0.5 },
 
   statValue: { fontSize: 14, fontWeight: '600', color: '#FAFAFA', textAlign: 'center' },
   statNote: { fontSize: 9, color: '#6060A0', textAlign: 'center', marginTop: 2 },
+
+  surfacePillRow: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#0F0F1A',
+    justifyContent: 'center',
+  },
+  surfacePill: {
+    paddingHorizontal: 18,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1.5,
+  },
+  surfacePillText: { fontSize: 13, fontWeight: '700' },
+
+  futureHeader: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#2A2A4A',
+    marginTop: 4,
+  },
+  futureSep: { fontSize: 10, color: '#6060A0', textTransform: 'uppercase', letterSpacing: 0.8 },
 });
