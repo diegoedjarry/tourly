@@ -9,7 +9,7 @@ import {
   Pressable,
   TouchableOpacity,
 } from 'react-native';
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { CITY_COORDS, COUNTRY_CENTERS } from './map-data';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -214,26 +214,6 @@ export function TournamentMap({
     }),
   ).current;
 
-  // Build proximity polylines
-  const polylines = useMemo(() => {
-    const lines: { key: string; coords: { latitude: number; longitude: number }[] }[] = [];
-    for (let i = 0; i < mapped.length; i++) {
-      for (let j = i + 1; j < mapped.length; j++) {
-        const a = mapped[i];
-        const b = mapped[j];
-        if (haversineKm(a.lat, a.lon, b.lat, b.lon) > 2000) continue;
-        if (daysBetweenDates(a.t.startDate, b.t.startDate) >= 14) continue;
-        lines.push({
-          key: `line-${i}-${j}`,
-          coords: [
-            { latitude: a.lat, longitude: a.lon },
-            { latitude: b.lat, longitude: b.lon },
-          ],
-        });
-      }
-    }
-    return lines;
-  }, [mapped]);
 
   // Deadline pill logic
   const DeadlinePill = useCallback(({ t }: { t: any }) => {
@@ -287,16 +267,6 @@ export function TournamentMap({
         showsScale={false}
         toolbarEnabled={false}
       >
-        {polylines.map(({ key, coords }) => (
-          <Polyline
-            key={key}
-            coordinates={coords}
-            strokeColor="rgba(91,91,214,0.25)"
-            strokeWidth={2}
-            lineDashPattern={[4, 6]}
-          />
-        ))}
-
         {mapped.map(({ t, lat, lon }) => (
           <Marker
             key={t.id}

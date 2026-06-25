@@ -334,21 +334,27 @@ export default function HomeScreen() {
               )}
 
               {/* Compare Players & My Performance */}
-              <View style={st.featureCard}>
-                <TouchableOpacity style={st.featureRow} onPress={() => router.push('/compare-players' as any)} activeOpacity={0.7}>
-                  <View style={st.featureIcon}><Text style={st.featureIconText}>🔍</Text></View>
-                  <View style={st.featureText}>
-                    <Text style={st.featureTitle}>Compare Players</Text>
-                    <Text style={st.featureSub}>Search any player and compare stats</Text>
+              <View style={st.section}>
+                <Text style={st.sectionLabel}>Analytics</Text>
+                <TouchableOpacity
+                  style={[st.deadlineCard, { borderLeftColor: T.accent, marginBottom: 6 }]}
+                  onPress={() => router.push('/compare-players' as any)}
+                  activeOpacity={0.8}
+                >
+                  <View style={st.cardLeft}>
+                    <Text style={st.cardTitle}>Compare Players</Text>
+                    <Text style={st.cardSub}>Search any player and compare stats</Text>
                   </View>
                   <Text style={st.featureChevron}>›</Text>
                 </TouchableOpacity>
-                <View style={st.featureDivider} />
-                <TouchableOpacity style={st.featureRow} onPress={() => router.push('/my-performance' as any)} activeOpacity={0.7}>
-                  <View style={st.featureIcon}><Text style={st.featureIconText}>📊</Text></View>
-                  <View style={st.featureText}>
-                    <Text style={st.featureTitle}>My Performance</Text>
-                    <Text style={st.featureSub}>Surface efficiency, optimal conditions, season stats</Text>
+                <TouchableOpacity
+                  style={[st.deadlineCard, { borderLeftColor: T.accent }]}
+                  onPress={() => router.push('/my-performance' as any)}
+                  activeOpacity={0.8}
+                >
+                  <View style={st.cardLeft}>
+                    <Text style={st.cardTitle}>My Performance</Text>
+                    <Text style={st.cardSub}>Surface efficiency, season stats, optimal conditions</Text>
                   </View>
                   <Text style={st.featureChevron}>›</Text>
                 </TouchableOpacity>
@@ -449,6 +455,7 @@ const st = StyleSheet.create({
   offlineText: { fontSize: 13, fontWeight: '600', color: '#FFF' },
 
   emptyNote: { fontSize: 13, color: T.textTertiary, fontStyle: 'italic', marginBottom: 16 },
+  featureChevron: { fontSize: 20, color: T.accent, fontWeight: '300' },
 
   upcomingDays: { fontSize: 13, fontWeight: '600', color: T.textSecondary },
 

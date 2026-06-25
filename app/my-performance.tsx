@@ -208,7 +208,7 @@ export default function MyPerformanceScreen() {
                     <Text style={s.surfaceLabel}>{label}</Text>
                     <View style={{ flex: 1 }} />
                     {avg !== null ? (
-                      <Text style={s.effValue}>{fmtUSD(avg)} avg/tournament</Text>
+                      <Text style={s.effValue}>{fmtUSD(avg)}{'\n'}avg/tournament</Text>
                     ) : (
                       <Text style={s.lockedSmall}>No data</Text>
                     )}
@@ -355,10 +355,10 @@ const s = StyleSheet.create({
   condCardValue: { fontSize: 16, fontWeight: '700', color: '#FAFAFA', marginBottom: 2 },
   condCardCount: { fontSize: 11, color: '#6060A0' },
 
-  surfaceRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  surfaceRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
   surfaceDot: { width: 8, height: 8, borderRadius: 4, marginRight: 8 },
-  surfaceLabel: { fontSize: 13, fontWeight: '600', color: '#FAFAFA', width: 38 },
-  surfaceCount: { fontSize: 11, color: '#6060A0', marginRight: 8, width: 24 },
+  surfaceLabel: { fontSize: 13, fontWeight: '600', color: '#FAFAFA', width: 44 },
+  surfaceCount: { fontSize: 11, color: '#6060A0', marginRight: 10 },
   barTrack: {
     flex: 1,
     height: 6,
@@ -369,19 +369,20 @@ const s = StyleSheet.create({
   },
   barFill: { height: '100%', borderRadius: 3 },
 
-  lockedText: { fontSize: 13, color: '#6060A0', textAlign: 'center', lineHeight: 20 },
-  lockedSmall: { fontSize: 10, color: '#6060A0' },
-  effValue: { fontSize: 12, fontWeight: '600', color: '#FAFAFA' },
+  lockedText: { fontSize: 13, color: '#6060A0', textAlign: 'center', lineHeight: 22 },
+  lockedSmall: { fontSize: 11, color: '#6060A0' },
+  effValue: { fontSize: 13, fontWeight: '600', color: '#FAFAFA' },
 
   catRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#2A2A4A',
     gap: 8,
+    flexWrap: 'wrap',
   },
-  catName: { fontSize: 14, fontWeight: '700', color: '#FAFAFA', width: 80 },
+  catName: { fontSize: 14, fontWeight: '700', color: '#FAFAFA', minWidth: 90, flexShrink: 0 },
   catCount: { fontSize: 12, color: '#A0A0C8', flex: 1 },
   catPrize: { fontSize: 12, fontWeight: '600', color: '#5B5BD6' },
 
