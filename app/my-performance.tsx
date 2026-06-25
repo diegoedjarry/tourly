@@ -97,10 +97,17 @@ export default function MyPerformanceScreen() {
     })
   , [byCategory]);
 
-  // Season timeline
-  const timeline = useMemo(() =>
-    [...tournaments].sort((a: any, b: any) => (a.startDate ?? '').localeCompare(b.startDate ?? ''))
-  , [tournaments]);
+  // Season timeline — past tournaments only (start date before today)
+  const timeline = useMemo(() => {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    return [...tournaments]
+      .filter((t: any) => {
+        if (!t.startDate) return false;
+        const [y, m, d] = t.startDate.split('-').map(Number);
+        return new Date(y, m - 1, d) < today;
+      })
+      .sort((a: any, b: any) => (a.startDate ?? '').localeCompare(b.startDate ?? ''));
+  }, [tournaments]);
 
   // Optimal suggestion (needs ≥ 3 tournaments with expenses)
   const optimalSuggestion = useMemo(() => {
@@ -233,7 +240,7 @@ export default function MyPerformanceScreen() {
           </View>
         )}
 
-        {/* SEASON TIMELINE */}
+        {/* SEASON TIMELINE — past tournaments only */}
         {timeline.length >= 1 && (
           <View style={s.section}>
             <Text style={s.sectionLabel}>SEASON TIMELINE</Text>

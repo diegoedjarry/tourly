@@ -211,10 +211,10 @@ export default function HomeScreen() {
           ) : tournaments.length === 0 ? (
             <View style={st.emptyState}>
               <Text style={st.emptyStateIcon}>🎾</Text>
-              <Text style={st.emptyStateTitle}>{t('home.emptyTitle') ?? 'No tournaments yet'}</Text>
-              <Text style={st.emptyStateBody}>{t('home.emptyBody') ?? 'Add your first one in the Tournaments tab to start tracking deadlines, expenses, and earnings.'}</Text>
+              <Text style={st.emptyStateTitle}>No tournaments yet</Text>
+              <Text style={st.emptyStateBody}>Add your first tournament in the Tournaments tab to start tracking deadlines, expenses, and earnings.</Text>
               <TouchableOpacity style={st.emptyStateCta} activeOpacity={0.8} onPress={() => router.push('/(tabs)/tournaments' as any)}>
-                <Text style={st.emptyStateCtaText}>{t('home.goToTournaments') ?? 'Go to Tournaments'}</Text>
+                <Text style={st.emptyStateCtaText}>Go to Tournaments</Text>
               </TouchableOpacity>
             </View>
           ) : (

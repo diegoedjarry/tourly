@@ -101,11 +101,11 @@ export default function ComparePlayersScreen() {
 
           {/* Column headers */}
           <View style={[s.statRow, s.statHeader]}>
-            <Text style={[s.statCell, s.statLabel]}>{' '}</Text>
-            <View style={[s.statCell, s.youCol]}>
+            <View style={s.statLabelCell} />
+            <View style={[s.statDataCell, s.youCol]}>
               <Text style={s.colHeaderYou}>You</Text>
             </View>
-            <View style={[s.statCell, s.oppCol]}>
+            <View style={[s.statDataCell, s.oppCol]}>
               <Text style={s.colHeaderOpp}>{DEMO_OPPONENT.name}</Text>
               <View style={s.previewBadge}>
                 <Text style={s.previewBadgeText}>Preview</Text>
@@ -115,14 +115,16 @@ export default function ComparePlayersScreen() {
 
           {STATS.map((row, idx) => (
             <View key={row.label} style={[s.statRow, idx % 2 === 0 ? s.rowEven : s.rowOdd]}>
-              <Text style={[s.statCell, s.statLabel]}>{row.label}</Text>
-              <View style={[s.statCell, s.youCol]}>
+              <View style={s.statLabelCell}>
+                <Text style={s.statLabel}>{row.label}</Text>
+              </View>
+              <View style={[s.statDataCell, s.youCol]}>
                 <Text style={s.statValue}>{row.you}</Text>
                 {row.note && row.you === '—' && (
                   <Text style={s.statNote}>{row.note}</Text>
                 )}
               </View>
-              <View style={[s.statCell, s.oppCol]}>
+              <View style={[s.statDataCell, s.oppCol]}>
                 <Text style={s.statValue}>{row.opp}</Text>
               </View>
             </View>
@@ -209,13 +211,11 @@ const s = StyleSheet.create({
   rowEven: { backgroundColor: '#1A1A2E' },
   rowOdd: { backgroundColor: '#151525' },
 
-  statCell: { flex: 1, paddingVertical: 10, paddingHorizontal: 10 },
-  statLabel: { fontSize: 13, color: '#A0A0C8', fontWeight: '500' },
-  youCol: {
-    backgroundColor: 'rgba(91,91,214,0.10)',
-    borderRadius: 4,
-  },
-  oppCol: { backgroundColor: '#1A1A2E', borderRadius: 4 },
+  statLabelCell: { width: 108, paddingVertical: 11, paddingLeft: 12, paddingRight: 6 },
+  statDataCell: { flex: 1, paddingVertical: 11, paddingHorizontal: 8, alignItems: 'center' },
+  statLabel: { fontSize: 12, color: '#A0A0C8', fontWeight: '500' },
+  youCol: { backgroundColor: 'rgba(91,91,214,0.10)' },
+  oppCol: {},
 
   colHeaderYou: { fontSize: 13, fontWeight: '700', color: '#5B5BD6', textAlign: 'center' },
   colHeaderOpp: { fontSize: 13, fontWeight: '700', color: '#FAFAFA', textAlign: 'center' },
@@ -230,6 +230,6 @@ const s = StyleSheet.create({
   },
   previewBadgeText: { fontSize: 9, fontWeight: '700', color: '#A0A0C8', textTransform: 'uppercase', letterSpacing: 0.5 },
 
-  statValue: { fontSize: 15, fontWeight: '600', color: '#FAFAFA', textAlign: 'center' },
+  statValue: { fontSize: 14, fontWeight: '600', color: '#FAFAFA', textAlign: 'center' },
   statNote: { fontSize: 9, color: '#6060A0', textAlign: 'center', marginTop: 2 },
 });
