@@ -679,6 +679,9 @@ const strings = {
   'tournament.override': { en: 'override', es: 'personalizar' },
   'tournament.onSiteSignIns': { en: 'ON-SITE SIGN-INS', es: 'INSCRIPCIONES EN SITIO' },
   'tournament.egAmount': { en: 'e.g. 450', es: 'ej. 450' },
+  'tournament.ipinLogin':        { en: 'IPIN Login (ITF) →',      es: 'Login IPIN (ITF) →' },
+  'tournament.playerZoneWeb':    { en: 'Player Zone (Web) →',     es: 'Player Zone (Web) →' },
+  'tournament.playerZoneApp':    { en: 'Open Player Zone App →',  es: 'Abrir App Player Zone →' },
 
   // Calendar remove block
   'calendar.removeBlock': { en: 'Remove this {type} block?', es: '¿Eliminar este bloque de {type}?' },

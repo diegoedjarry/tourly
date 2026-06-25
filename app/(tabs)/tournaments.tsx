@@ -848,25 +848,39 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
             /* ── VIEW MODE ── */
             <View style={det.body}>
 
-              {/* Fact Sheet link */}
+              {/* Player portal links */}
               {tournament.category ? (() => {
-                const factUrl = tournament.factSheetUrl
-                  ? tournament.factSheetUrl
-                  : /m15|m25|itf/i.test(tournament.category)
-                    ? `https://www.itftennis.com/en/tournament-calendar/mens-world-tennis-tour-calendar/?tournamentName=${encodeURIComponent(tournament.name)}`
-                    : /challenger|atp/i.test(tournament.category)
-                      ? `https://www.atptour.com/en/tournaments?q=${encodeURIComponent(tournament.name)}`
-                      : `https://www.itftennis.com/en/tournament-calendar/mens-world-tennis-tour-calendar/?tournamentName=${encodeURIComponent(tournament.name)}`;
-                return (
-                  <TouchableOpacity
-                    style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6, marginBottom: 16 }}
-                    onPress={() => Linking.openURL(factUrl)}
-                    activeOpacity={0.7}
-                  >
-                    <IconSymbol name="arrow.up.right.square" size={14} color="#5B5BD6" />
-                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#5B5BD6' }}>Ver Fact Sheet oficial →</Text>
-                  </TouchableOpacity>
-                );
+                const isItf = /m15|m25|itf/i.test(tournament.category);
+                const isChallenger = /challenger|atp/i.test(tournament.category);
+                const itfUrl = tournament.factSheetUrl ?? 'https://ipin.itftennis.com/';
+                const linkStyle = { flexDirection: 'row' as const, alignItems: 'center' as const, justifyContent: 'flex-end' as const, gap: 6, marginBottom: 10 };
+                if (isItf) {
+                  return (
+                    <TouchableOpacity style={linkStyle} onPress={() => Linking.openURL(itfUrl)} activeOpacity={0.7}>
+                      <IconSymbol name="arrow.up.right.square" size={14} color="#5B5BD6" />
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#5B5BD6' }}>{t('tournament.ipinLogin')}</Text>
+                    </TouchableOpacity>
+                  );
+                }
+                if (isChallenger) {
+                  return (
+                    <View style={{ marginBottom: 10, gap: 6 }}>
+                      <TouchableOpacity style={linkStyle} onPress={() => Linking.openURL('https://playerzone.atptour.com/')} activeOpacity={0.7}>
+                        <IconSymbol name="arrow.up.right.square" size={14} color="#5B5BD6" />
+                        <Text style={{ fontSize: 13, fontWeight: '600', color: '#5B5BD6' }}>{t('tournament.playerZoneWeb')}</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={linkStyle}
+                        onPress={() => Linking.canOpenURL('atpplayerzone://').then(can =>
+                          Linking.openURL(can ? 'atpplayerzone://' : 'https://playerzone.atptour.com/')
+                        )}
+                        activeOpacity={0.7}>
+                        <IconSymbol name="arrow.up.right.square" size={14} color="#5B5BD6" />
+                        <Text style={{ fontSize: 13, fontWeight: '600', color: '#5B5BD6' }}>{t('tournament.playerZoneApp')}</Text>
+                      </TouchableOpacity>
+                    </View>
+                  );
+                }
+                return null;
               })() : null}
 
               {/* FUTURE: registered toggle + withdraw toggle + all deadlines */}
