@@ -277,13 +277,13 @@ export default function CalendarScreen() {
               <Text style={ptStyles.ipinIcon}>📡</Text>
               <View style={{ flex: 1 }}>
                 <Text style={ptStyles.ipinText}>
-                  Ingresa tu número IPIN en Ajustes para activar el seguimiento automático de puntos a defender
+                  {t('calendar.ipinPrompt')}
                 </Text>
                 <TouchableOpacity
                   style={ptStyles.ipinBtn}
                   activeOpacity={0.8}
                   onPress={() => router.push('/settings')}>
-                  <Text style={ptStyles.ipinBtnText}>Ir a Ajustes</Text>
+                  <Text style={ptStyles.ipinBtnText}>{t('calendar.goToSettings')}</Text>
                 </TouchableOpacity>
               </View>
             </View>

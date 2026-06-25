@@ -301,17 +301,19 @@ export default function SettingsScreen() {
         </View>
 
         {/* ── IPIN ITF ── */}
-        <Text style={s.sectionLabel}>IPIN ITF</Text>
+        <Text style={s.sectionLabel}>{t('settings.ipinSection')}</Text>
         <View style={s.card}>
           <View style={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 6 }}>
-            <Text style={s.rowLabel}>Número IPIN ITF</Text>
+            <Text style={s.rowLabel}>{t('settings.ipinLabel')}</Text>
             <Text style={{ fontSize: 12, color: T.textSecondary, marginTop: 4, marginBottom: 12, lineHeight: 17 }}>
-              Ingresa tu número IPIN para que Tourly pueda importar tus resultados y puntos del sitio ITF. No se requiere contraseña.
+              {t('settings.ipinSubtitle')}
             </Text>
             <TextInput
               style={[s.modalInput, { marginBottom: 10 }]}
-              keyboardType="numeric"
-              placeholder="ej. 100123456"
+              keyboardType="default"
+              autoCapitalize="none"
+              autoCorrect={false}
+              placeholder={t('settings.ipinPlaceholder')}
               placeholderTextColor={T.textSecondary}
               value={ipinInput}
               onChangeText={setIpinInput}
@@ -320,13 +322,13 @@ export default function SettingsScreen() {
               style={[s.modalSave, { marginBottom: 10 }]}
               activeOpacity={0.8}
               onPress={() => saveField('ipin_number', ipinInput.trim() || null)}>
-              <Text style={s.modalSaveText}>Guardar IPIN</Text>
+              <Text style={s.modalSaveText}>{t('settings.ipinSave')}</Text>
             </TouchableOpacity>
             {!!p?.ipin_number && (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 }}>
                 <Text style={{ fontSize: 16, color: '#2D9E6B' }}>✓</Text>
                 <Text style={{ fontSize: 13, color: '#2D9E6B', fontWeight: '600', flex: 1 }}>
-                  IPIN conectado — los resultados se sincronizarán automáticamente
+                  {t('settings.ipinConnected')}
                 </Text>
               </View>
             )}
@@ -334,7 +336,7 @@ export default function SettingsScreen() {
         </View>
         <View style={{ backgroundColor: '#1A1A2E', borderRadius: 10, padding: 12, marginTop: 8 }}>
           <Text style={{ fontSize: 12, color: '#999', lineHeight: 17 }}>
-            Tu número IPIN es tu identificador público de jugador ITF. Tourly lo usa para encontrar tu historial de partidos y puntos de ranking — sin contraseña. Encuentra tu IPIN en itftennis.com en tu perfil de jugador.
+            {t('settings.ipinInfoCard')}
           </Text>
         </View>
 

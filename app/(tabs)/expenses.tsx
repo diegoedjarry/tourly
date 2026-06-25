@@ -69,6 +69,10 @@ const MONTH_NAMES_ES = [
   'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
   'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
 ];
+const MONTH_NAMES_EN = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
 
 // i18n key maps (index-aligned with the arrays above)
 const PERSONAL_CAT_KEYS = ['cat.flight', 'cat.hotel', 'cat.meals', 'cat.transport', 'cat.stringsGrip', 'cat.stringingFee', 'cat.physio', 'cat.academy', 'cat.trainer', 'cat.other'] as const;
@@ -207,7 +211,8 @@ function matchTournamentByDate(dateStr: string | undefined, tournaments: any[]):
 export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, defaultDate }: {
   tournaments: any[]; onClose: () => void; defaultTournamentId?: string; defaultDate?: string;
 }) {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
+  const monthNames        = lang === 'es' ? MONTH_NAMES_ES : MONTH_NAMES_EN;
   const personalCatLabels = PERSONAL_CAT_KEYS.map(k => t(k));
   const coachCatLabels    = COACH_CAT_KEYS.map(k => t(k));
   const demoCtx = useDemoData();
@@ -340,7 +345,7 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
             {/* ── Monthly fixed banner ── */}
             {isMonthlyFixed && (
               <View style={form.fixedBanner}>
-                <Text style={form.fixedBannerText}>GASTO FIJO MENSUAL</Text>
+                <Text style={form.fixedBannerText}>{t('expense.monthlyFixedBanner')}</Text>
               </View>
             )}
 
@@ -406,14 +411,14 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
             {/* ── Month/Year picker (monthly fixed mode only) ── */}
             {isMonthlyFixed && (
               <View style={form.section}>
-                <Text style={form.sectionLabel}>MES Y AÑO</Text>
+                <Text style={form.sectionLabel}>{t('expense.selectMonthYear')}</Text>
                 <View style={form.monthYearRow}>
                   {/* Month picker */}
                   <ScrollView
                     style={form.monthPicker}
                     showsVerticalScrollIndicator={false}
                     nestedScrollEnabled>
-                    {MONTH_NAMES_ES.map((name, i) => {
+                    {monthNames.map((name, i) => {
                       const m = i + 1;
                       return (
                         <TouchableOpacity
@@ -566,14 +571,14 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
                 style={form.fixedSwitchLink}
                 onPress={() => { setIsMonthlyFixed(true); setCustomMode(false); setCategory('Flight'); }}
                 activeOpacity={0.7}>
-                <Text style={form.fixedSwitchLinkText}>Agregar como gasto fijo mensual</Text>
+                <Text style={form.fixedSwitchLinkText}>{t('expense.switchToMonthlyFixed')}</Text>
               </TouchableOpacity>
             ) : (
               <TouchableOpacity
                 style={form.fixedSwitchLink}
                 onPress={() => { setIsMonthlyFixed(false); setCategory('flight'); }}
                 activeOpacity={0.7}>
-                <Text style={form.fixedSwitchLinkText}>Volver al modo normal</Text>
+                <Text style={form.fixedSwitchLinkText}>{t('expense.switchToNormal')}</Text>
               </TouchableOpacity>
             )}
 
@@ -588,14 +593,28 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
 // ─── Edit Expense Modal ───────────────────────────────────────────────────────
 
 function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => void }) {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
+  const monthNames        = lang === 'es' ? MONTH_NAMES_ES : MONTH_NAMES_EN;
   const personalCatLabels = PERSONAL_CAT_KEYS.map(k => t(k));
   const coachCatLabels    = COACH_CAT_KEYS.map(k => t(k));
   const demoCtx = useDemoData();
   const isCoach = COACH_CATS.includes(expense.category);
-  const knownCat = [...PERSONAL_CATS, ...COACH_CATS].includes(expense.category);
+  const knownCat = [...PERSONAL_CATS, ...COACH_CATS, ...MONTHLY_FIXED_CATS].includes(expense.category);
 
-  const [category,   setCategory]   = useState(expense.category ?? 'flight');
+  const expIsFixed = !!(expense.is_monthly_fixed || expense.isMonthlyFixed);
+  const expFixedMonth = expense.fixed_month ?? expense.fixedMonth ?? null;
+  const nowEdit = new Date();
+  const initMonth = expIsFixed && expFixedMonth
+    ? parseInt(expFixedMonth.split('-')[1], 10)
+    : nowEdit.getMonth() + 1;
+  const initYear = expIsFixed && expFixedMonth
+    ? parseInt(expFixedMonth.split('-')[0], 10)
+    : nowEdit.getFullYear();
+
+  const [isMonthlyFixed, setIsMonthlyFixed] = useState(expIsFixed);
+  const [fixedMonth,     setFixedMonth]     = useState(initMonth);
+  const [fixedYear,      setFixedYear]      = useState(initYear);
+  const [category,   setCategory]   = useState(expense.category ?? 'Flight');
   const [customMode, setCustomMode] = useState(!knownCat);
   const [customText, setCustomText] = useState(knownCat ? '' : expense.category ?? '');
   const [amount,     setAmount]     = useState(String(expense.amount ?? ''));
@@ -618,16 +637,20 @@ function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => v
   async function handleSave() {
     const amt = parseFloat(amount);
     if (isNaN(amt) || amt <= 0) { setError(t('expense.validAmount')); return; }
-    if (!date) { setError(t('expense.selectDate')); return; }
+    if (!isMonthlyFixed && !date) { setError(t('expense.selectDate')); return; }
     const finalCategory = customMode ? customText.trim() : category;
     if (!finalCategory) { setError(t('expense.selectCategory')); return; }
     setSaving(true); setError('');
-    const updates = {
+    const fixedMonthStr = `${fixedYear}-${String(fixedMonth).padStart(2, '0')}`;
+    const updates: Record<string, any> = {
       category: finalCategory,
       amount: amt,
       note: note.trim(),
-      date,
-      isCoachExpense: COACH_CATS.includes(finalCategory),
+      date: isMonthlyFixed ? `${fixedMonthStr}-01` : date,
+      isCoachExpense: isMonthlyFixed ? false : COACH_CATS.includes(finalCategory),
+      isMonthlyFixed,
+      fixedMonth: isMonthlyFixed ? fixedMonthStr : null,
+      tournamentId: isMonthlyFixed ? null : (expense.tournament_id ?? expense.tournamentId ?? null),
     };
     try {
       if (DEMO_MODE) {
@@ -658,20 +681,29 @@ function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => v
           <ScrollView style={form.scroll} contentContainerStyle={form.scrollContent}
             keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
 
+            {/* ── Monthly fixed banner ── */}
+            {isMonthlyFixed && (
+              <View style={form.fixedBanner}>
+                <Text style={form.fixedBannerText}>{t('expense.monthlyFixedBanner')}</Text>
+              </View>
+            )}
+
             {/* ── Category ── */}
             <View style={form.section}>
               <Text style={form.sectionLabel}>{t('expense.category')}</Text>
-              {isCoach && <Text style={form.subLabel}>{t('expense.personal')}</Text>}
+              {isCoach && !isMonthlyFixed && <Text style={form.subLabel}>{t('expense.personal')}</Text>}
               <View style={form.chipRow}>
-                {PERSONAL_CATS.map((c, i) => (
+                {(isMonthlyFixed ? MONTHLY_FIXED_CATS : PERSONAL_CATS).map((c, i) => (
                   <TouchableOpacity key={c}
                     style={[form.chip, category === c && !customMode && form.chipActive]}
                     onPress={() => selectCategory(c)} activeOpacity={0.7}>
-                    <Text style={[form.chipText, category === c && !customMode && form.chipTextActive]}>{personalCatLabels[i]}</Text>
+                    <Text style={[form.chipText, category === c && !customMode && form.chipTextActive]}>
+                      {isMonthlyFixed ? c : personalCatLabels[i]}
+                    </Text>
                   </TouchableOpacity>
                 ))}
               </View>
-              {isCoach && (
+              {isCoach && !isMonthlyFixed && (
                 <>
                   <Text style={[form.subLabel, { marginTop: 12 }]}>{t('expense.coach')}</Text>
                   <View style={form.chipRow}>
@@ -702,6 +734,36 @@ function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => v
               )}
             </View>
 
+            {/* ── Month & Year picker (monthly fixed mode only) ── */}
+            {isMonthlyFixed && (
+              <View style={form.section}>
+                <Text style={form.sectionLabel}>{t('expense.selectMonthYear')}</Text>
+                <View style={form.monthYearRow}>
+                  <ScrollView style={form.monthPicker} showsVerticalScrollIndicator={false} nestedScrollEnabled>
+                    {monthNames.map((name, i) => {
+                      const m = i + 1;
+                      return (
+                        <TouchableOpacity key={m}
+                          style={[form.monthPickerRow, fixedMonth === m && form.monthPickerRowActive]}
+                          onPress={() => setFixedMonth(m)} activeOpacity={0.7}>
+                          <Text style={[form.monthPickerText, fixedMonth === m && form.monthPickerTextActive]}>{name}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                  <View style={form.yearPicker}>
+                    {[fixedYear - 1, fixedYear, fixedYear + 1].map((y) => (
+                      <TouchableOpacity key={y}
+                        style={[form.monthPickerRow, fixedYear === y && form.monthPickerRowActive]}
+                        onPress={() => setFixedYear(y)} activeOpacity={0.7}>
+                        <Text style={[form.monthPickerText, fixedYear === y && form.monthPickerTextActive]}>{y}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              </View>
+            )}
+
             {/* ── Amount ── */}
             <View style={form.section}>
               <Text style={form.sectionLabel}>{t('expense.amountUsd')}</Text>
@@ -712,10 +774,12 @@ function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => v
               </View>
             </View>
 
-            {/* ── Date ── */}
-            <View style={form.section}>
-              <DatePickerField label="date" value={date} onChange={setDate} />
-            </View>
+            {/* ── Date (regular mode only) ── */}
+            {!isMonthlyFixed && (
+              <View style={form.section}>
+                <DatePickerField label="date" value={date} onChange={setDate} />
+              </View>
+            )}
 
             {/* ── Note ── */}
             <View style={form.section}>
@@ -730,6 +794,21 @@ function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => v
               onPress={handleSave} activeOpacity={0.85} disabled={saving}>
               {saving ? <ActivityIndicator color={T.textPrimary} /> : <Text style={form.saveBtnText}>{t('expense.saveChanges')}</Text>}
             </TouchableOpacity>
+
+            {/* ── Mode switch link ── */}
+            {!isMonthlyFixed ? (
+              <TouchableOpacity style={form.fixedSwitchLink}
+                onPress={() => { setIsMonthlyFixed(true); setCustomMode(false); setCategory('Flight'); }}
+                activeOpacity={0.7}>
+                <Text style={form.fixedSwitchLinkText}>{t('expense.switchToMonthlyFixed')}</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity style={form.fixedSwitchLink}
+                onPress={() => { setIsMonthlyFixed(false); setCategory('Flight'); }}
+                activeOpacity={0.7}>
+                <Text style={form.fixedSwitchLinkText}>{t('expense.switchToNormal')}</Text>
+              </TouchableOpacity>
+            )}
 
             <View style={{ height: 20 }} />
           </ScrollView>
@@ -2202,6 +2281,8 @@ function PrizeMoneyModal({ tournaments, onClose }: { tournaments: any[]; onClose
 // ─── Monthly Fixed Section ────────────────────────────────────────────────────
 
 function MonthlyFixedSection({ expenses }: { expenses: any[] }) {
+  const { t, lang } = useLanguage();
+  const monthNames = lang === 'es' ? MONTH_NAMES_ES : MONTH_NAMES_EN;
   // Filter only monthly fixed expenses
   const fixedExpenses = expenses.filter((e: any) => e.isMonthlyFixed || e.is_monthly_fixed);
   if (fixedExpenses.length === 0) return null;
@@ -2222,10 +2303,10 @@ function MonthlyFixedSection({ expenses }: { expenses: any[] }) {
 
   return (
     <View style={{ marginBottom: 24 }}>
-      <Text style={mf.sectionHeader}>GASTOS FIJOS MENSUALES</Text>
+      <Text style={mf.sectionHeader}>{t('expense.monthlyFixedSection')}</Text>
       {sortedKeys.map((key) => {
         const { month, year, items, total } = grouped[key];
-        const monthName = MONTH_NAMES_ES[(month ?? 1) - 1] ?? key;
+        const monthName = monthNames[(month ?? 1) - 1] ?? key;
         return (
           <View key={key} style={mf.monthCard}>
             <View style={mf.monthHeaderRow}>

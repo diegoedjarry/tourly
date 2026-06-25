@@ -251,6 +251,11 @@ const strings = {
   'expense.deleteConfirm': { en: 'Delete this expense?', es: '¿Eliminar este gasto?' },
   'expense.cannotUndo': { en: 'This cannot be undone.', es: 'Esto no se puede deshacer.' },
   'expense.autoMatchDate': { en: '🔄 Auto-match by date', es: '🔄 Auto-asignar por fecha' },
+  'expense.monthlyFixedBanner':    { en: 'MONTHLY FIXED EXPENSE',                    es: 'GASTO FIJO MENSUAL' },
+  'expense.switchToMonthlyFixed':  { en: 'Add as monthly fixed expense instead',     es: 'Agregar como gasto fijo mensual' },
+  'expense.switchToNormal':        { en: 'Switch back to regular expense',            es: 'Volver al modo normal' },
+  'expense.monthlyFixedSection':   { en: 'MONTHLY FIXED EXPENSES',                   es: 'GASTOS FIJOS MENSUALES' },
+  'expense.selectMonthYear':       { en: 'SELECT MONTH & YEAR',                      es: 'SELECCIONAR MES Y AÑO' },
 
   // Expense screen sections
   'expenses.monthly': { en: 'Monthly', es: 'Mensual' },
@@ -372,6 +377,8 @@ const strings = {
   'calendar.deleteBlock': { en: 'Delete Block', es: 'Eliminar Bloque' },
   'calendar.demoMode': { en: 'Demo Mode', es: 'Modo Demo' },
   'calendar.demoTrainingMsg': { en: 'Training blocks are saved in demo mode as temporary data.', es: 'Los bloques de entrenamiento se guardan en modo demo como datos temporales.' },
+  'calendar.ipinPrompt':      { en: 'Enter your IPIN number in Settings to enable automatic points defense tracking', es: 'Ingresa tu número IPIN en Ajustes para activar el seguimiento automático de puntos a defender' },
+  'calendar.goToSettings':    { en: 'Go to Settings', es: 'Ir a Ajustes' },
 
   // Profile screen
   'profile.title': { en: 'Profile', es: 'Perfil' },
@@ -638,6 +645,13 @@ const strings = {
   'settings.mismatch': { en: 'Mismatch', es: 'No coinciden' },
   'settings.passwordsNoMatch': { en: 'Passwords do not match.', es: 'Las contraseñas no coinciden.' },
   'settings.passwordChanged': { en: 'Password updated successfully.', es: 'Contraseña actualizada exitosamente.' },
+  'settings.ipinSection':    { en: 'IPIN ITF',                                                                         es: 'IPIN ITF' },
+  'settings.ipinLabel':      { en: 'ITF IPIN Number',                                                                   es: 'Número IPIN ITF' },
+  'settings.ipinSubtitle':   { en: 'Enter your IPIN so Tourly can import your results and points from the ITF website. No password required.', es: 'Ingresa tu IPIN para que Tourly pueda importar tus resultados y puntos del sitio ITF. No se requiere contraseña.' },
+  'settings.ipinPlaceholder':{ en: 'e.g. 100123456',                                                                    es: 'ej. 100123456' },
+  'settings.ipinSave':       { en: 'Save IPIN',                                                                         es: 'Guardar IPIN' },
+  'settings.ipinConnected':  { en: 'IPIN connected — match history will sync automatically',                             es: 'IPIN conectado — los resultados se sincronizarán automáticamente' },
+  'settings.ipinInfoCard':   { en: 'Your IPIN is your public ITF player identifier. Tourly uses it to find your public match history and ranking points — no login or password needed. Find your IPIN at itftennis.com under your player profile.', es: 'Tu número IPIN es tu identificador público de jugador ITF. Tourly lo usa para encontrar tu historial de partidos y puntos de ranking — sin contraseña. Encuentra tu IPIN en itftennis.com en tu perfil de jugador.' },
 
   // Auth extra
   'auth.missingFields': { en: 'Missing fields', es: 'Campos faltantes' },
