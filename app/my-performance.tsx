@@ -30,28 +30,31 @@ export default function MyPerformanceScreen() {
   const expenses    = data?.expenses ?? [];
 
   const [expandedSurface, setExpandedSurface] = useState<'clay' | 'hard' | null>(null);
+  const [expandedCondition, setExpandedCondition] = useState<'surface' | 'category' | null>(null);
+  const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
 
   const today = useMemo(() => { const d = new Date(); d.setHours(0,0,0,0); return d; }, []);
 
+  // Only tournaments already played (start date in the past)
+  const pastTournaments = useMemo(() => {
+    return tournaments.filter((t: any) => {
+      if (!t.startDate) return false;
+      const [y, m, d] = t.startDate.split('-').map(Number);
+      return new Date(y, m - 1, d) < today;
+    });
+  }, [tournaments, today]);
+
+  // Past tournaments grouped by surface
   const bySurface = useMemo(() => {
     const map: Record<string, any[]> = { clay: [], hard: [] };
-    tournaments.forEach((t: any) => {
+    pastTournaments.forEach((t: any) => {
       if (t.surface && map[t.surface]) map[t.surface].push(t);
     });
     return map;
-  }, [tournaments]);
+  }, [pastTournaments]);
 
-  // Past tournaments per surface (for expandable results)
-  const pastBySurface = useMemo(() => {
-    const map: Record<string, any[]> = { clay: [], hard: [] };
-    tournaments.forEach((t: any) => {
-      if (!t.surface || !map[t.surface]) return;
-      if (!t.startDate) return;
-      const [y, m, d] = t.startDate.split('-').map(Number);
-      if (new Date(y, m - 1, d) < today) map[t.surface].push(t);
-    });
-    return map;
-  }, [tournaments, today]);
+  // Alias kept for win-rate expandable rows
+  const pastBySurface = bySurface;
 
   function expensesForTournament(tId: string): number {
     return expenses
@@ -67,11 +70,11 @@ export default function MyPerformanceScreen() {
   }, [bySurface]);
 
   const bestCategory = useMemo(() => {
-    if (!tournaments.length) return null;
+    if (!pastTournaments.length) return null;
     const counts: Record<string, number> = {};
-    tournaments.forEach((t: any) => { const c = t.category ?? 'Unknown'; counts[c] = (counts[c] ?? 0) + 1; });
+    pastTournaments.forEach((t: any) => { const c = t.category ?? 'Unknown'; counts[c] = (counts[c] ?? 0) + 1; });
     return Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
-  }, [tournaments]);
+  }, [pastTournaments]);
 
   // Expense efficiency by surface
   const surfaceExpenses = useMemo(() => {
@@ -86,22 +89,23 @@ export default function MyPerformanceScreen() {
   }, [bySurface, expenses]);
 
   const tournamentsWithExpenses = useMemo(() =>
-    tournaments.filter((t: any) => expensesForTournament(t.id) > 0).length
-  , [tournaments, expenses]);
+    pastTournaments.filter((t: any) => expensesForTournament(t.id) > 0).length
+  , [pastTournaments, expenses]);
 
-  // By category
+  // By category — past tournaments only
   const byCategory = useMemo(() => {
-    const map: Record<string, { count: number; totalPrize: number }> = {};
-    tournaments.forEach((t: any) => {
+    const map: Record<string, { count: number; totalPrize: number; tournaments: any[] }> = {};
+    pastTournaments.forEach((t: any) => {
       const cat = t.category ?? 'Other';
-      if (!map[cat]) map[cat] = { count: 0, totalPrize: 0 };
+      if (!map[cat]) map[cat] = { count: 0, totalPrize: 0, tournaments: [] };
       map[cat].count += 1;
+      map[cat].tournaments.push(t);
       const singles = t.singlesPrizeMoney ?? 0;
       const doubles = t.doublesPrizeMoney ?? 0;
       map[cat].totalPrize += singles + doubles > 0 ? singles + doubles : (t.prizeMoney ?? 0);
     });
     return map;
-  }, [tournaments]);
+  }, [pastTournaments]);
 
   const sortedCategories = useMemo(() =>
     Object.entries(byCategory).sort((a, b) => {
@@ -169,25 +173,91 @@ export default function MyPerformanceScreen() {
         {/* BEST CONDITIONS */}
         <View style={s.section}>
           <Text style={s.sectionLabel}>BEST CONDITIONS</Text>
-          {tournaments.length < 2 ? (
+          {pastTournaments.length < 2 ? (
             <View style={s.card}>
-              <Text style={s.lockedText}>Add more tournaments to unlock</Text>
+              <Text style={s.lockedText}>Play more tournaments to unlock</Text>
             </View>
           ) : (
-            <View style={s.rowCards}>
-              {/* Surface */}
-              <View style={[s.condCard, { flex: 1 }]}>
-                <Text style={s.condCardLabel}>Surface</Text>
-                <Text style={s.condCardValue}>{bestSurface ? (surfaceLabel[bestSurface] ?? bestSurface) : '—'}</Text>
-                <Text style={s.condCardCount}>{bestSurface ? bySurface[bestSurface].length : 0} tourns</Text>
+            <>
+              <View style={s.rowCards}>
+                {/* Surface */}
+                <TouchableOpacity
+                  style={[s.condCard, { flex: 1 }]}
+                  onPress={() => setExpandedCondition(v => v === 'surface' ? null : 'surface')}
+                  activeOpacity={0.75}
+                >
+                  <Text style={s.condCardLabel}>Surface</Text>
+                  <Text style={s.condCardValue}>{bestSurface ? (surfaceLabel[bestSurface] ?? bestSurface) : '—'}</Text>
+                  <Text style={s.condCardCount}>{bestSurface ? bySurface[bestSurface].length : 0} played</Text>
+                  <Ionicons
+                    name={expandedCondition === 'surface' ? 'chevron-up' : 'chevron-down'}
+                    size={12} color="#A0A0C8" style={{ marginTop: 4 }}
+                  />
+                </TouchableOpacity>
+                {/* Category */}
+                <TouchableOpacity
+                  style={[s.condCard, { flex: 1 }]}
+                  onPress={() => setExpandedCondition(v => v === 'category' ? null : 'category')}
+                  activeOpacity={0.75}
+                >
+                  <Text style={s.condCardLabel}>Category</Text>
+                  <Text style={s.condCardValue}>{bestCategory ?? '—'}</Text>
+                  <Text style={s.condCardCount}>{bestCategory ? (byCategory[bestCategory]?.count ?? 0) : 0} played</Text>
+                  <Ionicons
+                    name={expandedCondition === 'category' ? 'chevron-up' : 'chevron-down'}
+                    size={12} color="#A0A0C8" style={{ marginTop: 4 }}
+                  />
+                </TouchableOpacity>
               </View>
-              {/* Category */}
-              <View style={[s.condCard, { flex: 1 }]}>
-                <Text style={s.condCardLabel}>Category</Text>
-                <Text style={s.condCardValue}>{bestCategory ?? '—'}</Text>
-                <Text style={s.condCardCount}>{bestCategory ? (byCategory[bestCategory]?.count ?? 0) : 0} tourns</Text>
-              </View>
-            </View>
+              {/* Surface expansion panel */}
+              {expandedCondition === 'surface' && bestSurface && (
+                <View style={s.condExpand}>
+                  <Text style={s.condExpandTitle}>Best results on {surfaceLabel[bestSurface] ?? bestSurface}</Text>
+                  {[...bySurface[bestSurface]]
+                    .sort((a: any, b: any) => {
+                      const pa = (a.singlesPrizeMoney ?? 0) + (a.doublesPrizeMoney ?? 0) || (a.prizeMoney ?? 0);
+                      const pb = (b.singlesPrizeMoney ?? 0) + (b.doublesPrizeMoney ?? 0) || (b.prizeMoney ?? 0);
+                      return pb - pa;
+                    })
+                    .map((t: any) => {
+                      const prize = (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0) || (t.prizeMoney ?? 0);
+                      return (
+                        <View key={t.id} style={s.resultRow}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={s.resultCity}>{t.city ?? t.name}</Text>
+                            <Text style={s.resultDate}>{abbrevDate(t.startDate)} · {t.category}</Text>
+                          </View>
+                          {prize > 0 && <Text style={s.resultPrize}>{fmtUSD(prize)}</Text>}
+                        </View>
+                      );
+                    })}
+                </View>
+              )}
+              {/* Category expansion panel */}
+              {expandedCondition === 'category' && bestCategory && (
+                <View style={s.condExpand}>
+                  <Text style={s.condExpandTitle}>Best results in {bestCategory}</Text>
+                  {[...(byCategory[bestCategory]?.tournaments ?? [])]
+                    .sort((a: any, b: any) => {
+                      const pa = (a.singlesPrizeMoney ?? 0) + (a.doublesPrizeMoney ?? 0) || (a.prizeMoney ?? 0);
+                      const pb = (b.singlesPrizeMoney ?? 0) + (b.doublesPrizeMoney ?? 0) || (b.prizeMoney ?? 0);
+                      return pb - pa;
+                    })
+                    .map((t: any) => {
+                      const prize = (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0) || (t.prizeMoney ?? 0);
+                      return (
+                        <View key={t.id} style={s.resultRow}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={s.resultCity}>{t.city ?? t.name}</Text>
+                            <Text style={s.resultDate}>{abbrevDate(t.startDate)} · {t.surface}</Text>
+                          </View>
+                          {prize > 0 && <Text style={s.resultPrize}>{fmtUSD(prize)}</Text>}
+                        </View>
+                      );
+                    })}
+                </View>
+              )}
+            </>
           )}
         </View>
 
@@ -267,18 +337,48 @@ export default function MyPerformanceScreen() {
         )}
 
         {/* TOURNAMENTS BY CATEGORY */}
-        {tournaments.length >= 1 && (
+        {pastTournaments.length >= 1 && (
           <View style={s.section}>
             <Text style={s.sectionLabel}>TOURNAMENTS BY CATEGORY</Text>
             <View style={s.card}>
               {sortedCategories.map(([cat, stats]) => {
                 const avgPrize = stats.count > 0 ? Math.round(stats.totalPrize / stats.count) : 0;
+                const isOpen = expandedCategory === cat;
                 return (
-                  <View key={cat} style={s.catRow}>
-                    <Text style={s.catName}>{cat}</Text>
-                    <Text style={s.catCount}>{stats.count} {stats.count === 1 ? 'tournament' : 'tournaments'}</Text>
-                    {avgPrize > 0 && (
-                      <Text style={s.catPrize}>{fmtUSD(avgPrize)} avg prize</Text>
+                  <View key={cat}>
+                    <TouchableOpacity
+                      style={s.catRow}
+                      onPress={() => setExpandedCategory(v => v === cat ? null : cat)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={s.catName}>{cat}</Text>
+                      <Text style={s.catCount}>{stats.count} {stats.count === 1 ? 'tournament' : 'tournaments'}</Text>
+                      {avgPrize > 0 && (
+                        <Text style={s.catPrize}>{fmtUSD(avgPrize)} avg prize</Text>
+                      )}
+                      <Ionicons name={isOpen ? 'chevron-up' : 'chevron-down'} size={13} color="#6060A0" style={{ marginLeft: 4 }} />
+                    </TouchableOpacity>
+                    {isOpen && (
+                      <View style={s.resultsPanel}>
+                        {[...(stats.tournaments ?? [])]
+                          .sort((a: any, b: any) => {
+                            const pa = (a.singlesPrizeMoney ?? 0) + (a.doublesPrizeMoney ?? 0) || (a.prizeMoney ?? 0);
+                            const pb = (b.singlesPrizeMoney ?? 0) + (b.doublesPrizeMoney ?? 0) || (b.prizeMoney ?? 0);
+                            return pb - pa;
+                          })
+                          .map((t: any) => {
+                            const prize = (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0) || (t.prizeMoney ?? 0);
+                            return (
+                              <View key={t.id} style={s.resultRow}>
+                                <View style={{ flex: 1 }}>
+                                  <Text style={s.resultCity}>{t.city ?? t.name}</Text>
+                                  <Text style={s.resultDate}>{abbrevDate(t.startDate)} · {t.surface}</Text>
+                                </View>
+                                {prize > 0 && <Text style={s.resultPrize}>{fmtUSD(prize)}</Text>}
+                              </View>
+                            );
+                          })}
+                      </View>
                     )}
                   </View>
                 );
@@ -401,6 +501,24 @@ const s = StyleSheet.create({
   condCardLabel: { fontSize: 10, fontWeight: '600', color: '#A0A0C8', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 6 },
   condCardValue: { fontSize: 16, fontWeight: '700', color: '#FAFAFA', marginBottom: 2 },
   condCardCount: { fontSize: 11, color: '#6060A0' },
+
+  condExpand: {
+    backgroundColor: '#0F0F1A',
+    borderRadius: 10,
+    marginTop: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#2A2A4A',
+    gap: 6,
+  },
+  condExpandTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#A0A0C8',
+    marginBottom: 6,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
 
   surfaceRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
   surfaceDot: { width: 8, height: 8, borderRadius: 4, marginRight: 8 },
