@@ -136,7 +136,7 @@ export function TournamentMap({
       .map((t) => {
         const coords = lookupCoords(t.city, t.country);
         if (!coords) return null;
-        const [lat, lon] = coords;
+        const [lon, lat] = coords;
         return { t, lat, lon };
       })
       .filter(Boolean) as { t: any; lat: number; lon: number }[];

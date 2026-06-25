@@ -160,7 +160,7 @@ export default function ComparePlayersScreen() {
             activeOpacity={0.8}
           >
             <View style={s.statLabelCell}>
-              <Text style={s.statLabel}>Surface W/R</Text>
+              <Text style={s.statLabel} numberOfLines={2}>Surface W/R</Text>
             </View>
             {showCompare && (
               <View style={[s.statDataCell, s.youCol]}>
@@ -226,7 +226,7 @@ function StatRow({
   return (
     <View style={[s.statRow, even ? s.rowEven : s.rowOdd]}>
       <View style={s.statLabelCell}>
-        <Text style={s.statLabel}>{label}</Text>
+        <Text style={s.statLabel} numberOfLines={2}>{label}</Text>
       </View>
       {showYou && (
         <View style={[s.statDataCell, s.youCol]}>
@@ -320,7 +320,7 @@ const s = StyleSheet.create({
   rowEven: { backgroundColor: '#1A1A2E' },
   rowOdd: { backgroundColor: '#151525' },
 
-  statLabelCell: { width: 108, paddingVertical: 11, paddingLeft: 12, paddingRight: 6 },
+  statLabelCell: { width: 116, paddingVertical: 11, paddingLeft: 12, paddingRight: 6 },
   statDataCell: { flex: 1, paddingVertical: 11, paddingHorizontal: 8, alignItems: 'center' },
   statLabel: { fontSize: 12, color: '#A0A0C8', fontWeight: '500' },
   youCol: { backgroundColor: 'rgba(91,91,214,0.10)' },
