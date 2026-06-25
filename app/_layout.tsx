@@ -109,8 +109,10 @@ function AppLayout() {
         <Stack.Screen name="onboarding"  options={{ headerShown: false }} />
         <Stack.Screen name="settings"    options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="profile"     options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="insights"    options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="modal"       options={{ presentation: 'modal', title: 'Modal' }} />
+        <Stack.Screen name="insights"         options={{ headerShown: false, animation: 'slide_from_right' }} />
+        <Stack.Screen name="compare-players" options={{ headerShown: false, presentation: 'modal', animation: 'slide_from_bottom' }} />
+        <Stack.Screen name="my-performance"  options={{ headerShown: false, presentation: 'modal', animation: 'slide_from_bottom' }} />
+        <Stack.Screen name="modal"           options={{ presentation: 'modal', title: 'Modal' }} />
       </Stack>
       <StatusBar style="auto" />
     </AuthGate>

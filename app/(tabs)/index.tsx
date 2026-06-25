@@ -333,6 +333,27 @@ export default function HomeScreen() {
                 </View>
               )}
 
+              {/* Compare Players & My Performance */}
+              <View style={st.featureCard}>
+                <TouchableOpacity style={st.featureRow} onPress={() => router.push('/compare-players' as any)} activeOpacity={0.7}>
+                  <View style={st.featureIcon}><Text style={st.featureIconText}>🔍</Text></View>
+                  <View style={st.featureText}>
+                    <Text style={st.featureTitle}>Compare Players</Text>
+                    <Text style={st.featureSub}>Search any player and compare stats</Text>
+                  </View>
+                  <Text style={st.featureChevron}>›</Text>
+                </TouchableOpacity>
+                <View style={st.featureDivider} />
+                <TouchableOpacity style={st.featureRow} onPress={() => router.push('/my-performance' as any)} activeOpacity={0.7}>
+                  <View style={st.featureIcon}><Text style={st.featureIconText}>📊</Text></View>
+                  <View style={st.featureText}>
+                    <Text style={st.featureTitle}>My Performance</Text>
+                    <Text style={st.featureSub}>Surface efficiency, optimal conditions, season stats</Text>
+                  </View>
+                  <Text style={st.featureChevron}>›</Text>
+                </TouchableOpacity>
+              </View>
+
               {/* Season Snapshot */}
               <View style={st.section}>
                 <Text style={st.sectionLabel}>{t('home.seasonSnapshot')}</Text>
