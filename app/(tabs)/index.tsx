@@ -178,9 +178,12 @@ export default function HomeScreen() {
       ? (now.getTime() - new Date(latest.generated_at).getTime()) / 3600000
       : Infinity;
     if (hoursSince < 20) return;
-    hasGeneratedRef.current = true;
     const trigger = isMonday ? 'monday' : 'daily';
-    generateInsight.mutate({ tournaments, expenses, trigger }, { onError: () => {} });
+    hasGeneratedRef.current = true;
+    generateInsight.mutate(
+      { tournaments, expenses, trigger },
+      { onError: () => { hasGeneratedRef.current = false; } },
+    );
   }, [insights, insightsLoading, tournaments, expenses]);
 
   const latestInsight = insights?.[0];

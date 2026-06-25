@@ -583,10 +583,7 @@ export function selectInsight(
 }
 
 export function hasEnoughData(tournaments: any[], expenses: any[]): boolean {
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const playedCount = tournaments.filter((t: any) => {
-    const d = parseLocal(t.startDate ?? '');
-    return d && d <= today && !t.isWithdrawn;
-  }).length;
-  return playedCount >= 2 && expenses.length >= 5;
+  // Each generator guards its own data requirements and returns null when unmet.
+  // This gate only blocks the API call when the user has entered nothing at all.
+  return tournaments.length >= 1 || expenses.length >= 1;
 }
