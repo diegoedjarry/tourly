@@ -1435,14 +1435,7 @@ export function AddTournamentModal({ onClose, defaultStartDate }: { onClose: () 
 
 // ─── Tournament Discovery Modal ───────────────────────────────────────────────
 
-const DISCOVERY_PILLS = ['Todos', 'Clay', 'Hard', 'Grass', 'M15', 'M25', 'Challenger', 'Suramérica', 'Europa', 'Norteamérica', 'Asia'];
-
-const REGION_COUNTRIES: Record<string, string[]> = {
-  'Suramérica': ['AR','BR','CO','CL','PE','BO','EC','UY','VE','PY'],
-  'Europa':     ['ES','FR','IT','GB','DE','AT','BE','NL','CH','SE','NO','DK','PT','CZ','SK','HU','PL','RO','BG','GR','TR','RS','HR','SI'],
-  'Norteamérica': ['US','CA','MX'],
-  'Asia':       ['JP','CN','IN','KR','TH','ID','MY','TW','PK','UZ','KZ'],
-};
+// No DISCOVERY_PILLS — replaced by structured filter panel
 
 function TournamentDiscoveryModal({
   visible, onClose, allTournaments, onOpenAddManual,
@@ -1452,10 +1445,50 @@ function TournamentDiscoveryModal({
   allTournaments: any[];
   onOpenAddManual: () => void;
 }) {
-  const [discoverySearch, setDiscoverySearch] = useState('');
-  const [discoveryFilters, setDiscoveryFilters] = useState<string[]>([]);
+  const { t } = useLanguage();
+  const [discoverySearch, setDiscoverySearch]     = useState('');
+  const [showFilterPanel, setShowFilterPanel]     = useState(false);
+  const [showDatePanel, setShowDatePanel]         = useState(false);
   const [showRestModal, setShowRestModal]         = useState(false);
   const [showTrainingModal, setShowTrainingModal] = useState(false);
+
+  // Structured filter state
+  const [filterCountry,    setFilterCountry]    = useState('');
+  const [filterCategories, setFilterCategories] = useState<string[]>([]);
+  const [filterSurfaces,   setFilterSurfaces]   = useState<string[]>([]);
+  const [filterVenueTypes, setFilterVenueTypes] = useState<string[]>([]);
+  const [filterDateStart,  setFilterDateStart]  = useState('');
+  const [filterDateEnd,    setFilterDateEnd]    = useState('');
+
+  // Pending filter state (applied on APPLY)
+  const [pendingCountry,    setPendingCountry]    = useState('');
+  const [pendingCategories, setPendingCategories] = useState<string[]>([]);
+  const [pendingSurfaces,   setPendingSurfaces]   = useState<string[]>([]);
+  const [pendingVenueTypes, setPendingVenueTypes] = useState<string[]>([]);
+
+  function openFilters() {
+    setPendingCountry(filterCountry);
+    setPendingCategories([...filterCategories]);
+    setPendingSurfaces([...filterSurfaces]);
+    setPendingVenueTypes([...filterVenueTypes]);
+    setShowFilterPanel(true);
+  }
+  function applyFilters() {
+    setFilterCountry(pendingCountry);
+    setFilterCategories(pendingCategories);
+    setFilterSurfaces(pendingSurfaces);
+    setFilterVenueTypes(pendingVenueTypes);
+    setShowFilterPanel(false);
+  }
+  function clearFilters() {
+    setPendingCountry(''); setPendingCategories([]); setPendingSurfaces([]); setPendingVenueTypes([]);
+  }
+
+  function toggleArr(arr: string[], set: (v: string[]) => void, val: string) {
+    set(arr.includes(val) ? arr.filter(x => x !== val) : [...arr, val]);
+  }
+
+  const activeFilterCount = (filterCountry ? 1 : 0) + filterCategories.length + filterSurfaces.length + filterVenueTypes.length + (filterDateStart || filterDateEnd ? 1 : 0);
 
   // Rest week state
   const [restMonday, setRestMonday]   = useState('');
@@ -1469,31 +1502,23 @@ function TournamentDiscoveryModal({
   const [trainNote, setTrainNote]     = useState('');
   const [savingTrain, setSavingTrain] = useState(false);
 
-  function toggleFilter(pill: string) {
-    if (pill === 'Todos') { setDiscoveryFilters([]); return; }
-    setDiscoveryFilters(prev =>
-      prev.includes(pill) ? prev.filter(p => p !== pill) : [...prev, pill]
-    );
-  }
+  const discoverable = allTournaments.filter((trn: any) => trn.isInMyList === false);
 
-  const discoverable = allTournaments.filter((t: any) => t.isInMyList === false);
-
-  const filtered = discoverable.filter((t: any) => {
+  const filtered = discoverable.filter((trn: any) => {
     if (discoverySearch.trim()) {
       const q = discoverySearch.toLowerCase();
       const match =
-        (t.name ?? '').toLowerCase().includes(q) ||
-        (t.city ?? '').toLowerCase().includes(q) ||
-        (t.country ?? '').toLowerCase().includes(q);
+        (trn.name ?? '').toLowerCase().includes(q) ||
+        (trn.city ?? '').toLowerCase().includes(q) ||
+        (trn.country ?? '').toLowerCase().includes(q);
       if (!match) return false;
     }
-    if (discoveryFilters.length === 0) return true;
-    return discoveryFilters.every(pill => {
-      if (['Clay', 'Hard', 'Grass'].includes(pill)) return (t.surface ?? '').toLowerCase() === pill.toLowerCase();
-      if (['M15', 'M25', 'Challenger'].includes(pill)) return (t.category ?? '').includes(pill);
-      if (REGION_COUNTRIES[pill]) return REGION_COUNTRIES[pill].includes((t.country ?? '').toUpperCase());
-      return true;
-    });
+    if (filterCountry && (trn.country ?? '').toUpperCase() !== filterCountry.toUpperCase()) return false;
+    if (filterCategories.length > 0 && !filterCategories.some(c => (trn.category ?? '').includes(c))) return false;
+    if (filterSurfaces.length > 0 && !filterSurfaces.includes((trn.surface ?? '').toLowerCase())) return false;
+    if (filterDateStart && trn.startDate && trn.startDate < filterDateStart) return false;
+    if (filterDateEnd && trn.startDate && trn.startDate > filterDateEnd) return false;
+    return true;
   });
 
   async function handleAddFromDiscovery(tournament: any) {
@@ -1550,13 +1575,24 @@ function TournamentDiscoveryModal({
     setSavingTrain(false);
   }
 
+  function CheckRow({ label, checked, onToggle }: { label: string; checked: boolean; onToggle: () => void }) {
+    return (
+      <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10 }} onPress={onToggle} activeOpacity={0.7}>
+        <View style={{ width: 22, height: 22, borderRadius: 4, borderWidth: 2, borderColor: checked ? '#5B5BD6' : '#555', backgroundColor: checked ? '#5B5BD6' : 'transparent', marginRight: 12, alignItems: 'center', justifyContent: 'center' }}>
+          {checked && <Text style={{ color: '#FFF', fontSize: 13, fontWeight: '700' }}>✓</Text>}
+        </View>
+        <Text style={{ fontSize: 15, color: '#2D2B55' }}>{label}</Text>
+      </TouchableOpacity>
+    );
+  }
+
   return (
     <>
+      {/* ── Main discovery modal ── */}
       <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
         <SafeAreaView style={disc.safe}>
-          {/* Header */}
           <View style={disc.header}>
-            <Text style={disc.headerTitle}>DESCUBRIR TORNEOS</Text>
+            <Text style={disc.headerTitle}>{t('discovery.title')}</Text>
             <TouchableOpacity onPress={onClose} activeOpacity={0.7} style={disc.closeBtn}>
               <IconSymbol name="xmark" size={18} color="#AAA" />
             </TouchableOpacity>
@@ -1565,16 +1601,11 @@ function TournamentDiscoveryModal({
           <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
             <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 48 }}>
 
-              {/* Search bar */}
+              {/* Search + filter row */}
               <View style={disc.searchWrap}>
                 <IconSymbol name="magnifyingglass" size={16} color="#888" style={{ marginRight: 8 }} />
-                <TextInput
-                  style={disc.searchInput}
-                  value={discoverySearch}
-                  onChangeText={setDiscoverySearch}
-                  placeholder="Buscar por ciudad o país..."
-                  placeholderTextColor="#666"
-                />
+                <TextInput style={disc.searchInput} value={discoverySearch} onChangeText={setDiscoverySearch}
+                  placeholder={t('discovery.search')} placeholderTextColor="#666" />
                 {discoverySearch.length > 0 && (
                   <TouchableOpacity onPress={() => setDiscoverySearch('')} activeOpacity={0.7}>
                     <Text style={{ color: '#666', fontSize: 14, paddingLeft: 8 }}>✕</Text>
@@ -1582,23 +1613,23 @@ function TournamentDiscoveryModal({
                 )}
               </View>
 
-              {/* Filter pills */}
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={disc.pillScroll} contentContainerStyle={disc.pillContent}>
-                {DISCOVERY_PILLS.map(pill => {
-                  const active = pill === 'Todos' ? discoveryFilters.length === 0 : discoveryFilters.includes(pill);
-                  return (
-                    <TouchableOpacity key={pill} style={[disc.pill, active && disc.pillActive]} onPress={() => toggleFilter(pill)} activeOpacity={0.7}>
-                      <Text style={[disc.pillText, active && disc.pillTextActive]}>{pill}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
+              {/* Filter / Date range chips */}
+              <View style={{ flexDirection: 'row', gap: 10, paddingHorizontal: 20, marginBottom: 20 }}>
+                <TouchableOpacity style={[disc.filterChip, activeFilterCount > 0 && disc.filterChipActive]} onPress={openFilters} activeOpacity={0.8}>
+                  <IconSymbol name="line.3.horizontal.decrease" size={14} color={activeFilterCount > 0 ? '#FFF' : '#555'} style={{ marginRight: 6 }} />
+                  <Text style={[disc.filterChipText, activeFilterCount > 0 && { color: '#FFF' }]}>{t('discovery.filters')}{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[disc.filterChip, (filterDateStart || filterDateEnd) ? disc.filterChipActive : null]} onPress={() => setShowDatePanel(true)} activeOpacity={0.8}>
+                  <IconSymbol name="calendar" size={14} color={(filterDateStart || filterDateEnd) ? '#FFF' : '#555'} style={{ marginRight: 6 }} />
+                  <Text style={[disc.filterChipText, (filterDateStart || filterDateEnd) && { color: '#FFF' }]}>{t('discovery.dateRange')}</Text>
+                </TouchableOpacity>
+              </View>
 
-              {/* Tournaments disponibles */}
-              <Text style={disc.sectionLabel}>TORNEOS DISPONIBLES</Text>
+              {/* Available tournaments */}
+              <Text style={disc.sectionLabel}>{t('discovery.available')}</Text>
 
               {filtered.length === 0 ? (
-                <Text style={disc.emptyText}>Los torneos aparecerán aquí automáticamente cuando el scraper esté activo.</Text>
+                <Text style={disc.emptyText}>{t('discovery.noTournaments')}</Text>
               ) : (
                 filtered.map((trn: any) => {
                   const days = daysUntil(trn.signUpDeadline);
@@ -1616,11 +1647,7 @@ function TournamentDiscoveryModal({
                           {[trn.city, fmtDateRange(trn.startDate, trn.endDate)].filter(Boolean).join(' · ')}
                         </Text>
                       </View>
-                      {trn.category ? (
-                        <View style={disc.catPill}>
-                          <Text style={disc.catPillText}>{trn.category}</Text>
-                        </View>
-                      ) : null}
+                      {trn.category ? <View style={disc.catPill}><Text style={disc.catPillText}>{trn.category}</Text></View> : null}
                       {urgentColor && days !== null ? (
                         <View style={[disc.deadlinePill, { backgroundColor: urgentColor + '22', marginLeft: 6 }]}>
                           <Text style={[disc.deadlinePillText, { color: urgentColor }]}>{days}d</Text>
@@ -1631,35 +1658,31 @@ function TournamentDiscoveryModal({
                 })
               )}
 
-              {/* Divider */}
               <View style={disc.divider} />
 
-              {/* Card 1 — Agregar manualmente */}
               <TouchableOpacity style={disc.card} activeOpacity={0.8} onPress={() => { onClose(); onOpenAddManual(); }}>
                 <IconSymbol name="plus.circle" size={28} color="#5B5BD6" style={{ marginRight: 14 }} />
                 <View style={{ flex: 1 }}>
-                  <Text style={disc.cardTitle}>Agregar torneo manualmente</Text>
-                  <Text style={disc.cardSub}>Para torneos que el scraper no encontró</Text>
+                  <Text style={disc.cardTitle}>{t('discovery.addManually')}</Text>
+                  <Text style={disc.cardSub}>{t('discovery.addManuallyDesc')}</Text>
                 </View>
                 <IconSymbol name="chevron.right" size={14} color="#555" />
               </TouchableOpacity>
 
-              {/* Card 2 — Semana de descanso */}
               <TouchableOpacity style={disc.card} activeOpacity={0.8} onPress={() => setShowRestModal(true)}>
                 <IconSymbol name="moon.zzz" size={28} color="#888" style={{ marginRight: 14 }} />
                 <View style={{ flex: 1 }}>
-                  <Text style={disc.cardTitle}>Agregar semana de descanso</Text>
-                  <Text style={disc.cardSub}>Aparece en el calendario como bloque gris</Text>
+                  <Text style={disc.cardTitle}>{t('discovery.restWeek')}</Text>
+                  <Text style={disc.cardSub}>{t('discovery.restWeekDesc')}</Text>
                 </View>
                 <IconSymbol name="chevron.right" size={14} color="#555" />
               </TouchableOpacity>
 
-              {/* Card 3 — Bloque de entrenamiento */}
               <TouchableOpacity style={disc.card} activeOpacity={0.8} onPress={() => setShowTrainingModal(true)}>
                 <IconSymbol name="figure.run" size={28} color="#5B5BD6" style={{ marginRight: 14 }} />
                 <View style={{ flex: 1 }}>
-                  <Text style={disc.cardTitle}>Agregar bloque de entrenamiento</Text>
-                  <Text style={disc.cardSub}>Aparece en el calendario como bloque azul oscuro</Text>
+                  <Text style={disc.cardTitle}>{t('discovery.trainingBlock')}</Text>
+                  <Text style={disc.cardSub}>{t('discovery.trainingBlockDesc')}</Text>
                 </View>
                 <IconSymbol name="chevron.right" size={14} color="#555" />
               </TouchableOpacity>
@@ -1669,75 +1692,121 @@ function TournamentDiscoveryModal({
         </SafeAreaView>
       </Modal>
 
-      {/* Rest Week Modal */}
+      {/* ── Filter panel modal ── */}
+      <Modal visible={showFilterPanel} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowFilterPanel(false)}>
+        <SafeAreaView style={[disc.safe, { backgroundColor: '#FAFAFA' }]}>
+          <View style={[disc.header, { backgroundColor: '#FAFAFA', borderBottomColor: '#E0E0E0' }]}>
+            <TouchableOpacity onPress={() => setShowFilterPanel(false)} activeOpacity={0.7} style={disc.closeBtn}>
+              <IconSymbol name="xmark" size={18} color="#555" />
+            </TouchableOpacity>
+            <Text style={[disc.headerTitle, { color: '#2D2B55' }]}>{t('discovery.filterTitle')}</Text>
+            <View style={disc.closeBtn} />
+          </View>
+          <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 120 }}>
+            {/* Country */}
+            <Text style={disc.filterSectionLabel}>{t('discovery.country')}</Text>
+            <View style={disc.filterInputWrap}>
+              <TextInput style={disc.filterInput} value={pendingCountry} onChangeText={setPendingCountry}
+                placeholder={t('discovery.countrySelect')} placeholderTextColor="#AAA" autoCapitalize="characters" maxLength={2} />
+            </View>
+            <View style={disc.filterDivider} />
+            {/* Category */}
+            <Text style={disc.filterSectionLabel}>{t('discovery.category')}</Text>
+            {['M25','M15','Challenger'].map(c => (
+              <CheckRow key={c} label={c} checked={pendingCategories.includes(c)} onToggle={() => toggleArr(pendingCategories, setPendingCategories, c)} />
+            ))}
+            <View style={disc.filterDivider} />
+            {/* Surface */}
+            <Text style={disc.filterSectionLabel}>{t('discovery.surface')}</Text>
+            {['Clay','Hard','Grass'].map(s => (
+              <CheckRow key={s} label={s} checked={pendingSurfaces.includes(s.toLowerCase())} onToggle={() => toggleArr(pendingSurfaces, setPendingSurfaces, s.toLowerCase())} />
+            ))}
+            <View style={disc.filterDivider} />
+            {/* Venue Type */}
+            <Text style={disc.filterSectionLabel}>{t('discovery.venueType')}</Text>
+            <CheckRow label={t('discovery.indoor')} checked={pendingVenueTypes.includes('indoor')} onToggle={() => toggleArr(pendingVenueTypes, setPendingVenueTypes, 'indoor')} />
+            <CheckRow label={t('discovery.outdoor')} checked={pendingVenueTypes.includes('outdoor')} onToggle={() => toggleArr(pendingVenueTypes, setPendingVenueTypes, 'outdoor')} />
+          </ScrollView>
+          {/* Clear / Apply */}
+          <View style={disc.filterActions}>
+            <TouchableOpacity style={disc.clearBtn} onPress={clearFilters} activeOpacity={0.8}>
+              <Text style={disc.clearBtnText}>{t('discovery.clear')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={disc.applyBtn} onPress={applyFilters} activeOpacity={0.8}>
+              <Text style={disc.applyBtnText}>{t('discovery.apply')}</Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* ── Date range modal ── */}
+      <Modal visible={showDatePanel} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowDatePanel(false)}>
+        <SafeAreaView style={[disc.safe, { backgroundColor: '#FAFAFA' }]}>
+          <View style={[disc.header, { backgroundColor: '#FAFAFA', borderBottomColor: '#E0E0E0' }]}>
+            <TouchableOpacity onPress={() => setShowDatePanel(false)} activeOpacity={0.7} style={disc.closeBtn}>
+              <IconSymbol name="xmark" size={18} color="#555" />
+            </TouchableOpacity>
+            <Text style={[disc.headerTitle, { color: '#2D2B55' }]}>{t('discovery.dateRange')}</Text>
+            <View style={disc.closeBtn} />
+          </View>
+          <ScrollView contentContainerStyle={{ padding: 24, gap: 20 }}>
+            <DatePickerField label={t('discovery.startDate')} value={filterDateStart} onChange={setFilterDateStart} />
+            <DatePickerField label={t('discovery.endDate')} value={filterDateEnd} onChange={setFilterDateEnd} />
+            {(filterDateStart || filterDateEnd) && (
+              <TouchableOpacity onPress={() => { setFilterDateStart(''); setFilterDateEnd(''); }} activeOpacity={0.7} style={{ alignSelf: 'center', marginTop: 8 }}>
+                <Text style={{ fontSize: 14, color: '#E24B4A', fontWeight: '600' }}>{t('discovery.clear')}</Text>
+              </TouchableOpacity>
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* ── Rest week modal ── */}
       <Modal visible={showRestModal} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowRestModal(false)}>
         <SafeAreaView style={disc.safe}>
           <View style={disc.header}>
-            <Text style={disc.headerTitle}>SEMANA DE DESCANSO</Text>
+            <Text style={disc.headerTitle}>{t('discovery.restTitle')}</Text>
             <TouchableOpacity onPress={() => setShowRestModal(false)} activeOpacity={0.7} style={disc.closeBtn}>
               <IconSymbol name="xmark" size={18} color="#AAA" />
             </TouchableOpacity>
           </View>
           <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
             <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 24 }}>
-              <DatePickerField label="Semana del lunes" value={restMonday} onChange={setRestMonday} placeholder="YYYY-MM-DD" />
-              <Text style={disc.inputLabel}>Nota (opcional)</Text>
-              <TextInput
-                style={disc.textInput}
-                value={restNote}
-                onChangeText={setRestNote}
-                placeholder="Ej. Recuperación post Bogotá"
-                placeholderTextColor="#666"
-              />
-              <TouchableOpacity
-                style={[disc.saveBtn, (!restMonday || savingRest) && { opacity: 0.5 }]}
-                onPress={saveRestWeek}
-                disabled={!restMonday || savingRest}
-                activeOpacity={0.8}
-              >
-                {savingRest ? <ActivityIndicator color="#fff" /> : <Text style={disc.saveBtnText}>Guardar</Text>}
+              <DatePickerField label={t('discovery.mondayLabel')} value={restMonday} onChange={setRestMonday} />
+              <Text style={disc.inputLabel}>{t('discovery.noteOptional')}</Text>
+              <TextInput style={disc.textInput} value={restNote} onChangeText={setRestNote}
+                placeholder={t('discovery.notePlaceholder')} placeholderTextColor="#666" />
+              <TouchableOpacity style={[disc.saveBtn, (!restMonday || savingRest) && { opacity: 0.5 }]}
+                onPress={saveRestWeek} disabled={!restMonday || savingRest} activeOpacity={0.8}>
+                {savingRest ? <ActivityIndicator color="#fff" /> : <Text style={disc.saveBtnText}>{t('discovery.save')}</Text>}
               </TouchableOpacity>
             </ScrollView>
           </KeyboardAvoidingView>
         </SafeAreaView>
       </Modal>
 
-      {/* Training Block Modal */}
+      {/* ── Training block modal ── */}
       <Modal visible={showTrainingModal} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowTrainingModal(false)}>
         <SafeAreaView style={disc.safe}>
           <View style={disc.header}>
-            <Text style={disc.headerTitle}>BLOQUE DE ENTRENAMIENTO</Text>
+            <Text style={disc.headerTitle}>{t('discovery.trainingTitle')}</Text>
             <TouchableOpacity onPress={() => setShowTrainingModal(false)} activeOpacity={0.7} style={disc.closeBtn}>
               <IconSymbol name="xmark" size={18} color="#AAA" />
             </TouchableOpacity>
           </View>
           <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
             <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 24 }}>
-              <DatePickerField label="Fecha de inicio" value={trainStart} onChange={setTrainStart} placeholder="YYYY-MM-DD" />
-              <DatePickerField label="Fecha de fin" value={trainEnd} onChange={setTrainEnd} placeholder="YYYY-MM-DD" />
-              <Text style={disc.inputLabel}>Etiqueta</Text>
-              <TextInput
-                style={disc.textInput}
-                value={trainLabel}
-                onChangeText={setTrainLabel}
-                placeholder="Ej. Pre-temporada arcilla"
-                placeholderTextColor="#666"
-              />
-              <Text style={disc.inputLabel}>Nota (opcional)</Text>
-              <TextInput
-                style={disc.textInput}
-                value={trainNote}
-                onChangeText={setTrainNote}
-                placeholder="Detalles del bloque..."
-                placeholderTextColor="#666"
-              />
-              <TouchableOpacity
-                style={[disc.saveBtn, (!trainStart || !trainEnd || !trainLabel.trim() || savingTrain) && { opacity: 0.5 }]}
-                onPress={saveTrainingBlock}
-                disabled={!trainStart || !trainEnd || !trainLabel.trim() || savingTrain}
-                activeOpacity={0.8}
-              >
-                {savingTrain ? <ActivityIndicator color="#fff" /> : <Text style={disc.saveBtnText}>Guardar</Text>}
+              <DatePickerField label={t('discovery.startDate')} value={trainStart} onChange={setTrainStart} />
+              <DatePickerField label={t('discovery.endDate')} value={trainEnd} onChange={setTrainEnd} />
+              <Text style={disc.inputLabel}>{t('discovery.blockLabel')}</Text>
+              <TextInput style={disc.textInput} value={trainLabel} onChangeText={setTrainLabel}
+                placeholder={t('discovery.labelPlaceholder')} placeholderTextColor="#666" />
+              <Text style={disc.inputLabel}>{t('discovery.noteOptional')}</Text>
+              <TextInput style={disc.textInput} value={trainNote} onChangeText={setTrainNote}
+                placeholder={t('discovery.detailsPlaceholder')} placeholderTextColor="#666" />
+              <TouchableOpacity style={[disc.saveBtn, (!trainStart || !trainEnd || !trainLabel.trim() || savingTrain) && { opacity: 0.5 }]}
+                onPress={saveTrainingBlock} disabled={!trainStart || !trainEnd || !trainLabel.trim() || savingTrain} activeOpacity={0.8}>
+                {savingTrain ? <ActivityIndicator color="#fff" /> : <Text style={disc.saveBtnText}>{t('discovery.save')}</Text>}
               </TouchableOpacity>
             </ScrollView>
           </KeyboardAvoidingView>
@@ -1748,35 +1817,42 @@ function TournamentDiscoveryModal({
 }
 
 const disc = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#0D0D1A' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: '#1E1E32' },
-  headerTitle: { fontSize: 14, fontWeight: '800', color: '#FAFAFA', letterSpacing: 1.2 },
-  closeBtn: { padding: 4 },
-  searchWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1A1A2E', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, marginHorizontal: 20, marginTop: 16, marginBottom: 12 },
-  searchInput: { flex: 1, fontSize: 15, color: '#FAFAFA' },
-  pillScroll: { marginBottom: 20 },
-  pillContent: { paddingHorizontal: 20, gap: 8 },
-  pill: { borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7, backgroundColor: '#2A2A4A' },
-  pillActive: { backgroundColor: '#5B5BD6' },
-  pillText: { fontSize: 13, fontWeight: '600', color: '#888' },
-  pillTextActive: { color: '#FAFAFA' },
-  sectionLabel: { fontSize: 11, fontWeight: '700', color: '#666', letterSpacing: 1, marginHorizontal: 20, marginBottom: 10 },
-  emptyText: { fontSize: 13, color: '#666', textAlign: 'center', marginHorizontal: 24, marginTop: 16, marginBottom: 24, lineHeight: 20, fontStyle: 'italic' },
-  trnRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#1A1A2E' },
-  trnName: { fontSize: 14, fontWeight: '600', color: '#FAFAFA', marginBottom: 3 },
-  trnMeta: { fontSize: 12, color: '#888' },
-  catPill: { backgroundColor: '#2A2A4A', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, marginLeft: 6 },
-  catPillText: { fontSize: 11, fontWeight: '700', color: '#888' },
-  deadlinePill: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
-  deadlinePillText: { fontSize: 11, fontWeight: '700' },
-  divider: { height: 1, backgroundColor: '#1E1E32', marginHorizontal: 20, marginVertical: 24 },
-  card: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1A1A2E', borderRadius: 16, padding: 20, marginHorizontal: 20, marginBottom: 12 },
-  cardTitle: { fontSize: 15, fontWeight: '600', color: '#FAFAFA', marginBottom: 4 },
-  cardSub: { fontSize: 12, color: '#888', lineHeight: 16 },
-  inputLabel: { fontSize: 11, fontWeight: '700', color: '#888', letterSpacing: 0.8, marginBottom: 6, marginTop: 16 },
-  textInput: { backgroundColor: '#1A1A2E', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: '#FAFAFA', borderWidth: 1, borderColor: '#2A2A4A' },
-  saveBtn: { backgroundColor: '#5B5BD6', borderRadius: 14, paddingVertical: 16, alignItems: 'center', marginTop: 24 },
-  saveBtnText: { color: '#FAFAFA', fontSize: 16, fontWeight: '700' },
+  safe:            { flex: 1, backgroundColor: '#0D0D1A' },
+  header:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: '#1E1E32' },
+  headerTitle:     { fontSize: 14, fontWeight: '800', color: '#FAFAFA', letterSpacing: 1.2 },
+  closeBtn:        { padding: 4, minWidth: 30 },
+  searchWrap:      { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1A1A2E', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, marginHorizontal: 20, marginTop: 16, marginBottom: 12 },
+  searchInput:     { flex: 1, fontSize: 15, color: '#FAFAFA' },
+  filterChip:      { flexDirection: 'row', alignItems: 'center', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: '#F0F0F8', borderWidth: 1, borderColor: '#DDD' },
+  filterChipActive:{ backgroundColor: '#5B5BD6', borderColor: '#5B5BD6' },
+  filterChipText:  { fontSize: 14, fontWeight: '600', color: '#555' },
+  sectionLabel:    { fontSize: 11, fontWeight: '700', color: '#666', letterSpacing: 1, marginHorizontal: 20, marginBottom: 10 },
+  emptyText:       { fontSize: 13, color: '#666', textAlign: 'center', marginHorizontal: 24, marginTop: 16, marginBottom: 24, lineHeight: 20, fontStyle: 'italic' },
+  trnRow:          { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#1A1A2E' },
+  trnName:         { fontSize: 14, fontWeight: '600', color: '#FAFAFA', marginBottom: 3 },
+  trnMeta:         { fontSize: 12, color: '#888' },
+  catPill:         { backgroundColor: '#2A2A4A', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, marginLeft: 6 },
+  catPillText:     { fontSize: 11, fontWeight: '700', color: '#888' },
+  deadlinePill:    { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
+  deadlinePillText:{ fontSize: 11, fontWeight: '700' },
+  divider:         { height: 1, backgroundColor: '#1E1E32', marginHorizontal: 20, marginVertical: 24 },
+  card:            { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1A1A2E', borderRadius: 16, padding: 20, marginHorizontal: 20, marginBottom: 12 },
+  cardTitle:       { fontSize: 15, fontWeight: '600', color: '#FAFAFA', marginBottom: 4 },
+  cardSub:         { fontSize: 12, color: '#888', lineHeight: 16 },
+  inputLabel:      { fontSize: 11, fontWeight: '700', color: '#888', letterSpacing: 0.8, marginBottom: 6, marginTop: 16 },
+  textInput:       { backgroundColor: '#1A1A2E', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: '#FAFAFA', borderWidth: 1, borderColor: '#2A2A4A' },
+  saveBtn:         { backgroundColor: '#5B5BD6', borderRadius: 14, paddingVertical: 16, alignItems: 'center', marginTop: 24 },
+  saveBtnText:     { color: '#FAFAFA', fontSize: 16, fontWeight: '700' },
+  // Filter panel
+  filterSectionLabel: { fontSize: 16, fontWeight: '700', color: '#2D2B55', marginTop: 8, marginBottom: 4 },
+  filterInputWrap: { borderWidth: 1, borderColor: '#DDD', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 4 },
+  filterInput:     { fontSize: 15, color: '#2D2B55' },
+  filterDivider:   { height: 1, backgroundColor: '#E8E8E8', marginVertical: 16 },
+  filterActions:   { position: 'absolute', bottom: 0, left: 0, right: 0, flexDirection: 'row', gap: 12, padding: 20, backgroundColor: '#FAFAFA', borderTopWidth: 1, borderTopColor: '#E0E0E0' },
+  clearBtn:        { flex: 1, borderRadius: 24, paddingVertical: 14, alignItems: 'center', backgroundColor: '#E0E0E0' },
+  clearBtnText:    { fontSize: 13, fontWeight: '700', color: '#555', letterSpacing: 0.5 },
+  applyBtn:        { flex: 2, borderRadius: 24, paddingVertical: 14, alignItems: 'center', backgroundColor: '#C8E6A0' },
+  applyBtnText:    { fontSize: 13, fontWeight: '700', color: '#2D5A00', letterSpacing: 0.5 },
 });
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
