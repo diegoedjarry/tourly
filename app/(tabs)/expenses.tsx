@@ -58,6 +58,18 @@ const PERSONAL_CATS = ['Flight', 'Hotel', 'Meals', 'Transport', 'Strings & Grip'
 const COACH_CATS    = ['Coach Fee', 'Coach Flight', 'Coach Hotel', 'Coach Meals'];
 const FIXED_CATS    = new Set(['academy', 'trainer', 'strings & grip', 'stringing fee']);
 
+// Extended categories available only in monthly fixed mode
+const MONTHLY_FIXED_CATS = [
+  'Flight', 'Hotel', 'Meals', 'Transport', 'Strings & Grip', 'Stringing Fee', 'Physio',
+  'Academy', 'Trainer', 'Physical Trainer', 'Physiotherapy', 'Gym', 'Nutritionist',
+  'Psychologist', 'Agent Fee', 'Strings Budget', 'Equipment', 'Other',
+];
+
+const MONTH_NAMES_ES = [
+  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
+];
+
 // i18n key maps (index-aligned with the arrays above)
 const PERSONAL_CAT_KEYS = ['cat.flight', 'cat.hotel', 'cat.meals', 'cat.transport', 'cat.stringsGrip', 'cat.stringingFee', 'cat.physio', 'cat.academy', 'cat.trainer', 'cat.other'] as const;
 const COACH_CAT_KEYS    = ['cat.coachFee', 'cat.coachFlight', 'cat.coachHotel', 'cat.coachMeals'] as const;
@@ -226,6 +238,12 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
   const [saving, setSaving]                      = useState(false);
   const [error, setError]                        = useState('');
 
+  // Monthly fixed expense mode
+  const [isMonthlyFixed, setIsMonthlyFixed]      = useState(false);
+  const nowForFixed = new Date();
+  const [fixedMonth, setFixedMonth]              = useState(nowForFixed.getMonth() + 1); // 1–12
+  const [fixedYear, setFixedYear]                = useState(nowForFixed.getFullYear());
+
   const selectedTournament = tournaments.find((t) => t.id === tournamentId);
 
   const allCategories = withCoach ? [...PERSONAL_CATS, ...COACH_CATS] : PERSONAL_CATS;
@@ -254,31 +272,39 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
   async function handleSave() {
     const amt = parseFloat(amount);
     if (isNaN(amt) || amt <= 0) { setError(t('expense.validAmount')); return; }
-    if (!date) { setError(t('expense.selectDate')); return; }
     const finalCategory = customMode ? customText.trim() : category;
     if (!finalCategory) { setError(t('expense.selectCategory')); return; }
+    if (!isMonthlyFixed && !date) { setError(t('expense.selectDate')); return; }
     setSaving(true);
     setError('');
+
+    const fixedDateStr = `${fixedYear}-${String(fixedMonth).padStart(2, '0')}-01`;
+    const fixedMonthStr = `${fixedYear}-${String(fixedMonth).padStart(2, '0')}`;
+
     try {
       if (DEMO_MODE) {
         demoCtx?.addExpense({
           id: genId(),
-          tournamentId,
+          tournamentId: isMonthlyFixed ? null : tournamentId,
           category: finalCategory,
           amount: amt,
           note: note.trim(),
-          date,
-          isCoachExpense,
+          date: isMonthlyFixed ? fixedDateStr : date,
+          isCoachExpense: isMonthlyFixed ? false : isCoachExpense,
+          isMonthlyFixed: isMonthlyFixed,
+          fixedMonth: isMonthlyFixed ? fixedMonthStr : null,
         });
         onClose();
       } else {
         await apiAddExpense({
-          tournamentId,
+          tournamentId: isMonthlyFixed ? null : tournamentId,
           category: finalCategory,
           amount: amt,
           note: note.trim(),
-          date,
-          isCoachExpense,
+          date: isMonthlyFixed ? fixedDateStr : date,
+          isCoachExpense: isMonthlyFixed ? false : isCoachExpense,
+          isMonthlyFixed: isMonthlyFixed,
+          fixedMonth: isMonthlyFixed ? fixedMonthStr : null,
         });
         generateInsight.mutate({ trigger: 'expense_logged' }); // fire and forget
         onClose();
@@ -311,24 +337,33 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}>
 
-            {/* ── Coach toggle ── */}
-            <View style={form.coachRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={form.coachLabel}>{t('expense.travelingWithCoach')}</Text>
+            {/* ── Monthly fixed banner ── */}
+            {isMonthlyFixed && (
+              <View style={form.fixedBanner}>
+                <Text style={form.fixedBannerText}>GASTO FIJO MENSUAL</Text>
               </View>
-              <Switch
-                value={withCoach}
-                onValueChange={(v) => {
-                  setWithCoach(v);
-                  if (!v && COACH_CATS.includes(category)) setCategory('flight');
-                }}
-                trackColor={{ false: T.cardBorder, true: T.teal }}
-                thumbColor={T.textPrimary}
-              />
-            </View>
+            )}
 
-            {/* ── Tournament ── */}
-            {tournaments.length > 0 && (
+            {/* ── Coach toggle (hidden in monthly fixed mode) ── */}
+            {!isMonthlyFixed && (
+              <View style={form.coachRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={form.coachLabel}>{t('expense.travelingWithCoach')}</Text>
+                </View>
+                <Switch
+                  value={withCoach}
+                  onValueChange={(v) => {
+                    setWithCoach(v);
+                    if (!v && COACH_CATS.includes(category)) setCategory('flight');
+                  }}
+                  trackColor={{ false: T.cardBorder, true: T.teal }}
+                  thumbColor={T.textPrimary}
+                />
+              </View>
+            )}
+
+            {/* ── Tournament (hidden in monthly fixed mode) ── */}
+            {!isMonthlyFixed && tournaments.length > 0 && (
               <View style={form.section}>
                 <Text style={form.sectionLabel}>{t('expense.tournament')}</Text>
                 <TouchableOpacity
@@ -368,26 +403,67 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
               </View>
             )}
 
+            {/* ── Month/Year picker (monthly fixed mode only) ── */}
+            {isMonthlyFixed && (
+              <View style={form.section}>
+                <Text style={form.sectionLabel}>MES Y AÑO</Text>
+                <View style={form.monthYearRow}>
+                  {/* Month picker */}
+                  <ScrollView
+                    style={form.monthPicker}
+                    showsVerticalScrollIndicator={false}
+                    nestedScrollEnabled>
+                    {MONTH_NAMES_ES.map((name, i) => {
+                      const m = i + 1;
+                      return (
+                        <TouchableOpacity
+                          key={m}
+                          style={[form.monthPickerRow, fixedMonth === m && form.monthPickerRowActive]}
+                          onPress={() => setFixedMonth(m)}
+                          activeOpacity={0.7}>
+                          <Text style={[form.monthPickerText, fixedMonth === m && form.monthPickerTextActive]}>{name}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                  {/* Year picker */}
+                  <View style={form.yearPicker}>
+                    {[fixedYear - 1, fixedYear, fixedYear + 1].map((y) => (
+                      <TouchableOpacity
+                        key={y}
+                        style={[form.monthPickerRow, fixedYear === y && form.monthPickerRowActive]}
+                        onPress={() => setFixedYear(y)}
+                        activeOpacity={0.7}>
+                        <Text style={[form.monthPickerText, fixedYear === y && form.monthPickerTextActive]}>{y}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              </View>
+            )}
+
             {/* ── Category ── */}
             <View style={form.section}>
               <Text style={form.sectionLabel}>{t('expense.category')}</Text>
 
-              {withCoach && (
+              {!isMonthlyFixed && withCoach && (
                 <Text style={form.subLabel}>{t('expense.personal')}</Text>
               )}
               <View style={form.chipRow}>
-                {PERSONAL_CATS.map((c, i) => (
+                {(isMonthlyFixed ? MONTHLY_FIXED_CATS : PERSONAL_CATS).map((c, i) => (
                   <TouchableOpacity
                     key={c}
                     style={[form.chip, category === c && !customMode && form.chipActive]}
                     onPress={() => selectCategory(c)}
                     activeOpacity={0.7}>
-                    <Text style={[form.chipText, category === c && !customMode && form.chipTextActive]}>{personalCatLabels[i]}</Text>
+                    <Text style={[form.chipText, category === c && !customMode && form.chipTextActive]}>
+                      {isMonthlyFixed ? c : personalCatLabels[i]}
+                    </Text>
                   </TouchableOpacity>
                 ))}
               </View>
 
-              {withCoach && (
+              {!isMonthlyFixed && withCoach && (
                 <>
                   <Text style={[form.subLabel, { marginTop: 12 }]}>{t('expense.coach')}</Text>
                   <View style={form.chipRow}>
@@ -447,16 +523,18 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
               </View>
             </View>
 
-            {/* ── Date ── */}
-            <View style={form.section}>
-              <DatePickerField label="date" value={date} onChange={(v) => {
-                setDate(v);
-                if (!manuallyPicked && !isFixedCat) {
-                  const matched = matchTournamentByDate(v, tournaments);
-                  setTournamentId(matched ?? '');
-                }
-              }} />
-            </View>
+            {/* ── Date (hidden in monthly fixed mode, date derived from month/year) ── */}
+            {!isMonthlyFixed && (
+              <View style={form.section}>
+                <DatePickerField label="date" value={date} onChange={(v) => {
+                  setDate(v);
+                  if (!manuallyPicked && !isFixedCat) {
+                    const matched = matchTournamentByDate(v, tournaments);
+                    setTournamentId(matched ?? '');
+                  }
+                }} />
+              </View>
+            )}
 
             {/* ── Note ── */}
             <View style={form.section}>
@@ -481,6 +559,23 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
                 ? <ActivityIndicator color={T.textPrimary} />
                 : <Text style={form.saveBtnText}>{t('expense.saveExpense')}</Text>}
             </TouchableOpacity>
+
+            {/* ── Mode switch link ── */}
+            {!isMonthlyFixed ? (
+              <TouchableOpacity
+                style={form.fixedSwitchLink}
+                onPress={() => { setIsMonthlyFixed(true); setCustomMode(false); setCategory('Flight'); }}
+                activeOpacity={0.7}>
+                <Text style={form.fixedSwitchLinkText}>Agregar como gasto fijo mensual</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={form.fixedSwitchLink}
+                onPress={() => { setIsMonthlyFixed(false); setCategory('flight'); }}
+                activeOpacity={0.7}>
+                <Text style={form.fixedSwitchLinkText}>Volver al modo normal</Text>
+              </TouchableOpacity>
+            )}
 
             <View style={{ height: 20 }} />
           </ScrollView>
@@ -2104,6 +2199,107 @@ function PrizeMoneyModal({ tournaments, onClose }: { tournaments: any[]; onClose
   );
 }
 
+// ─── Monthly Fixed Section ────────────────────────────────────────────────────
+
+function MonthlyFixedSection({ expenses }: { expenses: any[] }) {
+  // Filter only monthly fixed expenses
+  const fixedExpenses = expenses.filter((e: any) => e.isMonthlyFixed || e.is_monthly_fixed);
+  if (fixedExpenses.length === 0) return null;
+
+  // Group by fixedMonth (YYYY-MM)
+  const grouped: Record<string, { month: number; year: number; items: any[]; total: number }> = {};
+  for (const e of fixedExpenses) {
+    const key: string = e.fixedMonth ?? e.fixed_month ?? e.date?.slice(0, 7) ?? 'unknown';
+    if (!grouped[key]) {
+      const [y, m] = key.split('-').map(Number);
+      grouped[key] = { month: m, year: y, items: [], total: 0 };
+    }
+    grouped[key].items.push(e);
+    grouped[key].total += e.amount ?? 0;
+  }
+
+  const sortedKeys = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
+
+  return (
+    <View style={{ marginBottom: 24 }}>
+      <Text style={mf.sectionHeader}>GASTOS FIJOS MENSUALES</Text>
+      {sortedKeys.map((key) => {
+        const { month, year, items, total } = grouped[key];
+        const monthName = MONTH_NAMES_ES[(month ?? 1) - 1] ?? key;
+        return (
+          <View key={key} style={mf.monthCard}>
+            <View style={mf.monthHeaderRow}>
+              <Text style={mf.monthLabel}>{monthName} {year}</Text>
+              <Text style={mf.monthTotal}>{fmt(total)}</Text>
+            </View>
+            {items.map((e: any) => (
+              <View key={e.id} style={mf.expenseRow}>
+                <Text style={mf.expenseCat} numberOfLines={1}>{e.category}</Text>
+                <Text style={mf.expenseAmt}>{fmt(e.amount ?? 0)}</Text>
+              </View>
+            ))}
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+const mf = StyleSheet.create({
+  sectionHeader: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: T.textTertiary,
+    letterSpacing: 1.0,
+    textTransform: 'uppercase',
+    marginBottom: 10,
+  },
+  monthCard: {
+    backgroundColor: '#1E1E30',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: T.cardBorder,
+  },
+  monthHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  monthLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: T.textSecondary,
+  },
+  monthTotal: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: T.textPrimary,
+  },
+  expenseRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 5,
+    borderTopWidth: 1,
+    borderTopColor: T.cardBorder,
+  },
+  expenseCat: {
+    fontSize: 13,
+    color: T.textTertiary,
+    textTransform: 'capitalize',
+    flex: 1,
+    marginRight: 8,
+  },
+  expenseAmt: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: T.textSecondary,
+  },
+});
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function ExpensesScreen() {
@@ -2489,6 +2685,9 @@ export default function ExpensesScreen() {
               const prize = singles + doubles > 0 ? singles + doubles : (t.prizeMoney ?? 0);
               setDetailTournament({ ...t, spent, prize });
             }} />
+
+            {/* ── Monthly Fixed Expenses ── */}
+            <MonthlyFixedSection expenses={expenses} />
 
             {/* ── Financial Insights Grid ── */}
             <Text style={styles.sectionLabel}>{t('expenses.financialInsights')}</Text>
@@ -2972,6 +3171,63 @@ const form = StyleSheet.create({
     paddingVertical: 17, alignItems: 'center', marginTop: 8,
   },
   saveBtnText: { color: T.textPrimary, fontSize: 16, fontWeight: '700' },
+  // Monthly fixed mode styles
+  fixedBanner: {
+    backgroundColor: '#2A2A3E',
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    marginBottom: 20,
+    alignSelf: 'flex-start',
+  },
+  fixedBannerText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: T.textTertiary,
+    letterSpacing: 1.2,
+  },
+  fixedSwitchLink: {
+    alignItems: 'center',
+    paddingVertical: 14,
+  },
+  fixedSwitchLinkText: {
+    fontSize: 13,
+    color: T.textMuted,
+    textDecorationLine: 'underline',
+  },
+  monthYearRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  monthPicker: {
+    flex: 2,
+    backgroundColor: T.card,
+    borderRadius: 12,
+    maxHeight: 180,
+  },
+  yearPicker: {
+    flex: 1,
+    backgroundColor: T.card,
+    borderRadius: 12,
+  },
+  monthPickerRow: {
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    borderBottomWidth: 1,
+    borderBottomColor: T.cardBorder,
+  },
+  monthPickerRowActive: {
+    backgroundColor: T.accentMuted,
+  },
+  monthPickerText: {
+    fontSize: 14,
+    color: T.textSecondary,
+    fontWeight: '500',
+  },
+  monthPickerTextActive: {
+    color: T.teal,
+    fontWeight: '700',
+  },
 });
 
 const pn = StyleSheet.create({

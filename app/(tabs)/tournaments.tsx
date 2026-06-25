@@ -11,6 +11,7 @@ import {
   Platform,
   ActivityIndicator,
   Switch,
+  Linking,
 } from 'react-native';
 import { Text } from '@/components/ui/text';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -24,6 +25,8 @@ import { AgentIcon } from '@/components/ui/agent-icon';
 import { calcDeadlines, fmtDeadline, fmtDate, fmtDateRange, getDeadlineLabels, getStoredDeadlineFields, getOnsiteDeadlines } from '@/utils/deadlines';
 import { T } from '@/constants/theme';
 import { DEMO_MODE } from '@/config/demo';
+import { supabase } from '@/lib/supabase';
+import { queryClient } from '@/lib/queryClient';
 import { useLanguage } from '@/hooks/useLanguage';
 import { useDemoData } from '@/hooks/useDemoData';
 import { useFirstVisit } from '@/hooks/useFirstVisit';
@@ -112,6 +115,12 @@ function calcEndDate(startDateStr: string): string {
   date.setDate(date.getDate() + 6);
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function addDays(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const date = new Date(y, m - 1, d + days);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
 function deadlineColor(dateStr: string | undefined): string {
@@ -839,6 +848,27 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
             /* ── VIEW MODE ── */
             <View style={det.body}>
 
+              {/* Fact Sheet link */}
+              {tournament.category ? (() => {
+                const factUrl = tournament.factSheetUrl
+                  ? tournament.factSheetUrl
+                  : /m15|m25|itf/i.test(tournament.category)
+                    ? `https://www.itftennis.com/en/tournament-calendar/mens-world-tennis-tour-calendar/?tournamentName=${encodeURIComponent(tournament.name)}`
+                    : /challenger|atp/i.test(tournament.category)
+                      ? `https://www.atptour.com/en/tournaments?q=${encodeURIComponent(tournament.name)}`
+                      : `https://www.itftennis.com/en/tournament-calendar/mens-world-tennis-tour-calendar/?tournamentName=${encodeURIComponent(tournament.name)}`;
+                return (
+                  <TouchableOpacity
+                    style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6, marginBottom: 16 }}
+                    onPress={() => Linking.openURL(factUrl)}
+                    activeOpacity={0.7}
+                  >
+                    <IconSymbol name="arrow.up.right.square" size={14} color="#5B5BD6" />
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#5B5BD6' }}>Ver Fact Sheet oficial →</Text>
+                  </TouchableOpacity>
+                );
+              })() : null}
+
               {/* FUTURE: registered toggle + withdraw toggle + all deadlines */}
               {group === 'upcoming' && (
                 <>
@@ -964,6 +994,44 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
                         ${((tournament.singlesPrizeMoney ?? 0) + (tournament.doublesPrizeMoney ?? 0)).toLocaleString()}
                       </Text>
                     </View>
+                  </View>
+                </>
+              )}
+
+              {/* ── Tournament Contact ── */}
+              {(tournament.supervisorName || tournament.supervisorEmail || tournament.supervisorPhone) && (
+                <>
+                  <Text style={[det.sectionLabel, { marginTop: 16 }]}>CONTACTO DEL TORNEO</Text>
+                  <View style={{ backgroundColor: '#1A1A2E', borderRadius: 12, padding: 16, marginBottom: 16 }}>
+                    {tournament.supervisorName ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: tournament.supervisorEmail || tournament.supervisorPhone ? 12 : 0 }}>
+                        <IconSymbol name="person" size={15} color={T.textTertiary} />
+                        <Text style={{ fontSize: 14, fontWeight: '600', color: T.textPrimary }}>{tournament.supervisorName}</Text>
+                      </View>
+                    ) : null}
+                    {tournament.supervisorEmail ? (
+                      <TouchableOpacity
+                        style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: tournament.supervisorPhone ? 12 : 0 }}
+                        onPress={() => Linking.openURL('mailto:' + tournament.supervisorEmail)}
+                        activeOpacity={0.7}
+                      >
+                        <IconSymbol name="envelope" size={15} color={T.textTertiary} />
+                        <Text style={{ fontSize: 13, color: T.textSecondary }}>{tournament.supervisorEmail}</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                    {tournament.supervisorPhone ? (
+                      <TouchableOpacity
+                        style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}
+                        onPress={() => Linking.openURL('tel:' + tournament.supervisorPhone)}
+                        activeOpacity={0.7}
+                      >
+                        <IconSymbol name="phone" size={15} color={T.textTertiary} />
+                        <Text style={{ fontSize: 13, color: T.textSecondary }}>{tournament.supervisorPhone}</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                    <Text style={{ fontSize: 11, fontStyle: 'italic', color: T.textTertiary, marginTop: 12, lineHeight: 16 }}>
+                      Contacta al supervisor para confirmar inscripciones presenciales
+                    </Text>
                   </View>
                 </>
               )}
@@ -1351,6 +1419,352 @@ export function AddTournamentModal({ onClose, defaultStartDate }: { onClose: () 
   );
 }
 
+// ─── Tournament Discovery Modal ───────────────────────────────────────────────
+
+const DISCOVERY_PILLS = ['Todos', 'Clay', 'Hard', 'Grass', 'M15', 'M25', 'Challenger', 'Suramérica', 'Europa', 'Norteamérica', 'Asia'];
+
+const REGION_COUNTRIES: Record<string, string[]> = {
+  'Suramérica': ['AR','BR','CO','CL','PE','BO','EC','UY','VE','PY'],
+  'Europa':     ['ES','FR','IT','GB','DE','AT','BE','NL','CH','SE','NO','DK','PT','CZ','SK','HU','PL','RO','BG','GR','TR','RS','HR','SI'],
+  'Norteamérica': ['US','CA','MX'],
+  'Asia':       ['JP','CN','IN','KR','TH','ID','MY','TW','PK','UZ','KZ'],
+};
+
+function TournamentDiscoveryModal({
+  visible, onClose, allTournaments, onOpenAddManual,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  allTournaments: any[];
+  onOpenAddManual: () => void;
+}) {
+  const [discoverySearch, setDiscoverySearch] = useState('');
+  const [discoveryFilters, setDiscoveryFilters] = useState<string[]>([]);
+  const [showRestModal, setShowRestModal]         = useState(false);
+  const [showTrainingModal, setShowTrainingModal] = useState(false);
+
+  // Rest week state
+  const [restMonday, setRestMonday]   = useState('');
+  const [restNote, setRestNote]       = useState('');
+  const [savingRest, setSavingRest]   = useState(false);
+
+  // Training block state
+  const [trainStart, setTrainStart]   = useState('');
+  const [trainEnd, setTrainEnd]       = useState('');
+  const [trainLabel, setTrainLabel]   = useState('');
+  const [trainNote, setTrainNote]     = useState('');
+  const [savingTrain, setSavingTrain] = useState(false);
+
+  function toggleFilter(pill: string) {
+    if (pill === 'Todos') { setDiscoveryFilters([]); return; }
+    setDiscoveryFilters(prev =>
+      prev.includes(pill) ? prev.filter(p => p !== pill) : [...prev, pill]
+    );
+  }
+
+  const discoverable = allTournaments.filter((t: any) => t.isInMyList === false);
+
+  const filtered = discoverable.filter((t: any) => {
+    if (discoverySearch.trim()) {
+      const q = discoverySearch.toLowerCase();
+      const match =
+        (t.name ?? '').toLowerCase().includes(q) ||
+        (t.city ?? '').toLowerCase().includes(q) ||
+        (t.country ?? '').toLowerCase().includes(q);
+      if (!match) return false;
+    }
+    if (discoveryFilters.length === 0) return true;
+    return discoveryFilters.every(pill => {
+      if (['Clay', 'Hard', 'Grass'].includes(pill)) return (t.surface ?? '').toLowerCase() === pill.toLowerCase();
+      if (['M15', 'M25', 'Challenger'].includes(pill)) return (t.category ?? '').includes(pill);
+      if (REGION_COUNTRIES[pill]) return REGION_COUNTRIES[pill].includes((t.country ?? '').toUpperCase());
+      return true;
+    });
+  });
+
+  async function handleAddFromDiscovery(tournament: any) {
+    try {
+      const updates: any = { isInMyList: true };
+      if (tournament.startDate && !tournament.freezeDeadline) {
+        const calc = calcDeadlines(tournament.startDate, tournament.category);
+        if (!tournament.signUpDeadline)     updates.signUpDeadline     = calc.signUpDeadline;
+        if (!tournament.withdrawalDeadline) updates.withdrawalDeadline = calc.withdrawalDeadline;
+        updates.freezeDeadline = calc.freezeDeadline;
+      }
+      await apiPatchTournament(tournament.id, updates);
+      onClose();
+    } catch (_) {}
+  }
+
+  async function saveRestWeek() {
+    if (!restMonday) return;
+    setSavingRest(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      await supabase.from('training_blocks').insert({
+        title: 'Descanso 😴',
+        start_date: restMonday,
+        end_date: addDays(restMonday, 6),
+        note: restNote,
+        user_id: user?.id,
+        block_type: 'rest',
+      });
+      queryClient.invalidateQueries({ queryKey: ['training_blocks'] });
+      setShowRestModal(false);
+      setRestMonday(''); setRestNote('');
+    } catch (_) {}
+    setSavingRest(false);
+  }
+
+  async function saveTrainingBlock() {
+    if (!trainStart || !trainEnd || !trainLabel.trim()) return;
+    setSavingTrain(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      await supabase.from('training_blocks').insert({
+        title: trainLabel.trim(),
+        start_date: trainStart,
+        end_date: trainEnd,
+        note: trainNote,
+        user_id: user?.id,
+        block_type: 'training',
+      });
+      queryClient.invalidateQueries({ queryKey: ['training_blocks'] });
+      setShowTrainingModal(false);
+      setTrainStart(''); setTrainEnd(''); setTrainLabel(''); setTrainNote('');
+    } catch (_) {}
+    setSavingTrain(false);
+  }
+
+  return (
+    <>
+      <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+        <SafeAreaView style={disc.safe}>
+          {/* Header */}
+          <View style={disc.header}>
+            <Text style={disc.headerTitle}>DESCUBRIR TORNEOS</Text>
+            <TouchableOpacity onPress={onClose} activeOpacity={0.7} style={disc.closeBtn}>
+              <IconSymbol name="xmark" size={18} color="#AAA" />
+            </TouchableOpacity>
+          </View>
+
+          <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 48 }}>
+
+              {/* Search bar */}
+              <View style={disc.searchWrap}>
+                <IconSymbol name="magnifyingglass" size={16} color="#888" style={{ marginRight: 8 }} />
+                <TextInput
+                  style={disc.searchInput}
+                  value={discoverySearch}
+                  onChangeText={setDiscoverySearch}
+                  placeholder="Buscar por ciudad o país..."
+                  placeholderTextColor="#666"
+                />
+                {discoverySearch.length > 0 && (
+                  <TouchableOpacity onPress={() => setDiscoverySearch('')} activeOpacity={0.7}>
+                    <Text style={{ color: '#666', fontSize: 14, paddingLeft: 8 }}>✕</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Filter pills */}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={disc.pillScroll} contentContainerStyle={disc.pillContent}>
+                {DISCOVERY_PILLS.map(pill => {
+                  const active = pill === 'Todos' ? discoveryFilters.length === 0 : discoveryFilters.includes(pill);
+                  return (
+                    <TouchableOpacity key={pill} style={[disc.pill, active && disc.pillActive]} onPress={() => toggleFilter(pill)} activeOpacity={0.7}>
+                      <Text style={[disc.pillText, active && disc.pillTextActive]}>{pill}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+
+              {/* Tournaments disponibles */}
+              <Text style={disc.sectionLabel}>TORNEOS DISPONIBLES</Text>
+
+              {filtered.length === 0 ? (
+                <Text style={disc.emptyText}>Los torneos aparecerán aquí automáticamente cuando el scraper esté activo.</Text>
+              ) : (
+                filtered.map((trn: any) => {
+                  const days = daysUntil(trn.signUpDeadline);
+                  const urgentColor = days !== null && days <= 7 ? '#E24B4A' : days !== null && days <= 14 ? '#E8A030' : null;
+                  return (
+                    <TouchableOpacity key={trn.id} style={disc.trnRow} onPress={() => handleAddFromDiscovery(trn)} activeOpacity={0.75}>
+                      <View style={{ marginRight: 10 }}>
+                        {trn.surface ? <CourtIcon surface={trn.surface} size="sm" /> : null}
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={disc.trnName} numberOfLines={1}>
+                          {trn.country ? countryFlag(trn.country) + ' ' : ''}{trn.name}
+                        </Text>
+                        <Text style={disc.trnMeta} numberOfLines={1}>
+                          {[trn.city, fmtDateRange(trn.startDate, trn.endDate)].filter(Boolean).join(' · ')}
+                        </Text>
+                      </View>
+                      {trn.category ? (
+                        <View style={disc.catPill}>
+                          <Text style={disc.catPillText}>{trn.category}</Text>
+                        </View>
+                      ) : null}
+                      {urgentColor && days !== null ? (
+                        <View style={[disc.deadlinePill, { backgroundColor: urgentColor + '22', marginLeft: 6 }]}>
+                          <Text style={[disc.deadlinePillText, { color: urgentColor }]}>{days}d</Text>
+                        </View>
+                      ) : null}
+                    </TouchableOpacity>
+                  );
+                })
+              )}
+
+              {/* Divider */}
+              <View style={disc.divider} />
+
+              {/* Card 1 — Agregar manualmente */}
+              <TouchableOpacity style={disc.card} activeOpacity={0.8} onPress={() => { onClose(); onOpenAddManual(); }}>
+                <IconSymbol name="plus.circle" size={28} color="#5B5BD6" style={{ marginRight: 14 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={disc.cardTitle}>Agregar torneo manualmente</Text>
+                  <Text style={disc.cardSub}>Para torneos que el scraper no encontró</Text>
+                </View>
+                <IconSymbol name="chevron.right" size={14} color="#555" />
+              </TouchableOpacity>
+
+              {/* Card 2 — Semana de descanso */}
+              <TouchableOpacity style={disc.card} activeOpacity={0.8} onPress={() => setShowRestModal(true)}>
+                <IconSymbol name="moon.zzz" size={28} color="#888" style={{ marginRight: 14 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={disc.cardTitle}>Agregar semana de descanso</Text>
+                  <Text style={disc.cardSub}>Aparece en el calendario como bloque gris</Text>
+                </View>
+                <IconSymbol name="chevron.right" size={14} color="#555" />
+              </TouchableOpacity>
+
+              {/* Card 3 — Bloque de entrenamiento */}
+              <TouchableOpacity style={disc.card} activeOpacity={0.8} onPress={() => setShowTrainingModal(true)}>
+                <IconSymbol name="figure.run" size={28} color="#5B5BD6" style={{ marginRight: 14 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={disc.cardTitle}>Agregar bloque de entrenamiento</Text>
+                  <Text style={disc.cardSub}>Aparece en el calendario como bloque azul oscuro</Text>
+                </View>
+                <IconSymbol name="chevron.right" size={14} color="#555" />
+              </TouchableOpacity>
+
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* Rest Week Modal */}
+      <Modal visible={showRestModal} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowRestModal(false)}>
+        <SafeAreaView style={disc.safe}>
+          <View style={disc.header}>
+            <Text style={disc.headerTitle}>SEMANA DE DESCANSO</Text>
+            <TouchableOpacity onPress={() => setShowRestModal(false)} activeOpacity={0.7} style={disc.closeBtn}>
+              <IconSymbol name="xmark" size={18} color="#AAA" />
+            </TouchableOpacity>
+          </View>
+          <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 24 }}>
+              <DatePickerField label="Semana del lunes" value={restMonday} onChange={setRestMonday} placeholder="YYYY-MM-DD" />
+              <Text style={disc.inputLabel}>Nota (opcional)</Text>
+              <TextInput
+                style={disc.textInput}
+                value={restNote}
+                onChangeText={setRestNote}
+                placeholder="Ej. Recuperación post Bogotá"
+                placeholderTextColor="#666"
+              />
+              <TouchableOpacity
+                style={[disc.saveBtn, (!restMonday || savingRest) && { opacity: 0.5 }]}
+                onPress={saveRestWeek}
+                disabled={!restMonday || savingRest}
+                activeOpacity={0.8}
+              >
+                {savingRest ? <ActivityIndicator color="#fff" /> : <Text style={disc.saveBtnText}>Guardar</Text>}
+              </TouchableOpacity>
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* Training Block Modal */}
+      <Modal visible={showTrainingModal} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowTrainingModal(false)}>
+        <SafeAreaView style={disc.safe}>
+          <View style={disc.header}>
+            <Text style={disc.headerTitle}>BLOQUE DE ENTRENAMIENTO</Text>
+            <TouchableOpacity onPress={() => setShowTrainingModal(false)} activeOpacity={0.7} style={disc.closeBtn}>
+              <IconSymbol name="xmark" size={18} color="#AAA" />
+            </TouchableOpacity>
+          </View>
+          <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 24 }}>
+              <DatePickerField label="Fecha de inicio" value={trainStart} onChange={setTrainStart} placeholder="YYYY-MM-DD" />
+              <DatePickerField label="Fecha de fin" value={trainEnd} onChange={setTrainEnd} placeholder="YYYY-MM-DD" />
+              <Text style={disc.inputLabel}>Etiqueta</Text>
+              <TextInput
+                style={disc.textInput}
+                value={trainLabel}
+                onChangeText={setTrainLabel}
+                placeholder="Ej. Pre-temporada arcilla"
+                placeholderTextColor="#666"
+              />
+              <Text style={disc.inputLabel}>Nota (opcional)</Text>
+              <TextInput
+                style={disc.textInput}
+                value={trainNote}
+                onChangeText={setTrainNote}
+                placeholder="Detalles del bloque..."
+                placeholderTextColor="#666"
+              />
+              <TouchableOpacity
+                style={[disc.saveBtn, (!trainStart || !trainEnd || !trainLabel.trim() || savingTrain) && { opacity: 0.5 }]}
+                onPress={saveTrainingBlock}
+                disabled={!trainStart || !trainEnd || !trainLabel.trim() || savingTrain}
+                activeOpacity={0.8}
+              >
+                {savingTrain ? <ActivityIndicator color="#fff" /> : <Text style={disc.saveBtnText}>Guardar</Text>}
+              </TouchableOpacity>
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </SafeAreaView>
+      </Modal>
+    </>
+  );
+}
+
+const disc = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: '#0D0D1A' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: '#1E1E32' },
+  headerTitle: { fontSize: 14, fontWeight: '800', color: '#FAFAFA', letterSpacing: 1.2 },
+  closeBtn: { padding: 4 },
+  searchWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1A1A2E', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, marginHorizontal: 20, marginTop: 16, marginBottom: 12 },
+  searchInput: { flex: 1, fontSize: 15, color: '#FAFAFA' },
+  pillScroll: { marginBottom: 20 },
+  pillContent: { paddingHorizontal: 20, gap: 8 },
+  pill: { borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7, backgroundColor: '#2A2A4A' },
+  pillActive: { backgroundColor: '#5B5BD6' },
+  pillText: { fontSize: 13, fontWeight: '600', color: '#888' },
+  pillTextActive: { color: '#FAFAFA' },
+  sectionLabel: { fontSize: 11, fontWeight: '700', color: '#666', letterSpacing: 1, marginHorizontal: 20, marginBottom: 10 },
+  emptyText: { fontSize: 13, color: '#666', textAlign: 'center', marginHorizontal: 24, marginTop: 16, marginBottom: 24, lineHeight: 20, fontStyle: 'italic' },
+  trnRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#1A1A2E' },
+  trnName: { fontSize: 14, fontWeight: '600', color: '#FAFAFA', marginBottom: 3 },
+  trnMeta: { fontSize: 12, color: '#888' },
+  catPill: { backgroundColor: '#2A2A4A', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, marginLeft: 6 },
+  catPillText: { fontSize: 11, fontWeight: '700', color: '#888' },
+  deadlinePill: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
+  deadlinePillText: { fontSize: 11, fontWeight: '700' },
+  divider: { height: 1, backgroundColor: '#1E1E32', marginHorizontal: 20, marginVertical: 24 },
+  card: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1A1A2E', borderRadius: 16, padding: 20, marginHorizontal: 20, marginBottom: 12 },
+  cardTitle: { fontSize: 15, fontWeight: '600', color: '#FAFAFA', marginBottom: 4 },
+  cardSub: { fontSize: 12, color: '#888', lineHeight: 16 },
+  inputLabel: { fontSize: 11, fontWeight: '700', color: '#888', letterSpacing: 0.8, marginBottom: 6, marginTop: 16 },
+  textInput: { backgroundColor: '#1A1A2E', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: '#FAFAFA', borderWidth: 1, borderColor: '#2A2A4A' },
+  saveBtn: { backgroundColor: '#5B5BD6', borderRadius: 14, paddingVertical: 16, alignItems: 'center', marginTop: 24 },
+  saveBtnText: { color: '#FAFAFA', fontSize: 16, fontWeight: '700' },
+});
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function TournamentsScreen() {
@@ -1364,6 +1778,7 @@ export default function TournamentsScreen() {
   ];
   const { data, isLoading } = useAppQuery({ tournaments: {} });
   const [activeFilter, setActiveFilter]   = useState<Filter>('all');
+  const [showDiscovery, setShowDiscovery]  = useState(false);
   const [showAddForm, setShowAddForm]      = useState(false);
   const [detailId, setDetailId]           = useState<string | null>(null);
   const [expenseDetailId, setExpenseDetailId] = useState<string | null>(null);
@@ -1451,7 +1866,7 @@ export default function TournamentsScreen() {
             <AgentIcon size={70} />
             <Text style={styles.topTitle}>{t('tournaments.title')}</Text>
           </View>
-          <TouchableOpacity style={styles.addButton} onPress={() => setShowAddForm(true)} activeOpacity={0.8}>
+          <TouchableOpacity style={styles.addButton} onPress={() => setShowDiscovery(true)} activeOpacity={0.8}>
             <Text style={styles.addIcon}>+</Text>
           </TouchableOpacity>
         </View>
@@ -1567,6 +1982,12 @@ export default function TournamentsScreen() {
         )}
       </ScrollView>
 
+      <TournamentDiscoveryModal
+        visible={showDiscovery}
+        onClose={() => setShowDiscovery(false)}
+        allTournaments={data?.tournaments ?? []}
+        onOpenAddManual={() => setShowAddForm(true)}
+      />
       {showAddForm && <AddTournamentModal onClose={() => setShowAddForm(false)} />}
       {detailId && <TournamentDetail tournamentId={detailId} onClose={() => setDetailId(null)} />}
       {expenseDetailId && (() => {

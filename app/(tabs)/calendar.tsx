@@ -271,6 +271,24 @@ export default function CalendarScreen() {
           showsVerticalScrollIndicator={false}
           {...panResponder.panHandlers}>
 
+          {/* IPIN placeholder — shown when no IPIN is configured */}
+          {!_prof?.ipin_number && (
+            <View style={ptStyles.ipinCard}>
+              <Text style={ptStyles.ipinIcon}>📡</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={ptStyles.ipinText}>
+                  Ingresa tu número IPIN en Ajustes para activar el seguimiento automático de puntos a defender
+                </Text>
+                <TouchableOpacity
+                  style={ptStyles.ipinBtn}
+                  activeOpacity={0.8}
+                  onPress={() => router.push('/settings')}>
+                  <Text style={ptStyles.ipinBtnText}>Ir a Ajustes</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
           {/* Points info banner */}
           <View style={ptStyles.infoBanner}>
             <Text style={ptStyles.infoIcon}>🏆</Text>
@@ -900,4 +918,17 @@ const ptStyles = StyleSheet.create({
   pointsBannerText: { fontSize: 11, fontWeight: '600', color: T.textSecondary, flex: 1 },
   emptyWeek: { paddingHorizontal: 12, paddingVertical: 4 },
   emptyWeekText: { fontSize: 10, color: T.textMuted, fontStyle: 'italic' },
+  ipinCard: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 12,
+    backgroundColor: T.card, borderRadius: 14, padding: 16,
+    marginBottom: 12, borderWidth: 1, borderColor: T.cardBorder,
+  },
+  ipinIcon: { fontSize: 22, marginTop: 2 },
+  ipinText: { fontSize: 13, color: T.textSecondary, lineHeight: 18, marginBottom: 12 },
+  ipinBtn: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#5B5BD6', borderRadius: 10,
+    paddingHorizontal: 16, paddingVertical: 8,
+  },
+  ipinBtnText: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
 });

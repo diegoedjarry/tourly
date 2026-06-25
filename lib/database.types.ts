@@ -18,6 +18,10 @@ export interface Tournament {
   singles_prize_money: number;
   doubles_prize_money: number;
   status: string | null;
+  supervisor_name: string | null;
+  supervisor_email: string | null;
+  supervisor_phone: string | null;
+  fact_sheet_url: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -42,5 +46,7 @@ export interface Expense {
   date: string;             // YYYY-MM-DD
   note: string | null;
   is_coach_expense: boolean | null;
+  is_monthly_fixed: boolean | null;
+  fixed_month: string | null;  // 'YYYY-MM'
   created_at: string;
 }

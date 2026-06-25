@@ -40,6 +40,7 @@ export interface Profile {
   notify_onsite_reminders: (OnsiteReminderTime | null)[];
   language: string | null;
   onboarding_complete: boolean;
+  ipin_number: string | null;
   created_at: string;
 }
 
