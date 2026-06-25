@@ -67,10 +67,22 @@ function fmtDateRange(start: string, end?: string): string {
 const DARK_MAP_STYLE = [
   { elementType: 'geometry', stylers: [{ color: '#1A1A2E' }] },
   { elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  // Country borders
   {
     featureType: 'administrative.country',
     elementType: 'geometry.stroke',
     stylers: [{ color: '#3D3D6B' }, { visibility: 'on' }, { weight: 1 }],
+  },
+  // Country name labels — visible when zoomed in
+  {
+    featureType: 'administrative.country',
+    elementType: 'labels.text.fill',
+    stylers: [{ color: '#8888AA' }, { visibility: 'on' }],
+  },
+  {
+    featureType: 'administrative.country',
+    elementType: 'labels.text.stroke',
+    stylers: [{ color: '#0F0F1A' }, { visibility: 'on' }, { weight: 2 }],
   },
   {
     featureType: 'administrative.province',
@@ -124,7 +136,7 @@ export function TournamentMap({
       .map((t) => {
         const coords = lookupCoords(t.city, t.country);
         if (!coords) return null;
-        const [lon, lat] = coords;
+        const [lat, lon] = coords;
         return { t, lat, lon };
       })
       .filter(Boolean) as { t: any; lat: number; lon: number }[];
