@@ -3,7 +3,6 @@ import {
   View,
   StyleSheet,
   Text,
-  Platform,
   Animated,
   PanResponder,
   Pressable,
@@ -268,7 +267,7 @@ export function TournamentMap({
       <MapView
         ref={mapRef}
         style={styles.map}
-        provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
+        provider={PROVIDER_GOOGLE}
         mapType="standard"
         customMapStyle={DARK_MAP_STYLE}
         initialRegion={initialRegion}
@@ -284,10 +283,13 @@ export function TournamentMap({
             key={t.id}
             coordinate={{ latitude: lat, longitude: lon }}
             onPress={() => openSheet(t)}
-            tracksViewChanges={false}
+            anchor={{ x: 0.5, y: 0.5 }}
           >
             <View style={styles.dotOuter}>
-              <View style={styles.dotInner} />
+              <View style={[
+                styles.dotInner,
+                { backgroundColor: t.surface === 'clay' ? '#D4915A' : t.surface === 'grass' ? '#5ABE6E' : '#5A8CD4' }
+              ]} />
             </View>
           </Marker>
         ))}
@@ -380,18 +382,18 @@ const styles = StyleSheet.create({
   },
   // Dots
   dotOuter: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: 'rgba(255,255,255,0.18)',
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: 'rgba(91,91,214,0.22)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   dotInner: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#FFFFFF',
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#5B5BD6',
   },
   // Reset button
   resetBtn: {
