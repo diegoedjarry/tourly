@@ -8,7 +8,12 @@ import {
   PanResponder,
   Pressable,
   TouchableOpacity,
+  Dimensions,
 } from 'react-native';
+
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+const COLLAPSED_HEIGHT = SCREEN_HEIGHT * 0.45;
+const EXPANDED_HEIGHT = SCREEN_HEIGHT * 0.92;
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { CITY_COORDS, COUNTRY_CENTERS } from './map-data';
 
@@ -118,6 +123,8 @@ export function TournamentMap({
   const mapRef = useRef<MapView>(null);
   const [selectedGroup, setSelectedGroup] = useState<any[] | null>(null);
   const slideAnim = useRef(new Animated.Value(300)).current;
+  const sheetHeight = useRef(new Animated.Value(COLLAPSED_HEIGHT)).current;
+  const isExpandedRef = useRef(false);
 
   // Resolve open-tournament callback (support both prop names)
   const handleOpen = useCallback(
@@ -191,6 +198,8 @@ export function TournamentMap({
   // Show bottom sheet for a group of tournaments at the same location
   const openSheet = useCallback(
     (items: any[]) => {
+      isExpandedRef.current = false;
+      sheetHeight.setValue(COLLAPSED_HEIGHT);
       setSelectedGroup(items);
       slideAnim.setValue(300);
       Animated.timing(slideAnim, {
@@ -199,10 +208,11 @@ export function TournamentMap({
         useNativeDriver: true,
       }).start();
     },
-    [slideAnim],
+    [slideAnim, sheetHeight],
   );
 
   const closeSheet = useCallback(() => {
+    isExpandedRef.current = false;
     Animated.timing(slideAnim, {
       toValue: 300,
       duration: 250,
@@ -210,15 +220,33 @@ export function TournamentMap({
     }).start(() => {
       setSelectedGroup(null);
       slideAnim.setValue(300);
+      sheetHeight.setValue(COLLAPSED_HEIGHT);
     });
-  }, [slideAnim]);
+  }, [slideAnim, sheetHeight]);
 
-  // PanResponder to dismiss sheet on downward swipe
+  // PanResponder: swipe up to expand, swipe down to collapse or dismiss
   const panResponder = useRef(
     PanResponder.create({
-      onMoveShouldSetPanResponder: (_, gs) => gs.dy > 10,
+      onMoveShouldSetPanResponder: (_, gs) => Math.abs(gs.dy) > 10,
       onPanResponderRelease: (_, gs) => {
-        if (gs.dy > 50) {
+        if (gs.dy < -50 && !isExpandedRef.current) {
+          // Swipe up → expand
+          isExpandedRef.current = true;
+          Animated.spring(sheetHeight, {
+            toValue: EXPANDED_HEIGHT,
+            useNativeDriver: false,
+            bounciness: 4,
+          }).start();
+        } else if (gs.dy > 50 && isExpandedRef.current) {
+          // Swipe down when expanded → collapse
+          isExpandedRef.current = false;
+          Animated.spring(sheetHeight, {
+            toValue: COLLAPSED_HEIGHT,
+            useNativeDriver: false,
+            bounciness: 4,
+          }).start();
+        } else if (gs.dy > 50 && !isExpandedRef.current) {
+          // Swipe down when collapsed → dismiss
           Animated.timing(slideAnim, {
             toValue: 300,
             duration: 250,
@@ -226,12 +254,8 @@ export function TournamentMap({
           }).start(() => {
             setSelectedGroup(null);
             slideAnim.setValue(300);
+            sheetHeight.setValue(COLLAPSED_HEIGHT);
           });
-        } else {
-          Animated.spring(slideAnim, {
-            toValue: 0,
-            useNativeDriver: true,
-          }).start();
         }
       },
     }),
@@ -359,10 +383,11 @@ export function TournamentMap({
       {/* Bottom sheet */}
       {selectedGroup && (
         <Animated.View
-          style={[styles.sheet, { transform: [{ translateY: slideAnim }] }]}
-          {...panResponder.panHandlers}
+          style={[styles.sheet, { transform: [{ translateY: slideAnim }], maxHeight: sheetHeight }]}
         >
-          <View style={styles.handle} />
+          <View style={styles.handle} {...panResponder.panHandlers}>
+            <View style={styles.handlePill} />
+          </View>
           {selectedGroup.length > 1 && (
             <Text style={styles.sheetGroupLabel}>
               {selectedGroup.length} tournaments · {selectedGroup[0].city ?? selectedGroup[0].country}
@@ -535,15 +560,21 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 24,
     padding: 20,
     paddingBottom: 36,
-    maxHeight: '70%',
   },
   handle: {
+    width: 36,
+    height: 20,
+    paddingVertical: 8,
+    alignSelf: 'center',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  handlePill: {
     width: 36,
     height: 4,
     backgroundColor: '#3A3A5A',
     borderRadius: 2,
-    marginBottom: 12,
-    alignSelf: 'center',
   },
   sheetGroupLabel: {
     fontSize: 12,

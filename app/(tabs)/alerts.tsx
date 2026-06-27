@@ -24,6 +24,7 @@ import { TournamentDetail } from '@/app/(tabs)/tournaments';
 import { AgentIcon } from '@/components/ui/agent-icon';
 import { T } from '@/constants/theme';
 import { useLanguage } from '@/hooks/useLanguage';
+import { useRouter } from 'expo-router';
 
 const ALERTS_WALKTHROUGH = [
   { icon: '🔔', title: 'Tap Any Alert', body: 'Tap any alert to go directly to that tournament\'s details and take action. Red means urgent — don\'t wait.' },
@@ -43,11 +44,7 @@ interface AlertItem {
   timeLabel: string;
 }
 
-function countryFlag(country: string): string {
-  const code = (country ?? '').toUpperCase();
-  if (code.length !== 2) return '🌍';
-  return String.fromCodePoint(...[...code].map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
-}
+import { countryFlag } from '@/utils/countryFlag';
 
 function parseLocalDate(val: any): Date | null {
   if (!val) return null;
@@ -86,11 +83,17 @@ function buildAlerts(tournaments: any[]): AlertItem[] {
     const signUp = calc?.signUpDeadline ?? t.signUpDeadline;
     const freeze = calc?.freezeDeadline ?? t.freezeDeadline;
 
+    // For unregistered tournaments, suppress all alerts until sign-up is within 14 days
+    if (!t.isRegistered && signUp) {
+      const signUpDays = daysUntil(signUp);
+      if (signUpDays !== null && signUpDays > 14) continue;
+    }
+
     if (withdrawal) {
       const days = daysUntil(withdrawal);
       if (days !== null && days >= -7 && days <= 30) {
         const hours = hoursUntil(withdrawal);
-        const urgency: Urgency = days < 0 ? 'urgent' : days === 0 ? 'urgent' : days <= 7 ? 'week' : 'upcoming';
+        const urgency: Urgency = days < 0 ? 'urgent' : days === 0 ? 'urgent' : (hours !== null && hours < 48) ? 'urgent' : days <= 7 ? 'week' : 'upcoming';
         items.push({
           id: `${t.id}-withdrawal`,
           flag: t.country ? countryFlag(t.country) : '🌍',
@@ -108,9 +111,9 @@ function buildAlerts(tournaments: any[]): AlertItem[] {
 
     if (!t.isRegistered && signUp) {
       const days = daysUntil(signUp);
-      if (days !== null && days >= -7 && days <= 30) {
+      if (days !== null && days >= -7 && days <= 14) {
         const hours = hoursUntil(signUp);
-        const urgency: Urgency = days < 0 ? 'urgent' : days === 0 ? 'urgent' : days <= 7 ? 'week' : 'upcoming';
+        const urgency: Urgency = days < 0 ? 'urgent' : days === 0 ? 'urgent' : (hours !== null && hours < 48) ? 'urgent' : days <= 7 ? 'week' : 'upcoming';
         items.push({
           id: `${t.id}-signup`,
           flag: t.country ? countryFlag(t.country) : '🌍',
@@ -130,7 +133,7 @@ function buildAlerts(tournaments: any[]): AlertItem[] {
       const days = daysUntil(freeze);
       if (days !== null && days >= -7 && days <= 14) {
         const hours = hoursUntil(freeze);
-        const urgency: Urgency = days < 0 ? 'urgent' : days === 0 ? 'urgent' : days <= 7 ? 'week' : 'upcoming';
+        const urgency: Urgency = days < 0 ? 'urgent' : days === 0 ? 'urgent' : (hours !== null && hours < 48) ? 'urgent' : days <= 7 ? 'week' : 'upcoming';
         items.push({
           id: `${t.id}-freeze`,
           flag: t.country ? countryFlag(t.country) : '🌍',
@@ -350,6 +353,7 @@ function WithdrawConfirmModal({ item, onConfirm, onCancel, loading }: {
 
 export default function AlertsScreen() {
   const { t } = useLanguage();
+  const router = useRouter();
   const { data, isLoading } = useAppQuery({ tournaments: {} });
   const demoCtx = useDemoData();
   const [selected, setSelected] = useState<AlertItem | null>(null);
@@ -403,7 +407,9 @@ export default function AlertsScreen() {
 
         <View style={s.topBar}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <AgentIcon size={70} />
+            <TouchableOpacity onPress={() => router.push('/settings' as any)} activeOpacity={0.75}>
+              <AgentIcon size={70} />
+            </TouchableOpacity>
             <Text style={s.topTitle}>{t('alerts.title')}</Text>
           </View>
         </View>

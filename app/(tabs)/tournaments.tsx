@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   ScrollView,
   View,
@@ -12,13 +12,14 @@ import {
   ActivityIndicator,
   Switch,
   Linking,
+  Alert,
 } from 'react-native';
 import { Text } from '@/components/ui/text';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useAppQuery } from '@/hooks/useAppQuery';
-import { apiPatchTournament, apiAddTournament } from '@/lib/api';
+import { apiPatchTournament, apiAddTournament, apiDeleteTournament } from '@/lib/api';
 import { DatePickerField } from '@/components/ui/date-picker-field';
 import { CourtIcon } from '@/components/ui/court-icon';
 import { AgentIcon } from '@/components/ui/agent-icon';
@@ -96,16 +97,18 @@ function getGroup(t: any): 'active' | 'upcoming' | 'past' {
 
 function getPill(t: any): { type: string; label: string } | null {
   if (getGroup(t) === 'past') return null;
-  if (getGroup(t) === 'active' && t.isRegistered) return null;
   if (!t.isRegistered) {
     const days = daysUntil(t.signUpDeadline);
     if (days === null) return { type: 'signup', label: 'Sign Up' };
     if (days < 0) return null;
     return { type: 'signup', label: `Sign Up ${days}d` };
   }
+  // Registered: always show withdrawal deadline while it's still in the future
   const wd = daysUntil(t.withdrawalDeadline);
-  if (wd !== null && wd <= 0) return { type: 'withdraw', label: 'Withdrawal Today' };
-  return null;
+  if (wd === null) return null;
+  if (wd < 0) return null;
+  if (wd === 0) return { type: 'withdraw', label: 'Withdraw today' };
+  return { type: 'withdraw', label: `Withdraw in ${wd}d` };
 }
 
 function calcEndDate(startDateStr: string): string {
@@ -138,14 +141,57 @@ function deadlineLabel(dateStr: string | undefined): string {
   return `in ${d}d`;
 }
 
+const ITF3_TO_ISO2: Record<string, string> = {
+  'ROU':'RO','ESP':'ES','FRA':'FR','GER':'DE','ITA':'IT','GBR':'GB','USA':'US',
+  'ARG':'AR','BRA':'BR','AUS':'AU','SUI':'CH','BEL':'BE','NED':'NL','POL':'PL',
+  'CZE':'CZ','POR':'PT','SWE':'SE','AUT':'AT','GRE':'GR','HUN':'HU','BUL':'BG',
+  'CRO':'HR','SRB':'RS','RUS':'RU','UKR':'UA','KAZ':'KZ','JPN':'JP','CHN':'CN',
+  'KOR':'KR','IND':'IN','CHI':'CL','COL':'CO','PER':'PE','MEX':'MX','CAN':'CA',
+  'RSA':'ZA','EGY':'EG','MAR':'MA','TUN':'TN','SVK':'SK','SLO':'SI','TUR':'TR',
+  'ISR':'IL','THA':'TH','MAS':'MY','INA':'ID','PHI':'PH','UZB':'UZ','NGR':'NG',
+};
+
+const COUNTRY_NAME_ALIASES: Record<string, string> = {
+  'great britain': 'GB', 'china, p.r.': 'CN', "chinese taipei": 'TW',
+  'turkiye': 'TR', 'korea, rep.': 'KR', 'iran, i.r.': 'IR',
+  'slovak republic': 'SK', 'czech republic': 'CZ', 'republic of moldova': 'MD',
+};
+
 function countryFlag(country: string): string {
-  const code = (country ?? '').toUpperCase();
-  if (code.length !== 2) return '🌍';
-  return String.fromCodePoint(...[...code].map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
+  const raw = (country ?? '').trim();
+  if (!raw) return '';
+  const upper = raw.toUpperCase();
+  // 2-letter ISO code
+  if (raw.length === 2) {
+    return String.fromCodePoint(...[...upper].map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
+  }
+  // 3-letter ITF code → 2-letter ISO
+  if (raw.length === 3 && ITF3_TO_ISO2[upper]) {
+    const iso2 = ITF3_TO_ISO2[upper];
+    return String.fromCodePoint(...[...iso2].map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
+  }
+  // Alias overrides (ITF uses different names than ISO standard)
+  const alias = COUNTRY_NAME_ALIASES[raw.toLowerCase()];
+  if (alias) {
+    return String.fromCodePoint(...[...alias].map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
+  }
+  // Full country name → look up in COUNTRIES
+  const found = COUNTRIES.find(c => c.name.toLowerCase() === raw.toLowerCase());
+  if (found) {
+    return String.fromCodePoint(...[...found.code.toUpperCase()].map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
+  }
+  return '';
 }
 
 function fmt(n: number) {
   return '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 0 });
+}
+
+function fmtShortDate(iso: string): string {
+  if (!iso) return '…';
+  const [, m, d] = iso.split('-').map(Number);
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${d} ${months[m - 1]}`;
 }
 
 function getWeekMonday(dateStr: string | undefined): string {
@@ -1429,14 +1475,16 @@ export function AddTournamentModal({ onClose, defaultStartDate }: { onClose: () 
 // No DISCOVERY_PILLS — replaced by structured filter panel
 
 function TournamentDiscoveryModal({
-  visible, onClose, allTournaments, onOpenAddManual,
+  visible, onClose, allTournaments, itfTournaments = [], onOpenAddManual,
 }: {
   visible: boolean;
   onClose: () => void;
   allTournaments: any[];
+  itfTournaments?: any[];
   onOpenAddManual: () => void;
 }) {
   const { t } = useLanguage();
+  const [browseMode, setBrowseMode]               = useState<'itf' | 'challenger'>('itf');
   const [discoverySearch, setDiscoverySearch]     = useState('');
   const [showFilterPanel, setShowFilterPanel]     = useState(false);
   const [showDatePanel, setShowDatePanel]         = useState(false);
@@ -1451,14 +1499,22 @@ function TournamentDiscoveryModal({
   const [filterDateStart,  setFilterDateStart]  = useState('');
   const [filterDateEnd,    setFilterDateEnd]    = useState('');
 
+  // Distinct country names from ITF data for autocomplete
+  const itfCountryNames = useMemo(() => {
+    const names = new Set(itfTournaments.map((t: any) => t.country).filter(Boolean));
+    return Array.from(names).sort() as string[];
+  }, [itfTournaments]);
+
   // Pending filter state (applied on APPLY)
   const [pendingCountry,    setPendingCountry]    = useState('');
+  const [pendingCountryLocked, setPendingCountryLocked] = useState(false);
   const [pendingCategories, setPendingCategories] = useState<string[]>([]);
   const [pendingSurfaces,   setPendingSurfaces]   = useState<string[]>([]);
   const [pendingVenueTypes, setPendingVenueTypes] = useState<string[]>([]);
 
   function openFilters() {
     setPendingCountry(filterCountry);
+    setPendingCountryLocked(!!filterCountry);
     setPendingCategories([...filterCategories]);
     setPendingSurfaces([...filterSurfaces]);
     setPendingVenueTypes([...filterVenueTypes]);
@@ -1472,7 +1528,7 @@ function TournamentDiscoveryModal({
     setShowFilterPanel(false);
   }
   function clearFilters() {
-    setPendingCountry(''); setPendingCategories([]); setPendingSurfaces([]); setPendingVenueTypes([]);
+    setPendingCountry(''); setPendingCountryLocked(false); setPendingCategories([]); setPendingSurfaces([]); setPendingVenueTypes([]);
   }
 
   function toggleArr(arr: string[], set: (v: string[]) => void, val: string) {
@@ -1493,9 +1549,37 @@ function TournamentDiscoveryModal({
   const [trainNote, setTrainNote]     = useState('');
   const [savingTrain, setSavingTrain] = useState(false);
 
+  const myCalendarIds = new Set(allTournaments.filter((t: any) => t.isInMyList !== false).map((t: any) => t.id));
   const discoverable = allTournaments.filter((trn: any) => trn.isInMyList === false);
 
-  const filtered = discoverable.filter((trn: any) => {
+  // ITF tournaments from Supabase that user hasn't added yet
+  const itfDiscoverable = itfTournaments.filter(t => !myCalendarIds.has(t.id));
+
+  async function handleAddFromITF(tournament: any) {
+    try {
+      const calc = tournament.startDate ? calcDeadlines(tournament.startDate, tournament.category) : {};
+      await apiAddTournament({
+        name: tournament.name,
+        city: tournament.city,
+        country: tournament.country,
+        surface: tournament.surface,
+        category: tournament.category,
+        startDate: tournament.startDate,
+        endDate: tournament.endDate ?? (tournament.startDate ? calcEndDate(tournament.startDate) : undefined),
+        prizeMoney: tournament.prizeMoney,
+        isInMyList: true,
+        isRegistered: false,
+        ...calc,
+      });
+      onClose();
+    } catch (_) {}
+  }
+
+  const activeList = browseMode === 'challenger'
+    ? itfDiscoverable.filter(t => (t.category ?? '').toLowerCase().includes('challenger'))
+    : itfDiscoverable;
+
+  const filtered = activeList.filter((trn: any) => {
     if (discoverySearch.trim()) {
       const q = discoverySearch.toLowerCase();
       const match =
@@ -1505,12 +1589,27 @@ function TournamentDiscoveryModal({
       if (!match) return false;
     }
     if (filterCountry) {
-      const fc = filterCountry.trim().toUpperCase();
-      const matchedCode = COUNTRIES.find(c => c.name.toLowerCase() === filterCountry.trim().toLowerCase())?.code.toUpperCase() ?? fc;
-      if ((trn.country ?? '').toUpperCase() !== matchedCode) return false;
+      const filterLower = filterCountry.trim().toLowerCase();
+      const trnCountryRaw = (trn.country ?? '');
+      // Match full country name (Supabase stores "Romania", "USA", etc.)
+      const nameMatch = trnCountryRaw.toLowerCase() === filterLower;
+      // Fallback: match ISO 2-letter or 3-letter code (for any InstantDB records using codes)
+      const isoCode = COUNTRIES.find(c => c.name.toLowerCase() === filterLower)?.code.toUpperCase() ?? '';
+      const ISO3: Record<string, string> = {
+        'RO':'ROU','ES':'ESP','FR':'FRA','DE':'GER','IT':'ITA','GB':'GBR','US':'USA',
+        'AR':'ARG','BR':'BRA','AU':'AUS','CH':'SUI','BE':'BEL','NL':'NED','PL':'POL',
+        'CZ':'CZE','PT':'POR','SE':'SWE','AT':'AUT','GR':'GRE','HU':'HUN','BG':'BUL',
+        'HR':'CRO','RS':'SRB','RU':'RUS','UA':'UKR','KZ':'KAZ','JP':'JPN','CN':'CHN',
+        'KR':'KOR','IN':'IND','CL':'CHI','CO':'COL','PE':'PER','MX':'MEX','CA':'CAN',
+        'ZA':'RSA','EG':'EGY','MA':'MAR','TN':'TUN','SK':'SVK','SI':'SLO','TR':'TUR',
+        'IL':'ISR','TH':'THA','MY':'MAS','ID':'INA','PH':'PHI','UZ':'UZB',
+      };
+      const trnUpper = trnCountryRaw.toUpperCase();
+      const codeMatch = isoCode && (trnUpper === isoCode || trnUpper === (ISO3[isoCode] ?? ''));
+      if (!nameMatch && !codeMatch) return false;
     }
     if (filterCategories.length > 0 && !filterCategories.some(c => (trn.category ?? '').includes(c))) return false;
-    if (filterSurfaces.length > 0 && !filterSurfaces.includes((trn.surface ?? '').toLowerCase())) return false;
+    if (filterSurfaces.length > 0 && !filterSurfaces.some(s => (trn.surface ?? '').toLowerCase().includes(s))) return false;
     if (filterDateStart && trn.startDate && trn.startDate < filterDateStart) return false;
     if (filterDateEnd && trn.startDate && trn.startDate > filterDateEnd) return false;
     return true;
@@ -1596,6 +1695,20 @@ function TournamentDiscoveryModal({
           <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
             <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 48 }}>
 
+              {/* Browse ITF / Browse Challenger toggle */}
+              <View style={{ flexDirection: 'row', marginHorizontal: 20, marginBottom: 16, backgroundColor: '#1A1A2E', borderRadius: 10, padding: 3 }}>
+                <TouchableOpacity
+                  style={{ flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center', backgroundColor: browseMode === 'itf' ? '#5B5BD6' : 'transparent' }}
+                  onPress={() => setBrowseMode('itf')} activeOpacity={0.8}>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: browseMode === 'itf' ? '#FFF' : '#777' }}>Browse ITF</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{ flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center', backgroundColor: browseMode === 'challenger' ? '#5B5BD6' : 'transparent' }}
+                  onPress={() => setBrowseMode('challenger')} activeOpacity={0.8}>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: browseMode === 'challenger' ? '#FFF' : '#777' }}>Browse Challenger</Text>
+                </TouchableOpacity>
+              </View>
+
               {/* Search + filter row */}
               <View style={disc.searchWrap}>
                 <IconSymbol name="magnifyingglass" size={16} color="#888" style={{ marginRight: 8 }} />
@@ -1607,6 +1720,37 @@ function TournamentDiscoveryModal({
                   </TouchableOpacity>
                 )}
               </View>
+
+              {/* Active filter chips */}
+              {(filterCountry || filterSurfaces.length > 0 || filterCategories.length > 0 || filterVenueTypes.length > 0 || filterDateStart || filterDateEnd) ? (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 20, marginBottom: 12 }}>
+                  {filterCountry ? (
+                    <TouchableOpacity style={disc.activeChip} onPress={() => setFilterCountry('')} activeOpacity={0.8}>
+                      <Text style={disc.activeChipText}>{filterCountry} ✕</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                  {filterSurfaces.map(s => (
+                    <TouchableOpacity key={s} style={disc.activeChip} onPress={() => setFilterSurfaces(filterSurfaces.filter(x => x !== s))} activeOpacity={0.8}>
+                      <Text style={disc.activeChipText}>{s.charAt(0).toUpperCase() + s.slice(1)} ✕</Text>
+                    </TouchableOpacity>
+                  ))}
+                  {filterCategories.map(c => (
+                    <TouchableOpacity key={c} style={disc.activeChip} onPress={() => setFilterCategories(filterCategories.filter(x => x !== c))} activeOpacity={0.8}>
+                      <Text style={disc.activeChipText}>{c} ✕</Text>
+                    </TouchableOpacity>
+                  ))}
+                  {filterVenueTypes.map(v => (
+                    <TouchableOpacity key={v} style={disc.activeChip} onPress={() => setFilterVenueTypes(filterVenueTypes.filter(x => x !== v))} activeOpacity={0.8}>
+                      <Text style={disc.activeChipText}>{v} ✕</Text>
+                    </TouchableOpacity>
+                  ))}
+                  {(filterDateStart || filterDateEnd) ? (
+                    <TouchableOpacity style={disc.activeChip} onPress={() => { setFilterDateStart(''); setFilterDateEnd(''); }} activeOpacity={0.8}>
+                      <Text style={disc.activeChipText}>{fmtShortDate(filterDateStart)} – {fmtShortDate(filterDateEnd)} ✕</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+              ) : null}
 
               {/* Filter / Date range chips */}
               <View style={{ flexDirection: 'row', gap: 10, paddingHorizontal: 20, marginBottom: 20 }}>
@@ -1620,38 +1764,56 @@ function TournamentDiscoveryModal({
                 </TouchableOpacity>
               </View>
 
-              {/* Available tournaments */}
+              {/* Available tournaments — grouped by week */}
               <Text style={disc.sectionLabel}>{t('discovery.available')}</Text>
 
               {filtered.length === 0 ? (
                 <Text style={disc.emptyText}>{t('discovery.noTournaments')}</Text>
-              ) : (
-                filtered.map((trn: any) => {
-                  const days = daysUntil(trn.signUpDeadline);
-                  const urgentColor = days !== null && days <= 7 ? '#E24B4A' : days !== null && days <= 14 ? '#E8A030' : null;
-                  return (
-                    <TouchableOpacity key={trn.id} style={disc.trnRow} onPress={() => handleAddFromDiscovery(trn)} activeOpacity={0.75}>
-                      <View style={{ marginRight: 10 }}>
-                        {trn.surface ? <CourtIcon surface={trn.surface} size="sm" /> : null}
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={disc.trnName} numberOfLines={1}>
-                          {trn.country ? countryFlag(trn.country) + ' ' : ''}{trn.name}
-                        </Text>
-                        <Text style={disc.trnMeta} numberOfLines={1}>
-                          {[trn.city, fmtDateRange(trn.startDate, trn.endDate)].filter(Boolean).join(' · ')}
-                        </Text>
-                      </View>
-                      {trn.category ? <View style={disc.catPill}><Text style={disc.catPillText}>{trn.category}</Text></View> : null}
-                      {urgentColor && days !== null ? (
-                        <View style={[disc.deadlinePill, { backgroundColor: urgentColor + '22', marginLeft: 6 }]}>
-                          <Text style={[disc.deadlinePillText, { color: urgentColor }]}>{days}d</Text>
-                        </View>
-                      ) : null}
-                    </TouchableOpacity>
-                  );
-                })
-              )}
+              ) : (() => {
+                const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+                function fmtWeekHeader(iso: string) {
+                  const [y, m, d] = iso.split('-').map(Number);
+                  return `${d} ${MONTH_NAMES[m - 1]} ${y}`;
+                }
+                const weekMap: Record<string, any[]> = {};
+                for (const trn of filtered) {
+                  const monday = trn.startDate ? getWeekMonday(trn.startDate) : '';
+                  const key = monday || trn.startDate || 'No date';
+                  if (!weekMap[key]) weekMap[key] = [];
+                  weekMap[key].push(trn);
+                }
+                const weeks = Object.keys(weekMap).sort();
+                return weeks.map(week => (
+                  <View key={week}>
+                    <Text style={disc.weekHeader}>{fmtWeekHeader(week)}</Text>
+                    {weekMap[week].map((trn: any) => {
+                      const days = daysUntil(trn.signUpDeadline);
+                      const urgentColor = days !== null && days <= 7 ? '#E24B4A' : days !== null && days <= 14 ? '#E8A030' : null;
+                      return (
+                        <TouchableOpacity key={trn.id} style={disc.trnRow} onPress={() => trn._fromSupabase ? handleAddFromITF(trn) : handleAddFromDiscovery(trn)} activeOpacity={0.75}>
+                          <View style={{ marginRight: 10 }}>
+                            {trn.surface ? <CourtIcon surface={trn.surface} size="sm" /> : null}
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={disc.trnName} numberOfLines={1}>
+                              {trn.country ? countryFlag(trn.country) + ' ' : ''}{trn.name}
+                            </Text>
+                            <Text style={disc.trnMeta} numberOfLines={1}>
+                              {[trn.city, fmtDateRange(trn.startDate, trn.endDate), trn.prizeMoney ? `$${Number(trn.prizeMoney).toLocaleString()}` : null].filter(Boolean).join(' · ')}
+                            </Text>
+                          </View>
+                          {trn.category ? <View style={disc.catPill}><Text style={disc.catPillText}>{trn.category}</Text></View> : null}
+                          {urgentColor && days !== null ? (
+                            <View style={[disc.deadlinePill, { backgroundColor: urgentColor + '22', marginLeft: 6 }]}>
+                              <Text style={[disc.deadlinePillText, { color: urgentColor }]}>{days}d</Text>
+                            </View>
+                          ) : null}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                ));
+              })()}
 
               <View style={disc.divider} />
 
@@ -1700,22 +1862,29 @@ function TournamentDiscoveryModal({
           <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 120 }}>
             {/* Country */}
             <Text style={disc.filterSectionLabel}>{t('discovery.country')}</Text>
-            <View style={disc.filterInputWrap}>
-              <TextInput style={disc.filterInput} value={pendingCountry} onChangeText={setPendingCountry}
-                placeholder={t('discovery.countrySelect')} placeholderTextColor="#AAA" autoCorrect={false} />
+            <View style={[disc.filterInputWrap, { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 }]}>
+              {pendingCountryLocked ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#5B5BD6', borderRadius: 16, paddingHorizontal: 10, paddingVertical: 5 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: '#FFF', marginRight: 6 }}>{pendingCountry}</Text>
+                  <TouchableOpacity onPress={() => { setPendingCountry(''); setPendingCountryLocked(false); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} activeOpacity={0.7}>
+                    <Text style={{ fontSize: 13, color: '#FFF', fontWeight: '700' }}>×</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TextInput style={[disc.filterInput, { flex: 1 }]} value={pendingCountry} onChangeText={setPendingCountry}
+                  placeholder={t('discovery.countrySelect')} placeholderTextColor="#AAA" autoCorrect={false} />
+              )}
             </View>
-            {pendingCountry.trim().length >= 2 && (() => {
+            {!pendingCountryLocked && pendingCountry.trim().length >= 1 && (() => {
               const q = pendingCountry.trim().toLowerCase();
-              const matches = COUNTRIES.filter(c =>
-                c.name.toLowerCase().includes(q) || c.code.toLowerCase() === q
-              ).slice(0, 5);
+              const matches = itfCountryNames.filter(name => name.toLowerCase().includes(q)).slice(0, 6);
               if (!matches.length) return null;
               return (
                 <View style={{ backgroundColor: T.card, borderRadius: 8, borderWidth: 1, borderColor: T.cardBorder, marginTop: 4, marginBottom: 8 }}>
-                  {matches.map(c => (
-                    <TouchableOpacity key={c.code} style={{ paddingHorizontal: 14, paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: T.cardBorder }}
-                      onPress={() => setPendingCountry(c.name)} activeOpacity={0.7}>
-                      <Text style={{ color: T.textPrimary, fontSize: 14 }}>{countryFlag(c.code)} {c.name}</Text>
+                  {matches.map(name => (
+                    <TouchableOpacity key={name} style={{ paddingHorizontal: 14, paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: T.cardBorder }}
+                      onPress={() => { setPendingCountry(name); setPendingCountryLocked(true); }} activeOpacity={0.7}>
+                      <Text style={{ color: T.textPrimary, fontSize: 14 }}>{countryFlag(name)} {name}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -1829,12 +1998,15 @@ function TournamentDiscoveryModal({
                 );
               });
             })()}
-            {(filterDateStart || filterDateEnd) && (
-              <TouchableOpacity onPress={() => { setFilterDateStart(''); setFilterDateEnd(''); }} style={{ alignSelf: 'center', marginTop: 20 }} activeOpacity={0.7}>
-                <Text style={{ color: '#E24B4A', fontSize: 14, fontWeight: '600' }}>{t('discovery.clear')}</Text>
-              </TouchableOpacity>
-            )}
           </ScrollView>
+          <View style={disc.filterActions}>
+            <TouchableOpacity style={disc.clearBtn} onPress={() => { setFilterDateStart(''); setFilterDateEnd(''); }} activeOpacity={0.8}>
+              <Text style={disc.clearBtnText}>{t('discovery.clear')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={disc.applyBtn} onPress={() => setShowDatePanel(false)} activeOpacity={0.8}>
+              <Text style={disc.applyBtnText}>{t('discovery.apply')}</Text>
+            </TouchableOpacity>
+          </View>
         </SafeAreaView>
       </Modal>
 
@@ -1930,6 +2102,9 @@ const disc = StyleSheet.create({
   clearBtnText:    { fontSize: 13, fontWeight: '700', color: T.textSecondary, letterSpacing: 0.5 },
   applyBtn:        { flex: 2, borderRadius: 24, paddingVertical: 14, alignItems: 'center', backgroundColor: T.accent },
   applyBtnText:    { fontSize: 13, fontWeight: '700', color: T.textPrimary, letterSpacing: 0.5 },
+  activeChip:      { flexDirection: 'row', alignItems: 'center', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#5B5BD6' },
+  activeChipText:  { fontSize: 13, fontWeight: '600', color: '#FFF' },
+  weekHeader:      { fontSize: 13, fontWeight: '700', color: T.textPrimary, paddingHorizontal: 20, paddingTop: 20, paddingBottom: 8 },
 });
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
@@ -1965,26 +2140,65 @@ export default function TournamentsScreen() {
     });
   }
 
-  async function removeSelectedTournaments() {
-    setRemovingTournaments(true);
-    try {
-      for (const id of selectedTournaments) {
-        if (DEMO_MODE) {
-          demoCtx?.patchTournament(id, { isInMyList: false });
-        } else {
-          await apiPatchTournament(id, { isInMyList: false });
-        }
-      }
-    } finally {
-      setRemovingTournaments(false);
-      setSelectedTournaments(new Set());
-    }
+  function removeSelectedTournaments() {
+    const count = selectedTournaments.size;
+    Alert.alert(
+      `Delete ${count} tournament${count !== 1 ? 's' : ''}?`,
+      'This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete', style: 'destructive',
+          onPress: async () => {
+            setRemovingTournaments(true);
+            try {
+              for (const id of selectedTournaments) {
+                if (DEMO_MODE) {
+                  demoCtx?.patchTournament(id, { isInMyList: false });
+                } else {
+                  await apiDeleteTournament(id);
+                }
+              }
+            } finally {
+              setRemovingTournaments(false);
+              setSelectedTournaments(new Set());
+            }
+          },
+        },
+      ],
+    );
   }
 
   const { openTournament } = useLocalSearchParams<{ openTournament?: string }>();
   useEffect(() => {
     if (openTournament) setDetailId(openTournament);
   }, [openTournament]);
+
+  // ── Supabase ITF calendar (upcoming, scraped) ─────────────────────────────
+  const [itfTournaments, setItfTournaments] = useState<any[]>([]);
+  useEffect(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    supabase
+      .from('itf_tournaments')
+      .select('itf_id, name, city, country, surface, category, start_date, end_date, prize_money_total')
+      .gte('start_date', today)
+      .order('start_date', { ascending: true })
+      .limit(500)
+      .then(({ data: rows }) => {
+        if (rows) setItfTournaments(rows.map(r => ({
+          id: r.itf_id,
+          name: r.name,
+          city: r.city,
+          country: r.country,
+          surface: r.surface,
+          category: r.category,
+          startDate: r.start_date,
+          endDate: r.end_date,
+          prizeMoney: r.prize_money_total,
+          _fromSupabase: true,
+        })));
+      });
+  }, []);
 
   const reconciledRef = useRef(new Set<string>());
   useEffect(() => {
@@ -2030,7 +2244,9 @@ export default function TournamentsScreen() {
 
         <View style={styles.topBar}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <AgentIcon size={70} />
+            <TouchableOpacity onPress={() => router.push('/settings' as any)} activeOpacity={0.75}>
+              <AgentIcon size={70} />
+            </TouchableOpacity>
             <Text style={styles.topTitle}>{t('tournaments.title')}</Text>
           </View>
           <TouchableOpacity style={styles.addButton} onPress={() => setShowDiscovery(true)} activeOpacity={0.8}>
@@ -2120,9 +2336,17 @@ export default function TournamentsScreen() {
           <>
             <Text style={styles.sectionLabel}>{t('tournaments.withdrawn').toUpperCase()}</Text>
             {withdrawnGroup.map((item: any) => (
-              <TouchableOpacity key={item.id} style={styles.cardWithdrawn}
-                onPress={() => setDetailId(item.id)} activeOpacity={0.7}>
+              <TouchableOpacity key={item.id}
+                style={[styles.cardWithdrawn, selectedTournaments.has(item.id) && styles.cardSelected]}
+                onPress={() => tournamentSelectMode ? toggleTournamentSelect(item.id) : setDetailId(item.id)}
+                onLongPress={() => toggleTournamentSelect(item.id)}
+                activeOpacity={0.7}>
                 <View style={styles.cardTopRow}>
+                  {tournamentSelectMode && (
+                    <View style={[styles.selectBox, selectedTournaments.has(item.id) && styles.selectBoxOn]}>
+                      {selectedTournaments.has(item.id) && <Text style={styles.selectCheck}>✓</Text>}
+                    </View>
+                  )}
                   <Text style={styles.cardTitleMuted} numberOfLines={1}>
                     {item.country ? countryFlag(item.country) + ' ' : ''}{item.name}
                   </Text>
@@ -2136,7 +2360,10 @@ export default function TournamentsScreen() {
           </>
         )}
 
-        {tournamentSelectMode && (
+      </ScrollView>
+
+      {tournamentSelectMode && (
+        <View style={styles.removeBtnBar}>
           <TouchableOpacity
             style={[styles.removeBtn, removingTournaments && { opacity: 0.5 }]}
             onPress={removeSelectedTournaments}
@@ -2144,15 +2371,16 @@ export default function TournamentsScreen() {
             activeOpacity={0.8}>
             {removingTournaments
               ? <ActivityIndicator color={T.textPrimary} />
-              : <Text style={styles.removeBtnText}>Remove {selectedTournaments.size} tournament{selectedTournaments.size !== 1 ? 's' : ''}</Text>}
+              : <Text style={styles.removeBtnText}>Delete {selectedTournaments.size} tournament{selectedTournaments.size !== 1 ? 's' : ''}</Text>}
           </TouchableOpacity>
-        )}
-      </ScrollView>
+        </View>
+      )}
 
       <TournamentDiscoveryModal
         visible={showDiscovery}
         onClose={() => setShowDiscovery(false)}
         allTournaments={data?.tournaments ?? []}
+        itfTournaments={itfTournaments}
         onOpenAddManual={() => setShowAddForm(true)}
       />
       {showAddForm && <AddTournamentModal onClose={() => setShowAddForm(false)} />}
@@ -2200,7 +2428,8 @@ const styles = StyleSheet.create({
   selectBoxOn: { backgroundColor: T.teal, borderColor: T.teal },
   selectCheck: { color: T.textPrimary, fontSize: 13, fontWeight: '700' },
   cardSelected: { borderWidth: 1.5, borderColor: T.teal },
-  removeBtn: { backgroundColor: T.red, borderRadius: 14, paddingVertical: 16, alignItems: 'center', marginTop: 8, marginBottom: 16 },
+  removeBtnBar: { paddingHorizontal: 20, paddingVertical: 12, borderTopWidth: 1, borderTopColor: '#2A2A3C', backgroundColor: '#0F0F1A' },
+  removeBtn: { backgroundColor: T.red, borderRadius: 14, paddingVertical: 16, alignItems: 'center' },
   removeBtnText: { fontSize: 15, fontWeight: '700', color: T.textPrimary },
   card: { borderRadius: 12, padding: 12, marginBottom: 6, backgroundColor: T.card },
   cardTopRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2, gap: 6 },

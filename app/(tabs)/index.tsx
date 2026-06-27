@@ -15,6 +15,7 @@ import { useAppQuery } from '@/hooks/useAppQuery';
 import { CourtIcon } from '@/components/ui/court-icon';
 import { TournamentDetail } from '@/app/(tabs)/tournaments';
 import { fmtDateRange } from '@/utils/deadlines';
+import { countryFlag } from '@/utils/countryFlag';
 import { useInsights, useGenerateInsight } from '@/hooks/useInsights';
 import { DEMO_MODE } from '@/config/demo';
 import { useFirstVisit } from '@/hooks/useFirstVisit';
@@ -28,16 +29,7 @@ import { T, SURFACE_STRIPE } from '@/constants/theme';
 import { TourlyLogo } from '@/components/ui/tourly-logo';
 import { useLanguage } from '@/hooks/useLanguage';
 
-const HOME_WALKTHROUGH = [
-  { icon: '✦', title: 'Your Financial Coach', body: 'Your AI coach updates daily with personalized insights. Tap the floating button at the bottom right to read them.' },
-  { icon: '📊', title: 'Season summary', body: 'Track your prize money, expenses, and net profit across the entire season at a glance.' },
-];
 
-function countryFlag(country: string): string {
-  const code = (country ?? '').toUpperCase();
-  if (code.length !== 2) return '🌍';
-  return String.fromCodePoint(...[...code].map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
-}
 
 function daysUntil(dateStr: string | undefined): number | null {
   if (!dateStr) return null;
@@ -212,10 +204,10 @@ export default function HomeScreen() {
           ) : tournaments.length === 0 ? (
             <View style={st.emptyState}>
               <Text style={st.emptyStateIcon}>🎾</Text>
-              <Text style={st.emptyStateTitle}>No tournaments yet</Text>
-              <Text style={st.emptyStateBody}>Add your first tournament in the Tournaments tab to start tracking deadlines, expenses, and earnings.</Text>
+              <Text style={st.emptyStateTitle}>{t('home.noTournamentsYet')}</Text>
+              <Text style={st.emptyStateBody}>{t('home.noTournamentsBody')}</Text>
               <TouchableOpacity style={st.emptyStateCta} activeOpacity={0.8} onPress={() => router.push('/(tabs)/tournaments' as any)}>
-                <Text style={st.emptyStateCtaText}>Go to Tournaments</Text>
+                <Text style={st.emptyStateCtaText}>{t('home.goToTournaments')}</Text>
               </TouchableOpacity>
             </View>
           ) : (
@@ -403,7 +395,14 @@ export default function HomeScreen() {
       {detailId && (
         <TournamentDetail tournamentId={detailId} onClose={() => setDetailId(null)} />
       )}
-      <ScreenWalkthrough steps={HOME_WALKTHROUGH} visible={isFirstVisit} onDismiss={markVisited} />
+      <ScreenWalkthrough
+        steps={[
+          { icon: '✦', title: t('walkthrough.home.ai.title'), body: t('walkthrough.home.ai.body') },
+          { icon: '📊', title: t('walkthrough.home.season.title'), body: t('walkthrough.home.season.body') },
+        ]}
+        visible={isFirstVisit}
+        onDismiss={markVisited}
+      />
     </SafeAreaView>
   );
 }

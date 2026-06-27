@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   View,
   ScrollView,
@@ -11,6 +11,8 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Text } from '@/components/ui/text';
 import { useAppQuery } from '@/hooks/useAppQuery';
+import { TextInput } from 'react-native';
+import { supabase } from '@/lib/supabase';
 
 const SURFACES: Array<{ key: 'clay' | 'hard'; label: string; color: string }> = [
   { key: 'clay', label: 'Clay', color: '#D4915A' },
@@ -144,6 +146,48 @@ export default function MyPerformanceScreen() {
     });
     return best;
   }, [bySurface, expenses, tournamentsWithExpenses]);
+
+  // ── ATP player profile from Supabase ────────────────────────────────────────
+  const [atpProfile, setAtpProfile] = useState<any>(null);
+  const [compareQuery, setCompareQuery] = useState('');
+  const [compareSuggestions, setCompareSuggestions] = useState<any[]>([]);
+  const [compareProfile, setCompareProfile] = useState<any>(null);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) return;
+      supabase.from('profiles').select('atp_player_name').eq('id', user.id).single()
+        .then(({ data: prof }) => {
+          if (!prof?.atp_player_name) return;
+          supabase.from('player_profiles').select('*')
+            .ilike('player_name', prof.atp_player_name).single()
+            .then(({ data }) => { if (data) setAtpProfile(data); });
+        });
+    });
+  }, []);
+
+  useEffect(() => {
+    if (compareQuery.trim().length < 2) { setCompareSuggestions([]); return; }
+    const t = setTimeout(() => {
+      supabase.from('player_profiles').select('player_name, current_ranking')
+        .ilike('player_name', `%${compareQuery.trim()}%`).limit(6)
+        .then(({ data }) => setCompareSuggestions(data ?? []));
+    }, 400);
+    return () => clearTimeout(t);
+  }, [compareQuery]);
+
+  const defendingThisYear = useMemo(() => {
+    if (!atpProfile?.points_defending) return [];
+    const now = new Date().toISOString().slice(0, 10);
+    return (atpProfile.points_defending as any[])
+      .filter(d => d.weekOf >= now)
+      .slice(0, 16);
+  }, [atpProfile]);
+
+  const atpMatchHistory = useMemo(() => {
+    if (!atpProfile?.match_history) return [];
+    return (atpProfile.match_history as any[]).slice(0, 20);
+  }, [atpProfile]);
 
   function abbrevDate(dateStr: string | undefined): string {
     if (!dateStr) return '';
@@ -437,6 +481,101 @@ export default function MyPerformanceScreen() {
               <Text style={s.lockedText}>Not enough expense data yet</Text>
             </View>
           )}
+        </View>
+
+        {/* ── POINTS TO DEFEND ── */}
+        {atpProfile && (
+          <View style={s.section}>
+            <Text style={s.sectionLabel}>POINTS TO DEFEND</Text>
+            {defendingThisYear.length === 0 ? (
+              <View style={s.card}><Text style={s.lockedText}>No points to defend in upcoming weeks</Text></View>
+            ) : (
+              <View style={s.card}>
+                {defendingThisYear.map((d: any) => {
+                  const [, m, day] = d.weekOf.split('-').map(Number);
+                  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                  const label = `${months[m-1]} ${day}`;
+                  const maxPts = Math.max(...defendingThisYear.map((x: any) => x.points));
+                  const pct = maxPts > 0 ? d.points / maxPts : 0;
+                  return (
+                    <View key={d.weekOf} style={{ marginBottom: 10 }}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
+                        <Text style={{ fontSize: 12, color: '#A0A0C8' }}>{label} · {d.tournamentName}</Text>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#FAFAFA' }}>{d.points} pts</Text>
+                      </View>
+                      <View style={{ height: 6, backgroundColor: '#2A2A4A', borderRadius: 3 }}>
+                        <View style={{ height: 6, width: `${Math.round(pct * 100)}%` as any, backgroundColor: '#5B5BD6', borderRadius: 3 }} />
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* ── ATP MATCH HISTORY ── */}
+        {atpProfile && atpMatchHistory.length > 0 && (
+          <View style={s.section}>
+            <Text style={s.sectionLabel}>ATP RESULTS THIS YEAR</Text>
+            <View style={s.card}>
+              {atpMatchHistory.map((m: any, i: number) => (
+                <View key={i} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: i < atpMatchHistory.length - 1 ? 1 : 0, borderBottomColor: '#2A2A4A' }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#FAFAFA' }} numberOfLines={1}>{m.tournamentName}</Text>
+                    <Text style={{ fontSize: 11, color: '#A0A0C8', marginTop: 2 }}>{m.date} · {m.surface}</Text>
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#5B5BD6' }}>{m.roundReached}</Text>
+                    {m.pointsEarned > 0 && <Text style={{ fontSize: 11, color: '#A0A0C8' }}>{m.pointsEarned} pts</Text>}
+                  </View>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
+
+        {/* ── COMPARE PLAYERS ── */}
+        <View style={s.section}>
+          <Text style={s.sectionLabel}>COMPARE PLAYERS</Text>
+          <View style={[s.card, { paddingBottom: 8 }]}>
+            <TextInput
+              style={{ backgroundColor: '#0F0F1A', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: '#FAFAFA', borderWidth: 1, borderColor: '#2A2A4A', marginBottom: 4 }}
+              placeholder="Search player name..." placeholderTextColor="#555"
+              value={compareQuery} onChangeText={setCompareQuery} autoCorrect={false}
+            />
+            {compareSuggestions.map((p: any) => (
+              <TouchableOpacity key={p.player_name} style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#2A2A4A' }}
+                onPress={() => {
+                  setCompareQuery(p.player_name);
+                  setCompareSuggestions([]);
+                  supabase.from('player_profiles').select('*').eq('player_name', p.player_name).single()
+                    .then(({ data }) => { if (data) setCompareProfile(data); });
+                }} activeOpacity={0.7}>
+                <Text style={{ fontSize: 14, color: '#FAFAFA' }}>{p.player_name} <Text style={{ color: '#A0A0C8' }}>#{p.current_ranking}</Text></Text>
+              </TouchableOpacity>
+            ))}
+            {compareProfile && atpProfile && (
+              <View style={{ marginTop: 12 }}>
+                {[
+                  { label: 'Ranking', mine: `#${atpProfile.current_ranking ?? '—'}`, theirs: `#${compareProfile.current_ranking ?? '—'}` },
+                  ...(['clay', 'hard', 'grass'] as const).map(sf => {
+                    const me = atpProfile.win_loss_by_surface?.[sf];
+                    const them = compareProfile.win_loss_by_surface?.[sf];
+                    const myPct = me && (me.wins + me.losses) > 0 ? Math.round(me.wins / (me.wins + me.losses) * 100) : null;
+                    const theirPct = them && (them.wins + them.losses) > 0 ? Math.round(them.wins / (them.wins + them.losses) * 100) : null;
+                    return { label: sf.charAt(0).toUpperCase() + sf.slice(1), mine: myPct != null ? `${myPct}%` : '—', theirs: theirPct != null ? `${theirPct}%` : '—' };
+                  }),
+                ].map(row => (
+                  <View key={row.label} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#2A2A4A' }}>
+                    <Text style={{ fontSize: 13, color: '#A0A0C8', flex: 1, textAlign: 'center' }}>{row.mine}</Text>
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#FAFAFA', flex: 1, textAlign: 'center' }}>{row.label}</Text>
+                    <Text style={{ fontSize: 13, color: '#A0A0C8', flex: 1, textAlign: 'center' }}>{row.theirs}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
         </View>
 
         <View style={{ height: 40 }} />

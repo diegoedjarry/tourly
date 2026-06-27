@@ -1,7 +1,7 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import {
   View, ScrollView, TouchableOpacity, StyleSheet, Dimensions,
-  TextInput, Platform, KeyboardAvoidingView,
+  TextInput, Platform, KeyboardAvoidingView, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -9,6 +9,7 @@ import { useUpdateProfile } from '@/hooks/useProfile';
 import { Text } from '@/components/ui/text';
 import { TourlyLogo } from '@/components/ui/tourly-logo';
 import { DatePickerField } from '@/components/ui/date-picker-field';
+import { supabase } from '@/lib/supabase';
 
 const { width: W } = Dimensions.get('window');
 const ACCENT = '#5B5BD6';
@@ -33,7 +34,7 @@ function Dots({ total, current }: { total: number; current: number }) {
 
 // ─── Screen 1: Welcome ────────────────────────────────────────────────────────
 
-function WelcomeScreen({ onNext, onSignIn }: { onNext: () => void; onSignIn: () => void }) {
+function WelcomeScreen({ onNext }: { onNext: () => void }) {
   return (
     <SafeAreaView style={[s.safe, { backgroundColor: '#2D2B55' }]}>
       <View style={s.centered}>
@@ -46,9 +47,6 @@ function WelcomeScreen({ onNext, onSignIn }: { onNext: () => void; onSignIn: () 
       <View style={s.welcomeBottom}>
         <TouchableOpacity style={s.primaryBtn} onPress={onNext} activeOpacity={0.85}>
           <Text style={s.primaryBtnText}>Get Started</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={onSignIn} activeOpacity={0.7} style={{ marginTop: 16 }}>
-          <Text style={s.linkText}>Already have an account? Sign in</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -311,6 +309,25 @@ function ProfileSetupScreen({ onNext, onBack }: { onNext: () => void; onBack: ()
   const [coachTravel, setCoachTravel] = useState('');
   const [stringing, setStringing] = useState('');
   const [ipin, setIpin] = useState('');
+  const [atpName, setAtpName] = useState('');
+  const [atpSearching, setAtpSearching] = useState(false);
+  const [atpMatch, setAtpMatch] = useState<{ player_name: string; current_ranking: number | null } | null>(null);
+
+  useEffect(() => {
+    if (atpName.trim().length < 3) { setAtpMatch(null); return; }
+    setAtpSearching(true);
+    const timer = setTimeout(async () => {
+      const { data } = await supabase
+        .from('player_profiles')
+        .select('player_name, current_ranking')
+        .ilike('player_name', `%${atpName.trim()}%`)
+        .limit(1)
+        .single();
+      setAtpMatch(data ?? null);
+      setAtpSearching(false);
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [atpName]);
 
   const selectedCountry = ALL_COUNTRIES.find(c => c.code === natCode);
   const filteredCountries = natSearch.trim()
@@ -332,6 +349,8 @@ function ProfileSetupScreen({ onNext, onBack }: { onNext: () => void; onBack: ()
     if (coachTravel) payload.travel_with_coach = coachTravel;
     if (stringing) payload.travel_with_stringing = stringing;
     if (ipin.trim()) payload.ipin_number = ipin.trim();
+    if (atpMatch) payload.atp_player_name = atpMatch.player_name;
+    else if (atpName.trim()) payload.atp_player_name = atpName.trim();
     try { await updateProfile.mutateAsync(payload); } catch {}
     onNext();
   }
@@ -434,6 +453,45 @@ function ProfileSetupScreen({ onNext, onBack }: { onNext: () => void; onBack: ()
 
             <Text style={[s.fieldLabel, { marginTop: 16 }]}>Travel with stringing machine</Text>
             <PillGroup options={STRINGING_OPTS} value={stringing} onChange={setStringing} />
+
+            <Text style={[s.fieldLabel, { marginTop: 16 }]}>ATP/ITF Player Name</Text>
+            <View style={{ position: 'relative' }}>
+              <TextInput
+                style={s.input}
+                value={atpName}
+                onChangeText={v => { setAtpName(v); setAtpMatch(null); }}
+                placeholder="e.g. Nicolas Jarry"
+                placeholderTextColor="#555"
+                autoCorrect={false}
+              />
+              {atpSearching && (
+                <ActivityIndicator size="small" color={ACCENT} style={{ position: 'absolute', right: 14, top: 14 }} />
+              )}
+            </View>
+            {atpMatch && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#0F2A1A', borderRadius: 10, padding: 12, marginTop: 6, gap: 10 }}>
+                <Text style={{ fontSize: 18 }}>✓</Text>
+                <View>
+                  <Text style={{ fontSize: 14, color: '#00E5A0', fontWeight: '700' }}>{atpMatch.player_name}</Text>
+                  {atpMatch.current_ranking && (
+                    <Text style={{ fontSize: 12, color: '#888' }}>ATP/ITF Ranking #{atpMatch.current_ranking}</Text>
+                  )}
+                </View>
+              </View>
+            )}
+            {atpName.trim().length >= 3 && !atpSearching && !atpMatch && (
+              <View style={{ backgroundColor: '#2A1A0A', borderRadius: 8, padding: 10, marginTop: 6, borderWidth: 1, borderColor: '#E8A030' }}>
+                <Text style={{ fontSize: 13, color: '#E8A030', fontWeight: '700', marginBottom: 2 }}>
+                  ⚠ No player found with that name
+                </Text>
+                <Text style={{ fontSize: 12, color: '#AAA', lineHeight: 17 }}>
+                  Check the spelling — use your full name exactly as it appears on atptour.com (e.g. "Carlos Alcaraz"). If correct, your profile will sync automatically once you save.
+                </Text>
+              </View>
+            )}
+            <Text style={{ fontSize: 12, color: '#555', marginTop: 4 }}>
+              Links your account to match history, results, and points defending.
+            </Text>
 
             <Text style={[s.fieldLabel, { marginTop: 16 }]}>IPIN Number</Text>
             <TextInput
@@ -539,7 +597,6 @@ export default function WalkthroughScreen() {
   const steps: React.ReactNode[] = [
     <WelcomeScreen
       onNext={() => setStep(1)}
-      onSignIn={() => router.replace('/auth')}
     />,
     <ProblemScreen
       onNext={() => setStep(2)}

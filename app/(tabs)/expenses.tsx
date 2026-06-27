@@ -159,11 +159,7 @@ const INSIGHTS: Record<string, Record<string, Array<(d: ID) => string>>> = {
   },
 };
 
-function countryFlag(country: string): string {
-  const code = (country ?? '').toUpperCase();
-  if (code.length !== 2) return '🌍';
-  return String.fromCodePoint(...[...code].map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
-}
+import { countryFlag } from '@/utils/countryFlag';
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -2640,7 +2636,9 @@ export default function ExpensesScreen() {
 
         <View style={styles.topBar}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <AgentIcon size={70} />
+            <TouchableOpacity onPress={() => router.push('/settings' as any)} activeOpacity={0.75}>
+              <AgentIcon size={70} />
+            </TouchableOpacity>
             <Text style={styles.topTitle}>{t('expenses.title')}</Text>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>

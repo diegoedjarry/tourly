@@ -226,16 +226,20 @@ export default function CalendarScreen() {
       {/* Sticky: month nav + day-of-week labels */}
       <View style={s.stickyTop}>
         <View style={s.topRow}>
-          <TouchableOpacity
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
-            activeOpacity={0.7}
-            onPress={() => setShowModeSheet(true)}>
-            <AgentIcon size={70} />
-            <Text style={s.monthTitle}>
-              {calendarMode === 'calendar' ? t('calendar.title') : t('calendar.pointsTitle')}
-            </Text>
-            <Text style={{ fontSize: 12, color: T.textTertiary }}>▼</Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <TouchableOpacity onPress={() => router.push('/settings' as any)} activeOpacity={0.75}>
+              <AgentIcon size={70} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+              activeOpacity={0.7}
+              onPress={() => setShowModeSheet(true)}>
+              <Text style={s.monthTitle}>
+                {calendarMode === 'calendar' ? t('calendar.title') : t('calendar.pointsTitle')}
+              </Text>
+              <Text style={{ fontSize: 12, color: T.textTertiary }}>▼</Text>
+            </TouchableOpacity>
+          </View>
           {(year !== now.getFullYear() || month !== now.getMonth()) && (
             <TouchableOpacity
               style={s.todayBtn}

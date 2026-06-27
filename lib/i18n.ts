@@ -181,6 +181,9 @@ const strings = {
   'home.changesQueuedPlural': { en: 'changes', es: 'cambios' },
   'home.noUrgentDeadlines': { en: 'No urgent deadlines', es: 'Sin plazos urgentes' },
   'home.today': { en: 'TODAY', es: 'HOY' },
+  'home.noTournamentsYet': { en: 'No tournaments yet', es: 'Sin torneos aún' },
+  'home.noTournamentsBody': { en: 'Add your first tournament in the Tournaments tab to start tracking deadlines, expenses, and earnings.', es: 'Agrega tu primer torneo en la pestaña Torneos para comenzar a seguir fechas límite, gastos y premios.' },
+  'home.goToTournaments': { en: 'Go to Tournaments', es: 'Ir a Torneos' },
 
   // Alerts extra
   'alerts.todayOnSite': { en: 'TODAY — ON SITE', es: 'HOY — EN EL TORNEO' },

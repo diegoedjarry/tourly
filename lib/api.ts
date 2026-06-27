@@ -86,3 +86,15 @@ export async function apiDeleteExpense(id: string) {
   if (error) throw error;
   queryClient.invalidateQueries({ queryKey: ['expenses'] });
 }
+
+export async function apiDeleteTournament(id: string) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+  if (await isOffline()) {
+    await enqueue({ table: 'tournaments', action: 'delete', matchId: id, userId: user.id });
+    return;
+  }
+  const { error } = await supabase.from('tournaments').delete().eq('id', id);
+  if (error) throw error;
+  queryClient.invalidateQueries({ queryKey: ['tournaments'] });
+}
