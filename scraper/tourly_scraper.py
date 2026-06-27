@@ -33,7 +33,7 @@ load_dotenv()
 # ── Hardcoded for testing — swap SUPABASE_SERVICE_KEY to secret key before prod ─
 os.environ.setdefault("SUPABASE_URL", "https://bpxcizhgntucuhhyykqc.supabase.co")
 os.environ.setdefault("SUPABASE_SERVICE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJweGNpemhnbnR1Y3VoaHl5a3FjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MTYzODg0OCwiZXhwIjoyMDk3MjE0ODQ4fQ.nzpHZ4kS4K16CqlomrAxURVWcuhFQtU9l324r7XuEiM")
-os.environ.setdefault("PLAYER_NAME", "Carlos Alcaraz")
+os.environ.setdefault("PLAYER_NAME", "")
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -929,6 +929,19 @@ async def run_player_phase(integrator: TourlyDataIntegrator, player_name: str):
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
+async def fetch_players_from_profiles(supabase: Client) -> list[str]:
+    """Returns all distinct non-null atp_player_name values from the profiles table."""
+    try:
+        res = supabase.from_("profiles").select("atp_player_name").neq("atp_player_name", None).execute()
+        names = [row["atp_player_name"].strip() for row in (res.data or []) if row.get("atp_player_name", "").strip()]
+        unique = list(dict.fromkeys(names))  # deduplicate, preserve order
+        print(f"   Found {len(unique)} ATP player(s) in profiles table: {unique}")
+        return unique
+    except Exception as e:
+        print(f"   ⚠  Could not fetch players from profiles: {e}")
+        return []
+
+
 async def main():
     print("=" * 52)
     print("  TOURLY SCRAPER — SYNC ENGINE")
@@ -961,17 +974,26 @@ async def main():
             print(f"✗  All-players scraper: {e}")
             if status == "success":
                 status = "partial"
-    elif player_name:
-        print(f"\n> Phase 2: Player Profile — {player_name}")
-        try:
-            await run_player_phase(integrator, player_name)
-        except Exception as e:
-            print(f"✗  Player scraper: {e}")
-            if status == "success":
-                status = "partial"
     else:
-        print("\nℹ  PLAYER_NAME not set — skipping player profile phase.")
-        print("   Tip: run with --all-players to scrape every ranked ATP player.")
+        # Prefer explicit PLAYER_NAME env var; fall back to all names in profiles table
+        if player_name:
+            profile_names = [player_name]
+        else:
+            print("\n> Phase 2: Player Profiles — reading from profiles table")
+            profile_names = await fetch_players_from_profiles(integrator.sb)
+
+        if profile_names:
+            for pname in profile_names:
+                print(f"\n> Phase 2: Player Profile — {pname}")
+                try:
+                    await run_player_phase(integrator, pname)
+                except Exception as e:
+                    print(f"✗  Player scraper ({pname}): {e}")
+                    if status == "success":
+                        status = "partial"
+        else:
+            print("\nℹ  No ATP player names found — skipping player profile phase.")
+            print("   Set atp_player_name in the app profile to enable this.")
 
     integrator.log_run(status=status, error=error_msg)
     print("\n✅  Scraper run complete.\n")
