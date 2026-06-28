@@ -159,9 +159,11 @@ export default function MyPerformanceScreen() {
       supabase.from('profiles').select('atp_player_name').eq('id', user.id).single()
         .then(({ data: prof }) => {
           if (!prof?.atp_player_name) return;
+          // Match on first two words so "Diego Jarry Fillol" finds "Diego Jarry" (ATP may omit maternal surname)
+          const nameParts = prof.atp_player_name.trim().split(/\s+/).slice(0, 2).join(' ');
           supabase.from('player_profiles').select('*')
-            .ilike('player_name', prof.atp_player_name).single()
-            .then(({ data }) => { if (data) setAtpProfile(data); });
+            .ilike('player_name', `%${nameParts}%`).limit(1)
+            .then(({ data }) => { if (data?.[0]) setAtpProfile(data[0]); });
         });
     });
   }, []);

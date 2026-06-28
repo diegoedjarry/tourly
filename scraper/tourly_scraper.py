@@ -384,12 +384,22 @@ class ATPPlayerScraper:
     def __init__(self, page: Page):
         self.page = page
 
-    async def scrape_player(self, player_name: str) -> Optional[dict]:
+    async def scrape_player(self, player_name: str, store_name: Optional[str] = None) -> Optional[dict]:
+        """
+        store_name: the name to persist in player_profiles.player_name (defaults to player_name).
+        Useful when the user registered as "Diego Jarry Fillol" but ATP lists them as "Diego Jarry".
+        """
         print(f"\n📡  Searching ATP for player '{player_name}'...")
 
         # ── Step 1: search ATP autocomplete API ──────────────────────────────
-        last_name = player_name.split()[-1]
-        profile_url = await self._find_profile_url(last_name, player_name)
+        # Try each part of the name from last to first — handles Latin double surnames
+        name_parts = player_name.split()
+        profile_url = None
+        for search_term in reversed(name_parts):
+            profile_url = await self._find_profile_url(search_term, player_name)
+            if profile_url:
+                print(f"   ✓  Found via search term '{search_term}'")
+                break
 
         if not profile_url:
             print(f"   ⚠  No ATP profile found for '{player_name}'.")
@@ -456,7 +466,8 @@ class ATPPlayerScraper:
 
         return {
             "ipin":                player_id or player_name,
-            "player_name":         confirmed_name or player_name,
+            # Use store_name (from profiles table) so the app ILIKE lookup always matches
+            "player_name":         store_name or confirmed_name or player_name,
             "current_ranking":     current_ranking,
             "ranking_evolution":   ranking_evolution,
             "win_loss_by_surface": win_loss,
@@ -917,7 +928,7 @@ async def run_player_phase(integrator: TourlyDataIntegrator, player_name: str):
         await Stealth().apply_stealth_async(page)
         try:
             scraper = ATPPlayerScraper(page)
-            profile = await scraper.scrape_player(player_name)
+            profile = await scraper.scrape_player(player_name, store_name=player_name)
         finally:
             await browser.close()
 
