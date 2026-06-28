@@ -2384,6 +2384,7 @@ export default function ExpensesScreen() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [showAddChoice, setShowAddChoice] = useState(false);
   const [showPrizeBreakdown, setShowPrizeBreakdown] = useState(false);
+  const [selectedPrizeIds, setSelectedPrizeIds] = useState<Set<string>>(new Set());
   const [showPrizeMoney, setShowPrizeMoney] = useState(false);
   const [showPasteModal, setShowPasteModal] = useState(false);
   const [detailTournament, setDetailTournament] = useState<any | null>(null);
@@ -2786,11 +2787,15 @@ export default function ExpensesScreen() {
       {/* ── Add choice sheet ── */}
       {/* ── Prize Breakdown Modal ── */}
       {showPrizeBreakdown && (
-        <Modal transparent animationType="slide" onRequestClose={() => setShowPrizeBreakdown(false)}>
-          <Pressable style={styles.choiceBackdrop} onPress={() => setShowPrizeBreakdown(false)}>
-            <Pressable style={[styles.choiceSheet, { maxHeight: '80%' }]} onPress={() => {}}>
+        <Modal transparent animationType="slide" onRequestClose={() => { setShowPrizeBreakdown(false); setSelectedPrizeIds(new Set()); }}>
+          <Pressable style={styles.choiceBackdrop} onPress={() => { setShowPrizeBreakdown(false); setSelectedPrizeIds(new Set()); }}>
+            <Pressable style={[styles.choiceSheet, { maxHeight: '85%' }]} onPress={() => {}}>
               <View style={styles.choiceHandle} />
-              <Text style={{ fontSize: 16, fontWeight: '700', color: '#FAFAFA', marginBottom: 16, textAlign: 'center' }}>Prize Money by Tournament</Text>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: '#FAFAFA', marginBottom: 4, textAlign: 'center' }}>Prize Money by Tournament</Text>
+              {selectedPrizeIds.size === 0
+                ? <Text style={{ fontSize: 12, color: '#6060A0', textAlign: 'center', marginBottom: 12 }}>Tap a row to select</Text>
+                : <Text style={{ fontSize: 12, color: '#5B5BD6', textAlign: 'center', marginBottom: 12 }}>{selectedPrizeIds.size} selected</Text>
+              }
               <ScrollView showsVerticalScrollIndicator={false}>
                 {(() => {
                   const rows = tournaments
@@ -2807,30 +2812,80 @@ export default function ExpensesScreen() {
                     <Text style={{ color: '#A0A0C8', textAlign: 'center', marginVertical: 24 }}>No prize money logged yet</Text>
                   );
 
-                  return rows.map(({ trn, prize, singles, doubles }: any) => (
-                    <View key={trn.id} style={{ paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#2A2A4A' }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  return rows.map(({ trn, prize, singles, doubles }: any) => {
+                    const selected = selectedPrizeIds.has(trn.id);
+                    return (
+                      <TouchableOpacity
+                        key={trn.id}
+                        activeOpacity={0.7}
+                        onPress={() => setSelectedPrizeIds(prev => {
+                          const next = new Set(prev);
+                          next.has(trn.id) ? next.delete(trn.id) : next.add(trn.id);
+                          return next;
+                        })}
+                        style={{ paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#2A2A4A', flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: selected ? 'rgba(91,91,214,0.12)' : 'transparent', borderRadius: 8, paddingHorizontal: 4 }}
+                      >
+                        <View style={{ width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: selected ? '#5B5BD6' : '#3A3A5A', backgroundColor: selected ? '#5B5BD6' : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
+                          {selected && <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '700' }}>✓</Text>}
+                        </View>
                         <View style={{ flex: 1 }}>
-                          <Text style={{ fontSize: 14, fontWeight: '700', color: '#FAFAFA' }} numberOfLines={1}>
-                            {trn.city ?? trn.name}
-                          </Text>
+                          <Text style={{ fontSize: 14, fontWeight: '700', color: '#FAFAFA' }} numberOfLines={1}>{trn.city ?? trn.name}</Text>
                           <Text style={{ fontSize: 11, color: '#A0A0C8', marginTop: 2 }}>
                             {trn.startDate ? trn.startDate.slice(0, 7).replace('-', '/') : ''} · {trn.category}
                           </Text>
+                          {singles > 0 && doubles > 0 && (
+                            <Text style={{ fontSize: 11, color: '#6060A0', marginTop: 2 }}>Singles {fmt(singles)} · Doubles {fmt(doubles)}</Text>
+                          )}
                         </View>
-                        <Text style={{ fontSize: 15, fontWeight: '800', color: '#5B5BD6', marginLeft: 12 }}>{fmt(prize)}</Text>
-                      </View>
-                      {singles > 0 && doubles > 0 && (
-                        <View style={{ flexDirection: 'row', gap: 12, marginTop: 6 }}>
-                          <Text style={{ fontSize: 11, color: '#A0A0C8' }}>Singles: {fmt(singles)}</Text>
-                          <Text style={{ fontSize: 11, color: '#A0A0C8' }}>Doubles: {fmt(doubles)}</Text>
-                        </View>
-                      )}
-                    </View>
-                  ));
+                        <Text style={{ fontSize: 15, fontWeight: '800', color: '#5B5BD6' }}>{fmt(prize)}</Text>
+                      </TouchableOpacity>
+                    );
+                  });
                 })()}
-                <View style={{ height: 24 }} />
+                <View style={{ height: 80 }} />
               </ScrollView>
+
+              {/* Action footer */}
+              {selectedPrizeIds.size > 0 && (
+                <View style={{ flexDirection: 'row', gap: 10, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#2A2A4A' }}>
+                  {selectedPrizeIds.size === 1 && (
+                    <TouchableOpacity
+                      style={{ flex: 1, backgroundColor: '#5B5BD6', borderRadius: 10, paddingVertical: 13, alignItems: 'center' }}
+                      activeOpacity={0.8}
+                      onPress={() => {
+                        const id = [...selectedPrizeIds][0];
+                        const trn = tournaments.find((t: any) => t.id === id);
+                        if (trn) {
+                          const tExp = (data?.expenses ?? []).filter((e: any) => e.tournamentId === trn.id);
+                          const spent = tExp.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
+                          const singles = trn.singlesPrizeMoney ?? 0;
+                          const doubles = trn.doublesPrizeMoney ?? 0;
+                          const prize = singles + doubles > 0 ? singles + doubles : (trn.prizeMoney ?? 0);
+                          setShowPrizeBreakdown(false);
+                          setSelectedPrizeIds(new Set());
+                          setDetailTournament({ ...trn, spent, prize });
+                        }
+                      }}
+                    >
+                      <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 14 }}>Edit Prize</Text>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity
+                    style={{ flex: 1, backgroundColor: '#3A1A1A', borderRadius: 10, paddingVertical: 13, alignItems: 'center', borderWidth: 1, borderColor: '#E24B4A' }}
+                    activeOpacity={0.8}
+                    onPress={async () => {
+                      for (const id of selectedPrizeIds) {
+                        await apiPatchTournament(id, { singlesPrizeMoney: 0, doublesPrizeMoney: 0, prizeMoney: 0 });
+                      }
+                      setSelectedPrizeIds(new Set());
+                    }}
+                  >
+                    <Text style={{ color: '#E24B4A', fontWeight: '700', fontSize: 14 }}>
+                      Clear Prize{selectedPrizeIds.size > 1 ? ` (${selectedPrizeIds.size})` : ''}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
             </Pressable>
           </Pressable>
         </Modal>
