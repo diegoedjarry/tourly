@@ -99,17 +99,50 @@ export default function MyPerformanceScreen() {
     })
   , [byCategory]);
 
-  // Season timeline — past tournaments only (start date before today)
+  // Season timeline — merge local past tournaments + ATP match history
   const timeline = useMemo(() => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
-    return [...tournaments]
+    const local = [...tournaments]
       .filter((t: any) => {
         if (!t.startDate) return false;
         const [y, m, d] = t.startDate.split('-').map(Number);
         return new Date(y, m - 1, d) < today;
       })
-      .sort((a: any, b: any) => (a.startDate ?? '').localeCompare(b.startDate ?? ''));
-  }, [tournaments]);
+      .map((t: any) => ({
+        id: t.id,
+        name: t.city ?? t.name ?? '',
+        startDate: t.startDate,
+        surface: t.surface,
+        prize: (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0) || (t.prizeMoney ?? 0),
+        roundReached: undefined as string | undefined,
+        pointsEarned: undefined as number | undefined,
+        source: 'local' as const,
+      }));
+
+    // ATP match history entries — add ones not already covered by a local entry
+    const atpEntries = (atpProfile?.match_history as any[] ?? []).map((m: any) => ({
+      id: `atp-${m.tournamentName}-${m.date}`,
+      name: m.tournamentName ?? '',
+      startDate: m.date ?? '',
+      surface: m.surface,
+      prize: 0,
+      roundReached: m.roundReached as string | undefined,
+      pointsEarned: m.pointsEarned as number | undefined,
+      source: 'atp' as const,
+    }));
+
+    // Deduplicate: skip ATP entry if a local entry has the same start date or close name match
+    const localDates = new Set(local.map(t => t.startDate?.slice(0, 7))); // year-month
+    const localNames = local.map(t => t.name.toLowerCase());
+    const deduped = atpEntries.filter(a => {
+      const monthKey = a.startDate?.slice(0, 7);
+      if (monthKey && localDates.has(monthKey)) return false;
+      const aName = a.name.toLowerCase();
+      return !localNames.some(n => n.includes(aName.split(' ')[0]) || aName.includes(n.split(' ')[0]));
+    });
+
+    return [...local, ...deduped].sort((a, b) => (a.startDate ?? '').localeCompare(b.startDate ?? ''));
+  }, [tournaments, atpProfile]);
 
   // Optimal suggestion (needs ≥ 3 tournaments with expenses)
   const optimalSuggestion = useMemo(() => {
@@ -133,14 +166,13 @@ export default function MyPerformanceScreen() {
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) return;
-      supabase.from('profiles').select('atp_player_name').eq('id', user.id).single()
+      supabase.from('profiles').select('atp_player_name, ipin_number').eq('id', user.id).single()
         .then(({ data: prof }) => {
-          if (!prof?.atp_player_name) return;
-          // Match on first two words so "Diego Jarry Fillol" finds "Diego Jarry" (ATP may omit maternal surname)
-          const nameParts = prof.atp_player_name.trim().split(/\s+/).slice(0, 2).join(' ');
-          supabase.from('player_profiles').select('*')
-            .ilike('player_name', `%${nameParts}%`).limit(1)
-            .then(({ data }) => { if (data?.[0]) setAtpProfile(data[0]); });
+          if (!prof?.ipin_number && !prof?.atp_player_name) return;
+          const query = prof.ipin_number
+            ? supabase.from('player_profiles').select('*').eq('ipin', prof.ipin_number).limit(1)
+            : supabase.from('player_profiles').select('*').ilike('player_name', `%${prof.atp_player_name.trim().split(/\s+/).slice(0, 2).join(' ')}%`).limit(1);
+          query.then(({ data }) => { if (data?.[0]) setAtpProfile(data[0]); });
         });
     });
   }, []);
@@ -195,6 +227,59 @@ export default function MyPerformanceScreen() {
             </View>
           </View>
         )}
+
+        {/* MATCH RECORD */}
+        {atpProfile?.win_loss_by_surface && (() => {
+          const wl = atpProfile.win_loss_by_surface as Record<string, { wins: number; losses: number }>;
+          const total = wl.total ?? { wins: 0, losses: 0 };
+          const totalW = total.wins ?? 0;
+          const totalL = total.losses ?? 0;
+          const pct = totalW + totalL > 0 ? Math.round((totalW / (totalW + totalL)) * 100) : null;
+          const surfaces: Array<{ key: string; label: string; color: string }> = [
+            { key: 'clay', label: 'Clay', color: '#D4915A' },
+            { key: 'hard', label: 'Hard', color: '#5A8CD4' },
+            { key: 'grass', label: 'Grass', color: '#5A9E5A' },
+          ];
+          return (
+            <View style={s.section}>
+              <Text style={s.sectionLabel}>MATCH RECORD</Text>
+              <View style={s.card}>
+                {/* Overall row */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
+                  <View style={{ flex: 1, alignItems: 'center' }}>
+                    <Text style={{ fontSize: 28, fontWeight: '800', color: '#2D9E6B' }}>{totalW}</Text>
+                    <Text style={{ fontSize: 11, color: '#A0A0C8', marginTop: 2 }}>Wins</Text>
+                  </View>
+                  {pct !== null && (
+                    <View style={{ alignItems: 'center', paddingHorizontal: 16 }}>
+                      <Text style={{ fontSize: 22, fontWeight: '800', color: '#5B5BD6' }}>{pct}%</Text>
+                      <Text style={{ fontSize: 11, color: '#A0A0C8', marginTop: 2 }}>Win rate</Text>
+                    </View>
+                  )}
+                  <View style={{ flex: 1, alignItems: 'center' }}>
+                    <Text style={{ fontSize: 28, fontWeight: '800', color: '#E24B4A' }}>{totalL}</Text>
+                    <Text style={{ fontSize: 11, color: '#A0A0C8', marginTop: 2 }}>Losses</Text>
+                  </View>
+                </View>
+                {/* Surface breakdown */}
+                {surfaces.map(({ key, label, color }) => {
+                  const s2 = wl[key];
+                  if (!s2 || (s2.wins === 0 && s2.losses === 0)) return null;
+                  const sp = s2.wins + s2.losses > 0 ? Math.round((s2.wins / (s2.wins + s2.losses)) * 100) : 0;
+                  return (
+                    <View key={key} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, borderTopWidth: 1, borderTopColor: '#2A2A4A' }}>
+                      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color, marginRight: 8 }} />
+                      <Text style={{ fontSize: 13, color: '#A0A0C8', width: 44 }}>{label}</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#FAFAFA' }}>{s2.wins}W – {s2.losses}L</Text>
+                      <View style={{ flex: 1 }} />
+                      <Text style={{ fontSize: 12, color: '#5B5BD6', fontWeight: '600' }}>{sp}%</Text>
+                    </View>
+                  );
+                })}
+              </View>
+            </View>
+          );
+        })()}
 
         {/* EXPENSE EFFICIENCY BY SURFACE */}
         {tournamentsWithExpenses >= 2 && (
@@ -277,19 +362,20 @@ export default function MyPerformanceScreen() {
           <View style={s.section}>
             <Text style={s.sectionLabel}>SEASON TIMELINE</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.timelineScroll}>
-              {timeline.map((t: any) => {
+              {timeline.map((t) => {
                 const surf = SURFACES.find(sf => sf.key === t.surface);
-                const singles = t.singlesPrizeMoney ?? 0;
-                const doubles = t.doublesPrizeMoney ?? 0;
-                const prize = singles + doubles > 0 ? singles + doubles : (t.prizeMoney ?? 0);
                 return (
                   <View key={t.id} style={s.miniCard}>
                     <View style={s.miniCardTop}>
                       <View style={[s.miniDot, { backgroundColor: surf?.color ?? '#6060A0' }]} />
                       <Text style={s.miniDate}>{abbrevDate(t.startDate)}</Text>
                     </View>
-                    <Text style={s.miniCity} numberOfLines={1}>{t.city ?? t.name}</Text>
-                    {prize > 0 && <Text style={s.miniPrize}>{fmtUSD(prize)}</Text>}
+                    <Text style={s.miniCity} numberOfLines={1}>{t.name}</Text>
+                    {t.roundReached ? (
+                      <Text style={s.miniPrize}>{t.roundReached}{t.pointsEarned ? ` · ${t.pointsEarned}pts` : ''}</Text>
+                    ) : t.prize > 0 ? (
+                      <Text style={s.miniPrize}>{fmtUSD(t.prize)}</Text>
+                    ) : null}
                   </View>
                 );
               })}

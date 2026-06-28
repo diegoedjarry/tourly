@@ -456,8 +456,8 @@ class ATPPlayerScraper:
         player_id       = player_id_match.group(1) if player_id_match else None
         print(f"   ATP player ID: {player_id}")
 
-        match_history     = await self._scrape_activity(profile_url)
-        win_loss          = self._calc_win_loss(match_history)
+        match_history, total_wins, total_losses = await self._scrape_activity(profile_url)
+        win_loss          = self._calc_win_loss(match_history, total_wins, total_losses)
         # Primary: ATP ranking points breakdown (exact defending data, 52-week window)
         # Fallback: calculated from match history if page returned nothing
         ranking_points    = await self._scrape_ranking_points(profile_url)
@@ -571,14 +571,18 @@ class ATPPlayerScraper:
                 print(f"   ⚠  Rankings {start}-{end}: {e}")
         return None
 
-    async def _scrape_activity(self, profile_url: str) -> list[dict]:
+    async def _scrape_activity(self, profile_url: str) -> tuple[list[dict], int, int]:
         """
         Fetch match history for the previous and current year.
+        Returns (match_list, total_wins_current_year, total_losses_current_year).
         The ATP player-activity page is server-side rendered — all data is in the
         DOM innerText as structured tournament sections ending with "Points: X".
         """
         all_results: list[dict] = []
         current_year = datetime.now(timezone.utc).year
+        wl_re = re.compile(r'Win/Loss\s*\n?\s*(\d+)\s*[-–]\s*(\d+)', re.IGNORECASE)
+        total_wins = 0
+        total_losses = 0
 
         for year in [current_year - 1, current_year]:
             url = profile_url.replace("/overview", "/player-activity") + f"?year={year}&surface=all"
@@ -597,8 +601,15 @@ class ATPPlayerScraper:
             print(f"   {year}: {len(tournaments)} tournaments parsed from DOM")
             all_results.extend(tournaments)
 
+            if year == current_year:
+                wl_m = wl_re.search(full_text)
+                if wl_m:
+                    total_wins   = int(wl_m.group(1))
+                    total_losses = int(wl_m.group(2))
+                    print(f"   W/L {year}: {total_wins}-{total_losses}")
+
         print(f"   Total tournaments scraped: {len(all_results)}")
-        return all_results
+        return all_results, total_wins, total_losses
 
     def _parse_activity_text(self, text: str) -> list[dict]:
         """
@@ -711,7 +722,10 @@ class ATPPlayerScraper:
             print(f"   ⚠  Rankings history failed: {e}")
         return evolution
 
-    def _calc_win_loss(self, matches: list[dict]) -> dict:
+    # Approximate wins based on round reached (assumes standard draw size)
+    _ROUND_WINS = {"W": 6, "F": 5, "SF": 4, "QF": 3, "R16": 2, "R32": 1, "R64": 0, "R128": 0}
+
+    def _calc_win_loss(self, matches: list[dict], total_wins: int = 0, total_losses: int = 0) -> dict:
         result = {
             "clay":  {"wins": 0, "losses": 0},
             "hard":  {"wins": 0, "losses": 0},
@@ -719,13 +733,20 @@ class ATPPlayerScraper:
         }
         for m in matches:
             surface = m.get("surface", "hard") if m.get("surface") in result else "hard"
-            score   = m.get("score") or ""
-            sets    = re.findall(r"(\d+)[–\-](\d+)", score)
-            if sets:
-                won = sum(1 for a, b in sets if int(a) > int(b)) > sum(1 for a, b in sets if int(b) > int(a))
-                result[surface]["wins" if won else "losses"] += 1
-            elif re.search(r"W|WIN", (m.get("roundReached") or "").upper()):
-                result[surface]["wins"] += 1
+            rnd = (m.get("roundReached") or "").upper().replace(" ", "")
+            wins = self._ROUND_WINS.get(rnd, 0)
+            # Each tournament = 1 loss (you always exit via a loss, unless you won the title)
+            losses = 0 if rnd == "W" else 1
+            result[surface]["wins"]   += wins
+            result[surface]["losses"] += losses
+
+        # Prefer page-scraped totals (more accurate); fall back to per-surface sum
+        if total_wins or total_losses:
+            result["total"] = {"wins": total_wins, "losses": total_losses}
+        else:
+            tw = sum(v["wins"] for v in result.values() if isinstance(v, dict) and "wins" in v)
+            tl = sum(v["losses"] for v in result.values() if isinstance(v, dict) and "losses" in v)
+            result["total"] = {"wins": tw, "losses": tl}
         return result
 
     def _calc_defending_points(self, matches: list[dict]) -> list[dict]:
@@ -904,7 +925,7 @@ async def run_all_players_phase(integrator: TourlyDataIntegrator):
             await browser.close()
 
 
-async def run_player_phase(integrator: TourlyDataIntegrator, player_name: str):
+async def run_player_phase(integrator: TourlyDataIntegrator, player_name: str, ipin_override: Optional[str] = None):
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
             headless=True, channel="chrome", args=BROWSER_ARGS
@@ -923,6 +944,10 @@ async def run_player_phase(integrator: TourlyDataIntegrator, player_name: str):
             await browser.close()
 
     if profile:
+        # Use the ipin_number from profiles table so RLS policy matches
+        if ipin_override:
+            profile["ipin"] = ipin_override
+            print(f"   ipin set from profiles table: {ipin_override}")
         integrator.upsert_player_profile(profile)
     else:
         print(f"⚠  No data returned for '{player_name}' — profile not saved.")
@@ -930,14 +955,22 @@ async def run_player_phase(integrator: TourlyDataIntegrator, player_name: str):
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
-async def fetch_players_from_profiles(supabase: Client) -> list[str]:
-    """Returns all distinct non-null atp_player_name values from the profiles table."""
+async def fetch_players_from_profiles(supabase: Client) -> list[dict]:
+    """Returns all distinct players with atp_player_name from the profiles table.
+    Each entry is {"name": str, "ipin": str | None}.
+    """
     try:
-        res = supabase.from_("profiles").select("atp_player_name").neq("atp_player_name", None).execute()
-        names = [row["atp_player_name"].strip() for row in (res.data or []) if row.get("atp_player_name", "").strip()]
-        unique = list(dict.fromkeys(names))  # deduplicate, preserve order
-        print(f"   Found {len(unique)} ATP player(s) in profiles table: {unique}")
-        return unique
+        res = supabase.from_("profiles").select("atp_player_name, ipin_number").neq("atp_player_name", None).execute()
+        seen: set[str] = set()
+        players: list[dict] = []
+        for row in (res.data or []):
+            name = (row.get("atp_player_name") or "").strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            players.append({"name": name, "ipin": (row.get("ipin_number") or "").strip() or None})
+        print(f"   Found {len(players)} ATP player(s) in profiles table: {[p['name'] for p in players]}")
+        return players
     except Exception as e:
         print(f"   ⚠  Could not fetch players from profiles: {e}")
         return []
@@ -978,16 +1011,18 @@ async def main():
     else:
         # Prefer explicit PLAYER_NAME env var; fall back to all names in profiles table
         if player_name:
-            profile_names = [player_name]
+            profile_players = [{"name": player_name, "ipin": None}]
         else:
             print("\n> Phase 2: Player Profiles — reading from profiles table")
-            profile_names = await fetch_players_from_profiles(integrator.sb)
+            profile_players = await fetch_players_from_profiles(integrator.sb)
 
-        if profile_names:
-            for pname in profile_names:
-                print(f"\n> Phase 2: Player Profile — {pname}")
+        if profile_players:
+            for p in profile_players:
+                pname = p["name"]
+                pipin = p.get("ipin")
+                print(f"\n> Phase 2: Player Profile — {pname} (ipin: {pipin})")
                 try:
-                    await run_player_phase(integrator, pname)
+                    await run_player_phase(integrator, pname, ipin_override=pipin)
                 except Exception as e:
                     print(f"✗  Player scraper ({pname}): {e}")
                     if status == "success":
