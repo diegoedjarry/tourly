@@ -2383,6 +2383,7 @@ export default function ExpensesScreen() {
   const { data: _prof } = useProfile();
   const [showAddForm, setShowAddForm] = useState(false);
   const [showAddChoice, setShowAddChoice] = useState(false);
+  const [showPrizeBreakdown, setShowPrizeBreakdown] = useState(false);
   const [showPrizeMoney, setShowPrizeMoney] = useState(false);
   const [showPasteModal, setShowPasteModal] = useState(false);
   const [detailTournament, setDetailTournament] = useState<any | null>(null);
@@ -2737,10 +2738,10 @@ export default function ExpensesScreen() {
                 <Text style={styles.seasonStatValue}>{fmt(periodSpent)}</Text>
               </View>
               <View style={styles.seasonDivider} />
-              <View style={styles.seasonStat}>
+              <TouchableOpacity style={styles.seasonStat} onPress={() => setShowPrizeBreakdown(true)} activeOpacity={0.7}>
                 <Text style={styles.seasonStatLabel}>{t('expenses.prize')}</Text>
-                <Text style={styles.seasonStatValue}>{fmt(periodPrizeMoney)}</Text>
-              </View>
+                <Text style={[styles.seasonStatValue, { color: '#5B5BD6' }]}>{fmt(periodPrizeMoney)}</Text>
+              </TouchableOpacity>
               <View style={styles.seasonDivider} />
               <View style={styles.seasonStat}>
                 <Text style={styles.seasonStatLabel}>{t('expenses.net')}</Text>
@@ -2783,6 +2784,58 @@ export default function ExpensesScreen() {
       </ScrollView>
 
       {/* ── Add choice sheet ── */}
+      {/* ── Prize Breakdown Modal ── */}
+      {showPrizeBreakdown && (
+        <Modal transparent animationType="slide" onRequestClose={() => setShowPrizeBreakdown(false)}>
+          <Pressable style={styles.choiceBackdrop} onPress={() => setShowPrizeBreakdown(false)}>
+            <Pressable style={[styles.choiceSheet, { maxHeight: '80%' }]} onPress={() => {}}>
+              <View style={styles.choiceHandle} />
+              <Text style={{ fontSize: 16, fontWeight: '700', color: '#FAFAFA', marginBottom: 16, textAlign: 'center' }}>Prize Money by Tournament</Text>
+              <ScrollView showsVerticalScrollIndicator={false}>
+                {(() => {
+                  const rows = tournaments
+                    .map((trn: any) => {
+                      const singles = trn.singlesPrizeMoney ?? 0;
+                      const doubles = trn.doublesPrizeMoney ?? 0;
+                      const prize = singles + doubles > 0 ? singles + doubles : (trn.prizeMoney ?? 0);
+                      return { trn, prize, singles, doubles };
+                    })
+                    .filter(({ prize }: any) => prize > 0)
+                    .sort((a: any, b: any) => b.prize - a.prize);
+
+                  if (rows.length === 0) return (
+                    <Text style={{ color: '#A0A0C8', textAlign: 'center', marginVertical: 24 }}>No prize money logged yet</Text>
+                  );
+
+                  return rows.map(({ trn, prize, singles, doubles }: any) => (
+                    <View key={trn.id} style={{ paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#2A2A4A' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: 14, fontWeight: '700', color: '#FAFAFA' }} numberOfLines={1}>
+                            {trn.city ?? trn.name}
+                          </Text>
+                          <Text style={{ fontSize: 11, color: '#A0A0C8', marginTop: 2 }}>
+                            {trn.startDate ? trn.startDate.slice(0, 7).replace('-', '/') : ''} · {trn.category}
+                          </Text>
+                        </View>
+                        <Text style={{ fontSize: 15, fontWeight: '800', color: '#5B5BD6', marginLeft: 12 }}>{fmt(prize)}</Text>
+                      </View>
+                      {singles > 0 && doubles > 0 && (
+                        <View style={{ flexDirection: 'row', gap: 12, marginTop: 6 }}>
+                          <Text style={{ fontSize: 11, color: '#A0A0C8' }}>Singles: {fmt(singles)}</Text>
+                          <Text style={{ fontSize: 11, color: '#A0A0C8' }}>Doubles: {fmt(doubles)}</Text>
+                        </View>
+                      )}
+                    </View>
+                  ));
+                })()}
+                <View style={{ height: 24 }} />
+              </ScrollView>
+            </Pressable>
+          </Pressable>
+        </Modal>
+      )}
+
       {showAddChoice && (
         <Modal transparent animationType="fade" onRequestClose={() => setShowAddChoice(false)}>
           <Pressable style={styles.choiceBackdrop} onPress={() => setShowAddChoice(false)}>

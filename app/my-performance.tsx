@@ -11,7 +11,6 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Text } from '@/components/ui/text';
 import { useAppQuery } from '@/hooks/useAppQuery';
-import { TextInput } from 'react-native';
 import { supabase } from '@/lib/supabase';
 
 const SURFACES: Array<{ key: 'clay' | 'hard'; label: string; color: string }> = [
@@ -31,8 +30,6 @@ export default function MyPerformanceScreen() {
   const tournaments = data?.tournaments ?? [];
   const expenses    = data?.expenses ?? [];
 
-  const [expandedSurface, setExpandedSurface] = useState<'clay' | 'hard' | null>(null);
-  const [expandedCondition, setExpandedCondition] = useState<'surface' | 'category' | null>(null);
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
 
   const today = useMemo(() => { const d = new Date(); d.setHours(0,0,0,0); return d; }, []);
@@ -55,28 +52,11 @@ export default function MyPerformanceScreen() {
     return map;
   }, [pastTournaments]);
 
-  // Alias kept for win-rate expandable rows
-  const pastBySurface = bySurface;
-
   function expensesForTournament(tId: string): number {
     return expenses
       .filter((e: any) => e.tournamentId === tId)
       .reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
   }
-
-  // Best conditions (clay/hard only)
-  const bestSurface = useMemo(() => {
-    return ['clay', 'hard'].reduce((best, sf) =>
-      (bySurface[sf]?.length ?? 0) > (bySurface[best]?.length ?? 0) ? sf : best
-    , 'clay');
-  }, [bySurface]);
-
-  const bestCategory = useMemo(() => {
-    if (!pastTournaments.length) return null;
-    const counts: Record<string, number> = {};
-    pastTournaments.forEach((t: any) => { const c = t.category ?? 'Unknown'; counts[c] = (counts[c] ?? 0) + 1; });
-    return Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
-  }, [pastTournaments]);
 
   // Expense efficiency by surface
   const surfaceExpenses = useMemo(() => {
@@ -149,9 +129,6 @@ export default function MyPerformanceScreen() {
 
   // ── ATP player profile from Supabase ────────────────────────────────────────
   const [atpProfile, setAtpProfile] = useState<any>(null);
-  const [compareQuery, setCompareQuery] = useState('');
-  const [compareSuggestions, setCompareSuggestions] = useState<any[]>([]);
-  const [compareProfile, setCompareProfile] = useState<any>(null);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -167,24 +144,6 @@ export default function MyPerformanceScreen() {
         });
     });
   }, []);
-
-  useEffect(() => {
-    if (compareQuery.trim().length < 2) { setCompareSuggestions([]); return; }
-    const t = setTimeout(() => {
-      supabase.from('player_profiles').select('player_name, current_ranking')
-        .ilike('player_name', `%${compareQuery.trim()}%`).limit(6)
-        .then(({ data }) => setCompareSuggestions(data ?? []));
-    }, 400);
-    return () => clearTimeout(t);
-  }, [compareQuery]);
-
-  const defendingThisYear = useMemo(() => {
-    if (!atpProfile?.points_defending) return [];
-    const now = new Date().toISOString().slice(0, 10);
-    return (atpProfile.points_defending as any[])
-      .filter(d => d.weekOf >= now)
-      .slice(0, 16);
-  }, [atpProfile]);
 
   const atpMatchHistory = useMemo(() => {
     if (!atpProfile?.match_history) return [];
@@ -216,146 +175,26 @@ export default function MyPerformanceScreen() {
 
       <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent} showsVerticalScrollIndicator={false}>
 
-        {/* BEST CONDITIONS */}
-        <View style={s.section}>
-          <Text style={s.sectionLabel}>BEST CONDITIONS</Text>
-          {pastTournaments.length < 2 ? (
-            <View style={s.card}>
-              <Text style={s.lockedText}>Play more tournaments to unlock</Text>
-            </View>
-          ) : (
-            <>
-              <View style={s.rowCards}>
-                {/* Surface */}
-                <TouchableOpacity
-                  style={[s.condCard, { flex: 1 }]}
-                  onPress={() => setExpandedCondition(v => v === 'surface' ? null : 'surface')}
-                  activeOpacity={0.75}
-                >
-                  <Text style={s.condCardLabel}>Surface</Text>
-                  <Text style={s.condCardValue}>{bestSurface ? (surfaceLabel[bestSurface] ?? bestSurface) : '—'}</Text>
-                  <Text style={s.condCardCount}>{bestSurface ? bySurface[bestSurface].length : 0} played</Text>
-                  <Ionicons
-                    name={expandedCondition === 'surface' ? 'chevron-up' : 'chevron-down'}
-                    size={12} color="#A0A0C8" style={{ marginTop: 4 }}
-                  />
-                </TouchableOpacity>
-                {/* Category */}
-                <TouchableOpacity
-                  style={[s.condCard, { flex: 1 }]}
-                  onPress={() => setExpandedCondition(v => v === 'category' ? null : 'category')}
-                  activeOpacity={0.75}
-                >
-                  <Text style={s.condCardLabel}>Category</Text>
-                  <Text style={s.condCardValue}>{bestCategory ?? '—'}</Text>
-                  <Text style={s.condCardCount}>{bestCategory ? (byCategory[bestCategory]?.count ?? 0) : 0} played</Text>
-                  <Ionicons
-                    name={expandedCondition === 'category' ? 'chevron-up' : 'chevron-down'}
-                    size={12} color="#A0A0C8" style={{ marginTop: 4 }}
-                  />
-                </TouchableOpacity>
+        {/* ATP RANKING */}
+        {atpProfile && (
+          <View style={s.section}>
+            <Text style={s.sectionLabel}>ATP RANKING</Text>
+            <View style={[s.card, { flexDirection: 'row', alignItems: 'center', gap: 16 }]}>
+              <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#5B5BD6', alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ fontSize: 22, fontWeight: '800', color: '#FAFAFA' }}>#{atpProfile.current_ranking ?? '—'}</Text>
               </View>
-              {/* Surface expansion panel */}
-              {expandedCondition === 'surface' && bestSurface && (
-                <View style={s.condExpand}>
-                  <Text style={s.condExpandTitle}>Best results on {surfaceLabel[bestSurface] ?? bestSurface}</Text>
-                  {[...bySurface[bestSurface]]
-                    .sort((a: any, b: any) => {
-                      const pa = (a.singlesPrizeMoney ?? 0) + (a.doublesPrizeMoney ?? 0) || (a.prizeMoney ?? 0);
-                      const pb = (b.singlesPrizeMoney ?? 0) + (b.doublesPrizeMoney ?? 0) || (b.prizeMoney ?? 0);
-                      return pb - pa;
-                    })
-                    .map((t: any) => {
-                      const prize = (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0) || (t.prizeMoney ?? 0);
-                      return (
-                        <View key={t.id} style={s.resultRow}>
-                          <View style={{ flex: 1 }}>
-                            <Text style={s.resultCity}>{t.city ?? t.name}</Text>
-                            <Text style={s.resultDate}>{abbrevDate(t.startDate)} · {t.category}</Text>
-                          </View>
-                          {prize > 0 && <Text style={s.resultPrize}>{fmtUSD(prize)}</Text>}
-                        </View>
-                      );
-                    })}
-                </View>
-              )}
-              {/* Category expansion panel */}
-              {expandedCondition === 'category' && bestCategory && (
-                <View style={s.condExpand}>
-                  <Text style={s.condExpandTitle}>Best results in {bestCategory}</Text>
-                  {[...(byCategory[bestCategory]?.tournaments ?? [])]
-                    .sort((a: any, b: any) => {
-                      const pa = (a.singlesPrizeMoney ?? 0) + (a.doublesPrizeMoney ?? 0) || (a.prizeMoney ?? 0);
-                      const pb = (b.singlesPrizeMoney ?? 0) + (b.doublesPrizeMoney ?? 0) || (b.prizeMoney ?? 0);
-                      return pb - pa;
-                    })
-                    .map((t: any) => {
-                      const prize = (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0) || (t.prizeMoney ?? 0);
-                      return (
-                        <View key={t.id} style={s.resultRow}>
-                          <View style={{ flex: 1 }}>
-                            <Text style={s.resultCity}>{t.city ?? t.name}</Text>
-                            <Text style={s.resultDate}>{abbrevDate(t.startDate)} · {t.surface}</Text>
-                          </View>
-                          {prize > 0 && <Text style={s.resultPrize}>{fmtUSD(prize)}</Text>}
-                        </View>
-                      );
-                    })}
-                </View>
-              )}
-            </>
-          )}
-        </View>
-
-        {/* WIN RATE BY SURFACE — tap to see past results */}
-        <View style={s.section}>
-          <Text style={s.sectionLabel}>WIN RATE BY SURFACE</Text>
-          <View style={s.card}>
-            {SURFACES.map(({ key, label, color }) => {
-              const past = pastBySurface[key] ?? [];
-              const isOpen = expandedSurface === key;
-              return (
-                <View key={key}>
-                  <TouchableOpacity
-                    style={s.surfaceRow}
-                    onPress={() => setExpandedSurface(v => v === key ? null : key as any)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={[s.surfaceDot, { backgroundColor: color }]} />
-                    <Text style={s.surfaceLabel}>{label}</Text>
-                    <Text style={s.surfaceCount}>({bySurface[key].length} total)</Text>
-                    <View style={s.barTrack}>
-                      <View style={[s.barFill, { width: '0%', backgroundColor: color }]} />
-                    </View>
-                    <Ionicons name="lock-closed" size={11} color="#6060A0" style={{ marginRight: 4 }} />
-                    <Ionicons name={isOpen ? 'chevron-up' : 'chevron-down'} size={13} color="#6060A0" />
-                  </TouchableOpacity>
-
-                  {isOpen && (
-                    <View style={s.resultsPanel}>
-                      {past.length === 0 ? (
-                        <Text style={s.lockedText}>No past {label} tournaments yet</Text>
-                      ) : (
-                        past.map((t: any) => {
-                          const prize = (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0) || (t.prizeMoney ?? 0);
-                          return (
-                            <View key={t.id} style={s.resultRow}>
-                              <View style={{ flex: 1 }}>
-                                <Text style={s.resultCity}>{t.city ?? t.name}</Text>
-                                <Text style={s.resultDate}>{abbrevDate(t.startDate)} · {t.category}</Text>
-                              </View>
-                              {prize > 0 && <Text style={s.resultPrize}>{fmtUSD(prize)}</Text>}
-                            </View>
-                          );
-                        })
-                      )}
-                    </View>
-                  )}
-                </View>
-              );
-            })}
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: '#FAFAFA' }}>{atpProfile.player_name}</Text>
+                <Text style={{ fontSize: 12, color: '#A0A0C8', marginTop: 2 }}>ATP Singles Ranking</Text>
+                {atpProfile.last_updated && (
+                  <Text style={{ fontSize: 11, color: '#6060A0', marginTop: 4 }}>
+                    Updated {abbrevDate(atpProfile.last_updated.slice(0, 10))}
+                  </Text>
+                )}
+              </View>
+            </View>
           </View>
-        </View>
+        )}
 
         {/* EXPENSE EFFICIENCY BY SURFACE */}
         {tournamentsWithExpenses >= 2 && (
@@ -485,37 +324,6 @@ export default function MyPerformanceScreen() {
           )}
         </View>
 
-        {/* ── POINTS TO DEFEND ── */}
-        {atpProfile && (
-          <View style={s.section}>
-            <Text style={s.sectionLabel}>POINTS TO DEFEND</Text>
-            {defendingThisYear.length === 0 ? (
-              <View style={s.card}><Text style={s.lockedText}>No points to defend in upcoming weeks</Text></View>
-            ) : (
-              <View style={s.card}>
-                {defendingThisYear.map((d: any) => {
-                  const [, m, day] = d.weekOf.split('-').map(Number);
-                  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-                  const label = `${months[m-1]} ${day}`;
-                  const maxPts = Math.max(...defendingThisYear.map((x: any) => x.points));
-                  const pct = maxPts > 0 ? d.points / maxPts : 0;
-                  return (
-                    <View key={d.weekOf} style={{ marginBottom: 10 }}>
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
-                        <Text style={{ fontSize: 12, color: '#A0A0C8' }}>{label} · {d.tournamentName}</Text>
-                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#FAFAFA' }}>{d.points} pts</Text>
-                      </View>
-                      <View style={{ height: 6, backgroundColor: '#2A2A4A', borderRadius: 3 }}>
-                        <View style={{ height: 6, width: `${Math.round(pct * 100)}%` as any, backgroundColor: '#5B5BD6', borderRadius: 3 }} />
-                      </View>
-                    </View>
-                  );
-                })}
-              </View>
-            )}
-          </View>
-        )}
-
         {/* ── ATP MATCH HISTORY ── */}
         {atpProfile && atpMatchHistory.length > 0 && (
           <View style={s.section}>
@@ -536,49 +344,6 @@ export default function MyPerformanceScreen() {
             </View>
           </View>
         )}
-
-        {/* ── COMPARE PLAYERS ── */}
-        <View style={s.section}>
-          <Text style={s.sectionLabel}>COMPARE PLAYERS</Text>
-          <View style={[s.card, { paddingBottom: 8 }]}>
-            <TextInput
-              style={{ backgroundColor: '#0F0F1A', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: '#FAFAFA', borderWidth: 1, borderColor: '#2A2A4A', marginBottom: 4 }}
-              placeholder="Search player name..." placeholderTextColor="#555"
-              value={compareQuery} onChangeText={setCompareQuery} autoCorrect={false}
-            />
-            {compareSuggestions.map((p: any) => (
-              <TouchableOpacity key={p.player_name} style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#2A2A4A' }}
-                onPress={() => {
-                  setCompareQuery(p.player_name);
-                  setCompareSuggestions([]);
-                  supabase.from('player_profiles').select('*').eq('player_name', p.player_name).single()
-                    .then(({ data }) => { if (data) setCompareProfile(data); });
-                }} activeOpacity={0.7}>
-                <Text style={{ fontSize: 14, color: '#FAFAFA' }}>{p.player_name} <Text style={{ color: '#A0A0C8' }}>#{p.current_ranking}</Text></Text>
-              </TouchableOpacity>
-            ))}
-            {compareProfile && atpProfile && (
-              <View style={{ marginTop: 12 }}>
-                {[
-                  { label: 'Ranking', mine: `#${atpProfile.current_ranking ?? '—'}`, theirs: `#${compareProfile.current_ranking ?? '—'}` },
-                  ...(['clay', 'hard', 'grass'] as const).map(sf => {
-                    const me = atpProfile.win_loss_by_surface?.[sf];
-                    const them = compareProfile.win_loss_by_surface?.[sf];
-                    const myPct = me && (me.wins + me.losses) > 0 ? Math.round(me.wins / (me.wins + me.losses) * 100) : null;
-                    const theirPct = them && (them.wins + them.losses) > 0 ? Math.round(them.wins / (them.wins + them.losses) * 100) : null;
-                    return { label: sf.charAt(0).toUpperCase() + sf.slice(1), mine: myPct != null ? `${myPct}%` : '—', theirs: theirPct != null ? `${theirPct}%` : '—' };
-                  }),
-                ].map(row => (
-                  <View key={row.label} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#2A2A4A' }}>
-                    <Text style={{ fontSize: 13, color: '#A0A0C8', flex: 1, textAlign: 'center' }}>{row.mine}</Text>
-                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#FAFAFA', flex: 1, textAlign: 'center' }}>{row.label}</Text>
-                    <Text style={{ fontSize: 13, color: '#A0A0C8', flex: 1, textAlign: 'center' }}>{row.theirs}</Text>
-                  </View>
-                ))}
-              </View>
-            )}
-          </View>
-        </View>
 
         <View style={{ height: 40 }} />
       </ScrollView>
