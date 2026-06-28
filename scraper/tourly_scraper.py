@@ -503,61 +503,48 @@ class ATPPlayerScraper:
         return url
 
     async def _browser_search(self, player_name: str) -> Optional[str]:
-        """Type player name into the ATP search box and pick the matching result."""
-        # Use only the last name for better matching (ATP search is more reliable with last name)
-        last_name = player_name.split()[-1]
+        """Use ATP alphabetical player list to find a player by last name."""
+        # Try each name part from last to first using the letter-filter page
+        name_parts = player_name.split()
+        for search_name in reversed(name_parts):
+            letter = search_name[0].upper()
+            url = f"https://www.atptour.com/en/players?letter={letter}"
+            try:
+                await self.page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+            except Exception as e:
+                print(f"   ⚠  Browser nav warning: {e}")
+            await self.page.wait_for_timeout(3_000)
 
-        try:
-            await self.page.goto("https://www.atptour.com/en/players", wait_until="domcontentloaded", timeout=60_000)
-        except Exception as e:
-            print(f"   ⚠  Browser nav warning: {e}")
-        await self.page.wait_for_timeout(3_000)
+            # Dismiss cookie banner
+            try:
+                await self.page.evaluate("""() => {
+                    const btn = document.getElementById('onetrust-accept-btn-handler');
+                    if (btn) btn.click();
+                    const sdk = document.getElementById('onetrust-consent-sdk');
+                    if (sdk) sdk.remove();
+                }""")
+                await self.page.wait_for_timeout(500)
+            except Exception:
+                pass
 
-        # Dismiss OneTrust cookie banner via JS (overlay blocks normal click)
-        try:
-            await self.page.evaluate("""() => {
-                const btn = document.getElementById('onetrust-accept-btn-handler');
-                if (btn) btn.click();
-                const sdk = document.getElementById('onetrust-consent-sdk');
-                if (sdk) sdk.remove();
-            }""")
-            await self.page.wait_for_timeout(1_000)
-            print("   ✓  Cookie banner dismissed.")
-        except Exception as e:
-            print(f"   ⚠  Cookie dismiss: {e}")
+            slug = search_name.lower().replace(" ", "-")
+            all_hrefs = await self.page.evaluate("""() =>
+                [...document.querySelectorAll('a[href*="/players/"]')]
+                  .map(a => ({href: a.href, text: a.textContent.trim()}))
+                  .filter(x => x.href.includes('/overview'))
+            """)
+            print(f"   Letter '{letter}' page: {len(all_hrefs)} player links found")
 
-        # Find the search/filter input and type the last name
-        search_input = await self.page.query_selector(
-            'input[type="search"], input[placeholder*="search" i], '
-            'input[placeholder*="player" i], input[placeholder*="name" i], '
-            '.search-input input, #playerSearch, input[name="query"]'
-        )
-        if not search_input:
-            print("   ⚠  Could not find ATP search input.")
-            return None
-
-        await search_input.click()
-        await search_input.fill(last_name)
-        await self.page.wait_for_timeout(3_000)   # wait for live results
-
-        # Dump all player links now visible
-        all_hrefs = await self.page.evaluate("""() =>
-            [...document.querySelectorAll('a[href*="/players/"]')]
-              .map(a => ({href: a.href, text: a.textContent.trim()}))
-              .filter(x => x.text.length > 2 && x.href.includes('/overview'))
-              .slice(0, 15)
-        """)
-        print(f"   Player links after search: {all_hrefs}")
-
-        # Match by slug in href first (works even when search input didn't filter correctly)
-        last_slug = last_name.lower().replace(" ", "-")
-        for item in all_hrefs:
-            if last_slug in item.get("href", "").lower():
-                return item["href"]
-        # Fallback: text match
-        for item in all_hrefs:
-            if last_name.lower() in item.get("text", "").lower():
-                return item["href"]
+            # Slug match first (most reliable)
+            for item in all_hrefs:
+                if slug in item.get("href", "").lower():
+                    print(f"   ✓  Found via letter page slug '{slug}'")
+                    return item["href"]
+            # Text match fallback
+            for item in all_hrefs:
+                if search_name.lower() in item.get("text", "").lower():
+                    print(f"   ✓  Found via letter page text '{search_name}'")
+                    return item["href"]
 
         return None
 
