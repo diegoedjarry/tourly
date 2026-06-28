@@ -503,17 +503,17 @@ class ATPPlayerScraper:
         return url
 
     async def _browser_search(self, player_name: str) -> Optional[str]:
-        """Use ATP alphabetical player list to find a player by last name."""
-        # Try each name part from last to first using the letter-filter page
+        """Use the ATP site search page to find a player profile URL."""
         name_parts = player_name.split()
-        for search_name in reversed(name_parts):
-            letter = search_name[0].upper()
-            url = f"https://www.atptour.com/en/players?letter={letter}"
+        # Try each name part from last to first
+        for search_term in reversed(name_parts):
+            slug = search_term.lower().replace(" ", "-")
+            search_url = f"https://www.atptour.com/en/search#q={search_term}&t=players"
             try:
-                await self.page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+                await self.page.goto(search_url, wait_until="domcontentloaded", timeout=60_000)
             except Exception as e:
                 print(f"   ⚠  Browser nav warning: {e}")
-            await self.page.wait_for_timeout(3_000)
+            await self.page.wait_for_timeout(5_000)
 
             # Dismiss cookie banner
             try:
@@ -527,42 +527,43 @@ class ATPPlayerScraper:
             except Exception:
                 pass
 
-            slug = search_name.lower().replace(" ", "-")
             all_hrefs = await self.page.evaluate("""() =>
                 [...document.querySelectorAll('a[href*="/players/"]')]
                   .map(a => ({href: a.href, text: a.textContent.trim()}))
                   .filter(x => x.href.includes('/overview'))
             """)
-            print(f"   Letter '{letter}' page: {len(all_hrefs)} player links found")
+            print(f"   Search '{search_term}': {len(all_hrefs)} player links")
 
-            # Slug match first (most reliable)
             for item in all_hrefs:
                 if slug in item.get("href", "").lower():
-                    print(f"   ✓  Found via letter page slug '{slug}'")
+                    print(f"   ✓  Found via search slug '{slug}'")
                     return item["href"]
-            # Text match fallback
             for item in all_hrefs:
-                if search_name.lower() in item.get("text", "").lower():
-                    print(f"   ✓  Found via letter page text '{search_name}'")
+                if search_term.lower() in item.get("text", "").lower():
+                    print(f"   ✓  Found via search text '{search_term}'")
                     return item["href"]
 
         return None
 
     async def _search_rankings_page(self, last_name: str) -> Optional[str]:
-        """Search the ATP singles rankings page for a player by last name slug."""
+        """Search the ATP singles rankings page (top 500) for a player by last name slug."""
         try:
             await self.page.goto(
-                "https://www.atptour.com/en/rankings/singles",
+                "https://www.atptour.com/en/rankings/singles?rankRange=1-500&perPageCount=500",
                 wait_until="domcontentloaded", timeout=60_000
             )
-            await self.page.wait_for_timeout(4_000)
+            await self.page.wait_for_timeout(5_000)
+            await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await self.page.wait_for_timeout(2_000)
             last_slug = last_name.lower().replace(" ", "-")
             links = await self.page.evaluate("""() =>
                 [...document.querySelectorAll('a[href*="/players/"]')]
                   .map(a => a.href).filter(h => h.includes('/overview'))
             """)
+            print(f"   Rankings page: {len(links)} player links found")
             for href in links:
                 if last_slug in href.lower():
+                    print(f"   ✓  Found via rankings page: {href}")
                     return href
         except Exception as e:
             print(f"   ⚠  Rankings page search: {e}")
