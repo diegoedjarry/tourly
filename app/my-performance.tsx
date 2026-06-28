@@ -171,7 +171,8 @@ export default function MyPerformanceScreen() {
           if (!prof?.atp_player_name) return;
           const nameParts = prof.atp_player_name.trim().split(/\s+/).slice(0, 2).join(' ');
           supabase.from('player_profiles').select('*')
-            .ilike('player_name', `%${nameParts}%`).limit(1)
+            .ilike('player_name', `%${nameParts}%`)
+            .order('last_updated', { ascending: false }).limit(1)
             .then(({ data }) => { if (data?.[0]) setAtpProfile(data[0]); });
         });
     });
