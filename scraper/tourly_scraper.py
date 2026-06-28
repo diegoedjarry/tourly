@@ -546,27 +546,29 @@ class ATPPlayerScraper:
         return None
 
     async def _search_rankings_page(self, last_name: str) -> Optional[str]:
-        """Search the ATP singles rankings page (top 500) for a player by last name slug."""
-        try:
-            await self.page.goto(
-                "https://www.atptour.com/en/rankings/singles?rankRange=1-500&perPageCount=500",
-                wait_until="domcontentloaded", timeout=60_000
-            )
-            await self.page.wait_for_timeout(5_000)
-            await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await self.page.wait_for_timeout(2_000)
-            last_slug = last_name.lower().replace(" ", "-")
-            links = await self.page.evaluate("""() =>
-                [...document.querySelectorAll('a[href*="/players/"]')]
-                  .map(a => a.href).filter(h => h.includes('/overview'))
-            """)
-            print(f"   Rankings page: {len(links)} player links found")
-            for href in links:
-                if last_slug in href.lower():
-                    print(f"   ✓  Found via rankings page: {href}")
-                    return href
-        except Exception as e:
-            print(f"   ⚠  Rankings page search: {e}")
+        """Paginate through ATP rankings in batches of 500 to find any ranked player."""
+        last_slug = last_name.lower().replace(" ", "-")
+        for start in range(1, 2500, 500):
+            end = start + 499
+            url = f"https://www.atptour.com/en/rankings/singles?rankRange={start}-{end}&perPageCount=500"
+            try:
+                await self.page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+                await self.page.wait_for_timeout(4_000)
+                await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await self.page.wait_for_timeout(1_500)
+                links = await self.page.evaluate("""() =>
+                    [...document.querySelectorAll('a[href*="/players/"]')]
+                      .map(a => a.href).filter(h => h.includes('/overview'))
+                """)
+                print(f"   Rankings {start}-{end}: {len(links)} links")
+                for href in links:
+                    if last_slug in href.lower():
+                        print(f"   ✓  Found via rankings {start}-{end}: {href}")
+                        return href
+                if len(links) < 10:
+                    break  # no more players at this rank range
+            except Exception as e:
+                print(f"   ⚠  Rankings {start}-{end}: {e}")
         return None
 
     async def _scrape_activity(self, profile_url: str) -> list[dict]:
