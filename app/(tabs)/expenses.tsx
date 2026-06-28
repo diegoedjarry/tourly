@@ -2385,6 +2385,9 @@ export default function ExpensesScreen() {
   const [showAddChoice, setShowAddChoice] = useState(false);
   const [showPrizeBreakdown, setShowPrizeBreakdown] = useState(false);
   const [selectedPrizeIds, setSelectedPrizeIds] = useState<Set<string>>(new Set());
+  const [showSpentBreakdown, setShowSpentBreakdown] = useState(false);
+  const [spentMonth, setSpentMonth] = useState<number | null>(null);
+  const [selectedSpentIds, setSelectedSpentIds] = useState<Set<string>>(new Set());
   const [showPrizeMoney, setShowPrizeMoney] = useState(false);
   const [showPasteModal, setShowPasteModal] = useState(false);
   const [detailTournament, setDetailTournament] = useState<any | null>(null);
@@ -2734,10 +2737,10 @@ export default function ExpensesScreen() {
                 })()}</Text>
               </View>
               <View style={styles.seasonDivider} />
-              <View style={styles.seasonStat}>
+              <TouchableOpacity style={styles.seasonStat} onPress={() => { setSpentMonth(null); setSelectedSpentIds(new Set()); setShowSpentBreakdown(true); }} activeOpacity={0.7}>
                 <Text style={styles.seasonStatLabel}>{t('expenses.spent')}</Text>
-                <Text style={styles.seasonStatValue}>{fmt(periodSpent)}</Text>
-              </View>
+                <Text style={[styles.seasonStatValue, { color: '#E24B4A' }]}>{fmt(periodSpent)}</Text>
+              </TouchableOpacity>
               <View style={styles.seasonDivider} />
               <TouchableOpacity style={styles.seasonStat} onPress={() => setShowPrizeBreakdown(true)} activeOpacity={0.7}>
                 <Text style={styles.seasonStatLabel}>{t('expenses.prize')}</Text>
@@ -2785,6 +2788,148 @@ export default function ExpensesScreen() {
       </ScrollView>
 
       {/* ── Add choice sheet ── */}
+      {/* ── Spent Breakdown Modal ── */}
+      {showSpentBreakdown && (() => {
+        const closeSpent = () => { setShowSpentBreakdown(false); setSpentMonth(null); setSelectedSpentIds(new Set()); };
+
+        // Determine which expenses to show
+        const activeExpenses: any[] = period === 'year' && spentMonth === null
+          ? [] // will show month picker instead
+          : (() => {
+              if (period === 'year' && spentMonth !== null) {
+                const now = new Date(); const y = now.getFullYear() + yearOffset;
+                const mStr = `${y}-${String(spentMonth + 1).padStart(2, '0')}`;
+                return expenses.filter((e: any) => e.date && e.date.startsWith(mStr));
+              }
+              return periodExpenses;
+            })();
+
+        // Group by tournament
+        const grouped: { tournament: any | null; exps: any[] }[] = [];
+        if (activeExpenses.length > 0) {
+          const byTrn: Record<string, any[]> = {};
+          const standalone: any[] = [];
+          for (const e of activeExpenses) {
+            if (e.tournamentId) { (byTrn[e.tournamentId] = byTrn[e.tournamentId] ?? []).push(e); }
+            else { standalone.push(e); }
+          }
+          Object.entries(byTrn).forEach(([tid, exps]) => {
+            const trn = tournaments.find((t: any) => t.id === tid) ?? null;
+            grouped.push({ tournament: trn, exps });
+          });
+          grouped.sort((a, b) => ((b.tournament?.startDate ?? '') > (a.tournament?.startDate ?? '')) ? 1 : -1);
+          if (standalone.length > 0) grouped.push({ tournament: null, exps: standalone });
+        }
+
+        // Month picker data (yearly only)
+        const monthRows: { label: string; idx: number; total: number }[] = [];
+        if (period === 'year' && spentMonth === null) {
+          const now = new Date(); const y = now.getFullYear() + yearOffset;
+          const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+          for (let m = 0; m < 12; m++) {
+            const mStr = `${y}-${String(m + 1).padStart(2, '0')}`;
+            const total = expenses.filter((e: any) => e.date?.startsWith(mStr)).reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
+            if (total > 0) monthRows.push({ label: MONTHS[m], idx: m, total });
+          }
+        }
+
+        return (
+          <Modal transparent animationType="slide" onRequestClose={closeSpent}>
+            <Pressable style={styles.choiceBackdrop} onPress={closeSpent}>
+              <Pressable style={[styles.choiceSheet, { maxHeight: '88%' }]} onPress={() => {}}>
+                <View style={styles.choiceHandle} />
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                  {period === 'year' && spentMonth !== null && (
+                    <TouchableOpacity onPress={() => { setSpentMonth(null); setSelectedSpentIds(new Set()); }} style={{ marginRight: 8 }}>
+                      <Text style={{ color: '#5B5BD6', fontSize: 16 }}>‹</Text>
+                    </TouchableOpacity>
+                  )}
+                  <Text style={{ fontSize: 16, fontWeight: '700', color: '#FAFAFA', flex: 1, textAlign: 'center' }}>
+                    {period === 'year' && spentMonth === null ? 'Expenses by Month' : 'Expenses Breakdown'}
+                  </Text>
+                </View>
+                {selectedSpentIds.size === 0
+                  ? <Text style={{ fontSize: 12, color: '#6060A0', textAlign: 'center', marginBottom: 12 }}>
+                      {period === 'year' && spentMonth === null ? 'Tap a month to drill in' : 'Tap an expense to select'}
+                    </Text>
+                  : <Text style={{ fontSize: 12, color: '#5B5BD6', textAlign: 'center', marginBottom: 12 }}>{selectedSpentIds.size} selected</Text>
+                }
+
+                <ScrollView showsVerticalScrollIndicator={false}>
+                  {/* Month picker */}
+                  {period === 'year' && spentMonth === null && monthRows.map(({ label, idx, total }) => (
+                    <TouchableOpacity key={idx} onPress={() => setSpentMonth(idx)} activeOpacity={0.7}
+                      style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#2A2A4A' }}>
+                      <Text style={{ fontSize: 15, fontWeight: '600', color: '#FAFAFA' }}>{label}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <Text style={{ fontSize: 15, fontWeight: '700', color: '#E24B4A' }}>{fmt(total)}</Text>
+                        <Text style={{ color: '#6060A0' }}>›</Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+
+                  {/* Expense list grouped by tournament */}
+                  {(period !== 'year' || spentMonth !== null) && grouped.map((group, gi) => (
+                    <View key={gi} style={{ marginBottom: 12 }}>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#A0A0C8', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 6, marginTop: gi > 0 ? 8 : 0 }}>
+                        {group.tournament ? (group.tournament.city ?? group.tournament.name) : 'Other expenses'}
+                      </Text>
+                      {group.exps.map((exp: any) => {
+                        const sel = selectedSpentIds.has(exp.id);
+                        return (
+                          <TouchableOpacity key={exp.id} activeOpacity={0.7}
+                            onPress={() => setSelectedSpentIds(prev => { const n = new Set(prev); n.has(exp.id) ? n.delete(exp.id) : n.add(exp.id); return n; })}
+                            style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, paddingHorizontal: 4, borderRadius: 8, backgroundColor: sel ? 'rgba(91,91,214,0.12)' : 'transparent', marginBottom: 2 }}>
+                            <View style={{ width: 18, height: 18, borderRadius: 9, borderWidth: 2, borderColor: sel ? '#5B5BD6' : '#3A3A5A', backgroundColor: sel ? '#5B5BD6' : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
+                              {sel && <Text style={{ color: '#FFF', fontSize: 10, fontWeight: '700' }}>✓</Text>}
+                            </View>
+                            <View style={{ flex: 1 }}>
+                              <Text style={{ fontSize: 13, fontWeight: '600', color: '#FAFAFA' }}>{exp.category}</Text>
+                              <Text style={{ fontSize: 11, color: '#A0A0C8' }}>{exp.date}</Text>
+                            </View>
+                            <Text style={{ fontSize: 14, fontWeight: '700', color: '#E24B4A' }}>{fmt(exp.amount ?? 0)}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  ))}
+                  <View style={{ height: 80 }} />
+                </ScrollView>
+
+                {/* Action footer */}
+                {selectedSpentIds.size > 0 && (
+                  <View style={{ flexDirection: 'row', gap: 10, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#2A2A4A' }}>
+                    {selectedSpentIds.size === 1 && (
+                      <TouchableOpacity
+                        style={{ flex: 1, backgroundColor: '#5B5BD6', borderRadius: 10, paddingVertical: 13, alignItems: 'center' }}
+                        activeOpacity={0.8}
+                        onPress={() => {
+                          const id = [...selectedSpentIds][0];
+                          const exp = expenses.find((e: any) => e.id === id);
+                          if (exp) { setShowSpentBreakdown(false); setSelectedSpentIds(new Set()); setEditExpense(exp); }
+                        }}>
+                        <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 14 }}>Edit</Text>
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity
+                      style={{ flex: 1, backgroundColor: '#3A1A1A', borderRadius: 10, paddingVertical: 13, alignItems: 'center', borderWidth: 1, borderColor: '#E24B4A' }}
+                      activeOpacity={0.8}
+                      onPress={async () => {
+                        for (const id of selectedSpentIds) { await apiDeleteExpense(id); }
+                        setSelectedSpentIds(new Set());
+                      }}>
+                      <Text style={{ color: '#E24B4A', fontWeight: '700', fontSize: 14 }}>
+                        Delete{selectedSpentIds.size > 1 ? ` (${selectedSpentIds.size})` : ''}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </Pressable>
+            </Pressable>
+          </Modal>
+        );
+      })()}
+
       {/* ── Prize Breakdown Modal ── */}
       {showPrizeBreakdown && (
         <Modal transparent animationType="slide" onRequestClose={() => { setShowPrizeBreakdown(false); setSelectedPrizeIds(new Set()); }}>
