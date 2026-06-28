@@ -166,13 +166,13 @@ export default function MyPerformanceScreen() {
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) return;
-      supabase.from('profiles').select('atp_player_name, ipin_number').eq('id', user.id).single()
+      supabase.from('profiles').select('atp_player_name').eq('id', user.id).single()
         .then(({ data: prof }) => {
-          if (!prof?.ipin_number && !prof?.atp_player_name) return;
-          const query = prof.ipin_number
-            ? supabase.from('player_profiles').select('*').eq('ipin', prof.ipin_number).limit(1)
-            : supabase.from('player_profiles').select('*').ilike('player_name', `%${prof.atp_player_name.trim().split(/\s+/).slice(0, 2).join(' ')}%`).limit(1);
-          query.then(({ data }) => { if (data?.[0]) setAtpProfile(data[0]); });
+          if (!prof?.atp_player_name) return;
+          const nameParts = prof.atp_player_name.trim().split(/\s+/).slice(0, 2).join(' ');
+          supabase.from('player_profiles').select('*')
+            .ilike('player_name', `%${nameParts}%`).limit(1)
+            .then(({ data }) => { if (data?.[0]) setAtpProfile(data[0]); });
         });
     });
   }, []);

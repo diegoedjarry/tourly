@@ -925,7 +925,7 @@ async def run_all_players_phase(integrator: TourlyDataIntegrator):
             await browser.close()
 
 
-async def run_player_phase(integrator: TourlyDataIntegrator, player_name: str, ipin_override: Optional[str] = None):
+async def run_player_phase(integrator: TourlyDataIntegrator, player_name: str):
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
             headless=True, channel="chrome", args=BROWSER_ARGS
@@ -944,10 +944,6 @@ async def run_player_phase(integrator: TourlyDataIntegrator, player_name: str, i
             await browser.close()
 
     if profile:
-        # Use the ipin_number from profiles table so RLS policy matches
-        if ipin_override:
-            profile["ipin"] = ipin_override
-            print(f"   ipin set from profiles table: {ipin_override}")
         integrator.upsert_player_profile(profile)
     else:
         print(f"⚠  No data returned for '{player_name}' — profile not saved.")
@@ -955,22 +951,14 @@ async def run_player_phase(integrator: TourlyDataIntegrator, player_name: str, i
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
-async def fetch_players_from_profiles(supabase: Client) -> list[dict]:
-    """Returns all distinct players with atp_player_name from the profiles table.
-    Each entry is {"name": str, "ipin": str | None}.
-    """
+async def fetch_players_from_profiles(supabase: Client) -> list[str]:
+    """Returns all distinct non-null atp_player_name values from the profiles table."""
     try:
-        res = supabase.from_("profiles").select("atp_player_name, ipin_number").neq("atp_player_name", None).execute()
-        seen: set[str] = set()
-        players: list[dict] = []
-        for row in (res.data or []):
-            name = (row.get("atp_player_name") or "").strip()
-            if not name or name in seen:
-                continue
-            seen.add(name)
-            players.append({"name": name, "ipin": (row.get("ipin_number") or "").strip() or None})
-        print(f"   Found {len(players)} ATP player(s) in profiles table: {[p['name'] for p in players]}")
-        return players
+        res = supabase.from_("profiles").select("atp_player_name").neq("atp_player_name", None).execute()
+        names = [row["atp_player_name"].strip() for row in (res.data or []) if row.get("atp_player_name", "").strip()]
+        unique = list(dict.fromkeys(names))
+        print(f"   Found {len(unique)} ATP player(s) in profiles table: {unique}")
+        return unique
     except Exception as e:
         print(f"   ⚠  Could not fetch players from profiles: {e}")
         return []
@@ -1011,18 +999,16 @@ async def main():
     else:
         # Prefer explicit PLAYER_NAME env var; fall back to all names in profiles table
         if player_name:
-            profile_players = [{"name": player_name, "ipin": None}]
+            profile_players = [player_name]
         else:
             print("\n> Phase 2: Player Profiles — reading from profiles table")
             profile_players = await fetch_players_from_profiles(integrator.sb)
 
         if profile_players:
-            for p in profile_players:
-                pname = p["name"]
-                pipin = p.get("ipin")
-                print(f"\n> Phase 2: Player Profile — {pname} (ipin: {pipin})")
+            for pname in profile_players:
+                print(f"\n> Phase 2: Player Profile — {pname}")
                 try:
-                    await run_player_phase(integrator, pname, ipin_override=pipin)
+                    await run_player_phase(integrator, pname)
                 except Exception as e:
                     print(f"✗  Player scraper ({pname}): {e}")
                     if status == "success":
