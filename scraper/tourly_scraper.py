@@ -659,14 +659,34 @@ class ATPPlayerScraper:
             date_str = normalise_date(date_m.group(1).strip()) if date_m else None
             surface  = normalise_surface(surf_m.group(1).strip()) if surf_m else "hard"
 
-            # Tournament name = last meaningful line before the location line
+            # Extract city from the location line ("Temuco, Chile | ...") → "Temuco"
+            city_from_loc = loc_line.split(',')[0].strip() if loc_line else ""
+
+            # Collect up to 2 meaningful lines before the location (reversed order)
             pre_lines = [l.strip() for l in section[:loc_match.start()].split('\n') if l.strip()]
-            tournament_name = ""
+            name_parts: list[str] = []
             for line in reversed(pre_lines):
                 if line and line not in SKIP_LINES and not re.fullmatch(r'\d{4}', line) \
                         and not re.fullmatch(r'[\d\s\-–W$€£,%.]+', line):
-                    tournament_name = line
-                    break
+                    name_parts.append(line)
+                    if len(name_parts) == 2:
+                        break
+
+            # Build full name: prefer "City Category" (e.g. "Temuco Challenger 50")
+            # name_parts[0] = last pre-line (often the city or a partial name)
+            # name_parts[1] = second-to-last (often the category like "Challenger 50")
+            if not name_parts:
+                continue
+            category_part = name_parts[1] if len(name_parts) > 1 else ""
+            city_part     = name_parts[0]
+
+            if category_part and city_from_loc and city_from_loc.lower() not in category_part.lower():
+                # category_part is something like "Challenger 50"; city_part may just be city
+                tournament_name = f"{city_from_loc} {category_part}"
+            elif city_from_loc and city_from_loc.lower() not in city_part.lower():
+                tournament_name = f"{city_from_loc} {city_part}"
+            else:
+                tournament_name = city_part
 
             if not tournament_name:
                 continue

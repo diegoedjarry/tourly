@@ -22,7 +22,15 @@ const SURFACES: Array<{ key: 'clay' | 'hard'; label: string; color: string }> = 
 
 function inferTour(rawCat: string, name: string): 'ATP Tour' | 'ITF Tour' {
   const c = (rawCat + ' ' + name).toUpperCase();
-  if (c.includes('CHALLENGER') || c.includes('ATP 250') || c.includes('ATP 500') || c.includes('ATP 1000')) return 'ATP Tour';
+  // ATP Tour: Challenger events (all prize levels: 50, 75, 100, 125) and ATP-branded events
+  if (
+    c.includes('CHALLENGER') ||
+    c.includes('ATP 250') || c.includes('ATP 500') || c.includes('ATP 1000') ||
+    // "Challenger 50 / 75 / 100 / 125" without the word "Challenger" spelled out
+    /\bCH\s*\d{2,3}\b/.test(c) ||
+    // standalone prize bracket numbers that only appear on Challenger level
+    /\b(50|75|100|125)\b/.test(c)
+  ) return 'ATP Tour';
   return 'ITF Tour';
 }
 
