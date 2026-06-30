@@ -688,6 +688,10 @@ class ATPPlayerScraper:
             else:
                 tournament_name = city_part
 
+            # Strip ATP Ranking / Prize Money that leaks into the name on some ATP pages
+            tournament_name = re.sub(r'\s*,?\s*ATP Ranking[:\s]*[\d\-–]+.*', '', tournament_name, flags=re.IGNORECASE).strip()
+            tournament_name = re.sub(r'\s*,?\s*Prize Money.*',                '', tournament_name, flags=re.IGNORECASE).strip()
+
             if not tournament_name:
                 continue
 

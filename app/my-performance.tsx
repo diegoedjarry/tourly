@@ -35,6 +35,14 @@ function inferTour(rawCat: string, name: string, pointsEarned?: number): 'ATP To
 
 const ROUND_WINS: Record<string, number> = { W: 6, F: 5, SF: 4, QF: 3, R16: 2, R32: 1, R64: 0, R128: 0 };
 
+function cleanTournName(raw: string | undefined): string {
+  if (!raw) return '';
+  return raw
+    .replace(/\s*,?\s*ATP Ranking[:\s]*[\d\-–]+.*/i, '')
+    .replace(/\s*,?\s*Prize Money.*/i, '')
+    .trim();
+}
+
 function fmtUSD(amount: number) {
   return `$${amount.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
 }
@@ -74,13 +82,11 @@ export default function MyPerformanceScreen() {
           supabase.from('player_profiles').select('*')
             .ilike('player_name', `%${nameParts}%`)
             .order('last_updated', { ascending: false }).limit(1)
-            .then(({ data }) => { 
-              if (data?.[0]) setAtpProfile(data[0]); 
+            .then(({ data }) => {
+              if (data?.[0]) setAtpProfile(data[0]);
               setIsLoadingProfile(false);
-            })
-            .catch(() => setIsLoadingProfile(false));
-        })
-        .catch(() => setIsLoadingProfile(false));
+            }, () => setIsLoadingProfile(false));
+        }, () => setIsLoadingProfile(false));
     });
   }, []);
 
@@ -334,7 +340,7 @@ export default function MyPerformanceScreen() {
                     .map((t: any, idx: number) => (
                       <TouchableOpacity key={idx} style={s.resultRow} onPress={() => setDetailMatch(t)} activeOpacity={0.7}>
                         <View style={{ flex: 1 }}>
-                          <Text style={s.resultCity}>{t.name}</Text>
+                          <Text style={s.resultCity}>{cleanTournName(t.name)}</Text>
                           <Text style={s.resultDate}>
                             {abbrevDate(t.date)} · {t.surface ?? '—'}
                             {t.roundReached ? ` · ${t.roundReached}` : ''}
@@ -362,7 +368,7 @@ export default function MyPerformanceScreen() {
                       <View style={[s.miniDot, { backgroundColor: surf?.color ?? '#6060A0' }]} />
                       <Text style={s.miniDate}>{abbrevDate(t.startDate)}</Text>
                     </View>
-                    <Text style={s.miniCity} numberOfLines={1}>{t.name}</Text>
+                    <Text style={s.miniCity} numberOfLines={1}>{cleanTournName(t.name)}</Text>
                     {t.roundReached ? (
                       <Text style={s.miniPrize}>{t.roundReached}</Text>
                     ) : t.prize > 0 ? (
@@ -397,7 +403,7 @@ export default function MyPerformanceScreen() {
                 <TouchableOpacity key={i} onPress={() => setDetailMatch(m)} activeOpacity={0.7}
                   style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: i < atpMatchHistory.length - 1 ? 1 : 0, borderBottomColor: '#2A2A4A' }}>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#FAFAFA' }} numberOfLines={1}>{m.tournamentName}</Text>
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#FAFAFA' }} numberOfLines={1}>{cleanTournName(m.tournamentName)}</Text>
                     <Text style={{ fontSize: 11, color: '#A0A0C8', marginTop: 2 }}>{abbrevDate(m.date)} · {m.surface}</Text>
                   </View>
                   <View style={{ alignItems: 'flex-end', marginLeft: 12 }}>
@@ -421,7 +427,7 @@ export default function MyPerformanceScreen() {
           <View style={s.modalContent}>
             <View style={s.modalHeader}>
               <Text style={[s.modalTitle, { fontSize: 16 }]} numberOfLines={2}>
-                {detailMatch?.tournamentName ?? detailMatch?.name ?? ''}
+                {cleanTournName(detailMatch?.tournamentName ?? detailMatch?.name ?? '')}
               </Text>
               <TouchableOpacity onPress={() => setDetailMatch(null)} style={s.modalClose} activeOpacity={0.7}>
                 <Ionicons name="close" size={20} color="#FAFAFA" />
