@@ -98,6 +98,17 @@ function fmtDateRange(start: string, end?: string): string {
 const DARK_MAP_STYLE = [
   { elementType: 'geometry', stylers: [{ color: '#1A1A2E' }] },
   { elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  // Re-enable city/town name labels (overrides the global labels:off above)
+  {
+    featureType: 'administrative.locality',
+    elementType: 'labels.text.fill',
+    stylers: [{ color: '#9090BB' }, { visibility: 'on' }],
+  },
+  {
+    featureType: 'administrative.locality',
+    elementType: 'labels.text.stroke',
+    stylers: [{ color: '#0F0F1A' }, { visibility: 'on' }, { weight: 2 }],
+  },
   // Country borders
   {
     featureType: 'administrative.country',
