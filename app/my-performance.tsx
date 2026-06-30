@@ -339,11 +339,18 @@ export default function MyPerformanceScreen() {
                             {abbrevDate(t.date)} · {t.surface ?? '—'}
                             {t.roundReached ? ` · ${t.roundReached}` : ''}
                           </Text>
-                          {(t.matches ?? []).map((mx: any, mi: number) => (
-                            <Text key={mi} style={{ fontSize: 11, color: mx.result === 'W' ? '#2D9E6B' : '#E24B4A', marginTop: 2 }}>
-                              {mx.round} {mx.result === 'W' ? 'W' : 'L'} {mx.score}
-                            </Text>
-                          ))}
+                          {(t.matches ?? []).map((mx: any, mi: number, arr: any[]) => {
+                            const isLastMatch = mi === arr.length - 1;
+                            const isWin = t.roundReached === 'W' ? true : !isLastMatch;
+                            return (
+                              <View key={mi} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 6 }}>
+                                <Text style={{ fontSize: 10, fontWeight: '700', color: '#6060A0', width: 28 }}>{mx.round}</Text>
+                                <Text style={{ fontSize: 10, fontWeight: '700', color: isWin ? '#2D9E6B' : '#E24B4A', width: 14 }}>{isWin ? 'W' : 'L'}</Text>
+                                <Text style={{ fontSize: 11, color: '#A0A0C8', flex: 1 }} numberOfLines={1}>{mx.opponent}</Text>
+                                <Text style={{ fontSize: 11, fontWeight: '600', color: '#FAFAFA' }}>{mx.score}</Text>
+                              </View>
+                            );
+                          })}
                         </View>
                         {t.prize > 0 && <Text style={s.resultPrize}>{fmtUSD(t.prize)}</Text>}
                       </View>
