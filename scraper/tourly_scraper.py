@@ -672,19 +672,23 @@ class ATPPlayerScraper:
                     if len(name_parts) == 2:
                         break
 
-            # Build full name: prefer "City Category" (e.g. "Temuco Challenger 50")
-            # name_parts[0] = last pre-line (often the city or a partial name)
-            # name_parts[1] = second-to-last (often the category like "Challenger 50")
+            # Build full name: "Category City" order (e.g. "M15 Vero Beach", "Temuco Challenger 50")
+            # name_parts[0] = last pre-line before location  (often category like "M15")
+            # name_parts[1] = second-to-last                 (rarely used)
             if not name_parts:
                 continue
             category_part = name_parts[1] if len(name_parts) > 1 else ""
             city_part     = name_parts[0]
 
-            if category_part and city_from_loc and city_from_loc.lower() not in category_part.lower():
-                # category_part is something like "Challenger 50"; city_part may just be city
-                tournament_name = f"{city_from_loc} {category_part}"
+            if city_from_loc and city_from_loc.lower() in city_part.lower():
+                # city_part already contains the city (e.g. "M15 Vero Beach" or "Vero Beach")
+                tournament_name = city_part
+            elif category_part and city_from_loc and city_from_loc.lower() not in category_part.lower():
+                # Two distinct pre-lines: put category before city → "M15 Vero Beach"
+                tournament_name = f"{category_part} {city_from_loc}"
             elif city_from_loc and city_from_loc.lower() not in city_part.lower():
-                tournament_name = f"{city_from_loc} {city_part}"
+                # Single pre-line is category (e.g. "M15"), city comes from loc line
+                tournament_name = f"{city_part} {city_from_loc}"
             else:
                 tournament_name = city_part
 
@@ -702,39 +706,46 @@ class ATPPlayerScraper:
             wins       = self._ROUND_WINS.get(rnd_key, 0)
             losses     = 0 if rnd_key == "W" else 1
 
+            # Capture ATP ranking that week (appears in "Points: X, ATP Ranking: Y" suffix)
+            rank_re = re.compile(r'ATP Ranking\s*[:\s]*(\d+)', re.IGNORECASE)
+            rank_m  = rank_re.search(section)
+            atp_ranking_that_week = int(rank_m.group(1)) if rank_m else None
+
             matches_list = []
             lines = [l.strip() for l in post_loc.replace('\t', '\n').split('\n') if l.strip()]
             for j, line in enumerate(lines):
                 if re.fullmatch(r'^(W|F|SF|QF|R16|R32|R64|R128|RR)$', line, re.IGNORECASE):
-                    # We found a match block. The next line is opponent.
                     if j + 1 < len(lines):
                         opponent = lines[j+1]
                         score = ""
-                        for offset in (2, 3, 1):
-                            if j + offset < len(lines):
-                                cand = lines[j+offset]
-                                if re.search(r'(RET|W/O|Default|Walkover)', cand, re.IGNORECASE) or \
-                                   re.search(r'\d{2}\s+\d{2}', cand) or \
-                                   re.search(r'\d-\d', cand) or \
-                                   re.search(r'\d{2}\(', cand):
-                                    score = cand
-                                    break
-                        
+                        # ATP page: round / opponent / country / ranking / score
+                        # search offsets 1-6 to cover varying page layouts
+                        for offset in range(1, 7):
+                            if j + offset >= len(lines):
+                                break
+                            cand = lines[j + offset]
+                            if re.search(r'(RET|W/O|Default|Walkover)', cand, re.IGNORECASE) or \
+                               re.search(r'\d{1,2}-\d{1,2}', cand) or \
+                               re.search(r'\d{2}\s+\d{2}', cand) or \
+                               re.search(r'\d{2}\(', cand):
+                                score = cand
+                                break
                         if score:
                             matches_list.append({
-                                "round": line.upper(),
+                                "round":    line.upper(),
                                 "opponent": opponent,
-                                "score": score
+                                "score":    score,
                             })
 
             results.append({
-                "tournamentName": tournament_name,
-                "date":           date_str,
-                "roundReached":   best_round,
-                "pointsEarned":   pts,
-                "surface":        surface,
-                "wins":           wins,
-                "losses":         losses,
+                "tournamentName":     tournament_name,
+                "date":               date_str,
+                "roundReached":       best_round,
+                "pointsEarned":       pts,
+                "rankingThatWeek":    atp_ranking_that_week,
+                "surface":            surface,
+                "wins":               wins,
+                "losses":             losses,
                 "matches":        matches_list,
             })
 

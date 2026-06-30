@@ -65,7 +65,6 @@ export default function MyPerformanceScreen() {
   const [detailMatch, setDetailMatch] = useState<any | null>(null);
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
 
-  const today = useMemo(() => { const d = new Date(); d.setHours(0,0,0,0); return d; }, []);
   const currentYear = new Date().getFullYear();
 
   // ── ATP player profile — must come BEFORE any memos that use it ──────────────
@@ -442,6 +441,9 @@ export default function MyPerformanceScreen() {
               )}
               {((detailMatch?.pointsEarned ?? 0) > 0) && (
                 <Text style={{ fontSize: 12, color: '#A0A0C8' }}>{detailMatch.pointsEarned} pts</Text>
+              )}
+              {detailMatch?.rankingThatWeek && (
+                <Text style={{ fontSize: 12, color: '#5B5BD6', fontWeight: '700' }}>Rank #{detailMatch.rankingThatWeek}</Text>
               )}
             </View>
             <ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={false}>
