@@ -82,102 +82,42 @@ export default function MyPerformanceScreen() {
       .slice(0, 50)
   , [atpProfile, selectedYear]);
 
-  // Past non-withdrawn tournaments, filtered to selectedYear
-  const pastTournaments = useMemo(() => {
-    return tournaments.filter((t: any) => {
-      if (!t.startDate || t.isWithdrawn) return false;
-      const [y, m, d] = t.startDate.split('-').map(Number);
-      return new Date(y, m - 1, d) < today && y === selectedYear;
-    });
-  }, [tournaments, today, selectedYear]);
+  // Expense efficiency by surface — kept for the expense section
+  const expensesForTournament = (tId: string): number =>
+    expenses.filter((e: any) => e.tournamentId === tId).reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
 
-  // Past tournaments grouped by surface
-  const bySurface = useMemo(() => {
-    const map: Record<string, any[]> = { clay: [], hard: [] };
-    pastTournaments.forEach((t: any) => {
-      if (t.surface && map[t.surface]) map[t.surface].push(t);
-    });
-    return map;
-  }, [pastTournaments]);
-
-  function expensesForTournament(tId: string): number {
-    return expenses
-      .filter((e: any) => e.tournamentId === tId)
-      .reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
-  }
-
-  // Expense efficiency by surface
   const surfaceExpenses = useMemo(() => {
     const map: Record<string, { total: number; count: number }> = { clay: { total: 0, count: 0 }, hard: { total: 0, count: 0 } };
-    Object.entries(bySurface).forEach(([surf, ts]) => {
-      ts.forEach((t: any) => {
-        const cost = expensesForTournament(t.id);
-        if (cost > 0) { map[surf].total += cost; map[surf].count += 1; }
-      });
+    tournaments.forEach((t: any) => {
+      if (!t.surface || t.isWithdrawn || !map[t.surface]) return;
+      const cost = expensesForTournament(t.id);
+      if (cost > 0) { map[t.surface].total += cost; map[t.surface].count += 1; }
     });
     return map;
-  }, [bySurface, expenses]);
+  }, [tournaments, expenses]);
 
   const tournamentsWithExpenses = useMemo(() =>
-    pastTournaments.filter((t: any) => expensesForTournament(t.id) > 0).length
-  , [pastTournaments, expenses]);
+    tournaments.filter((t: any) => !t.isWithdrawn && expensesForTournament(t.id) > 0).length
+  , [tournaments, expenses]);
 
-  // Two buckets: ATP Tour (Challenger+) and ITF Tour (M15/M25/etc)
+  // ATP-only buckets — scraper data is the single source of truth for played tournaments
   const tourBuckets = useMemo(() => {
     const map: Record<'ATP Tour' | 'ITF Tour', { count: number; tournaments: any[] }> = {
       'ATP Tour': { count: 0, tournaments: [] },
       'ITF Tour': { count: 0, tournaments: [] },
     };
-    const now = new Date(); now.setHours(0,0,0,0);
-
-    pastTournaments.forEach((t: any) => {
-      const bucket = inferTour(t.category ?? '', t.city ?? t.name ?? '');
-      const cat = t.category ?? '';
-      const city = t.city ?? t.name ?? '';
-      const displayName = cat && !city.toLowerCase().includes(cat.toLowerCase()) ? `${cat} ${city}`.trim() : city;
-      map[bucket].count += 1;
-      map[bucket].tournaments.push({ name: displayName, date: t.startDate, surface: t.surface, roundReached: undefined, prize: (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0) || (t.prizeMoney ?? 0), matches: [] });
-    });
-
-    const localMonths = new Set(pastTournaments.map((t: any) => (t.startDate ?? '').slice(0, 7)));
     atpMatchHistory.forEach((m: any) => {
-      if (!m.date) return;
-      const [y, mo, d] = m.date.split('-').map(Number);
-      if (new Date(y, mo - 1, d) >= now) return;
-      if (localMonths.has(m.date.slice(0, 7))) return;
       const bucket = inferTour('', m.tournamentName ?? '');
       map[bucket].count += 1;
       map[bucket].tournaments.push({ name: m.tournamentName, date: m.date, surface: m.surface, roundReached: m.roundReached, prize: 0, matches: m.matches ?? [] });
     });
-
     return map;
-  }, [pastTournaments, atpMatchHistory]);
+  }, [atpMatchHistory]);
 
-  // Season timeline — merge local past + ATP match history
-  const timeline = useMemo(() => {
-    const local = pastTournaments.map((t: any) => ({
-      id: t.id,
-      name: t.city ?? t.name ?? '',
-      startDate: t.startDate,
-      surface: t.surface,
-      prize: (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0) || (t.prizeMoney ?? 0),
-      roundReached: undefined as string | undefined,
-      source: 'local' as const,
-    }));
-
-    const localMonths = new Set(local.map(t => t.startDate?.slice(0, 7)));
-    const localNames  = local.map(t => t.name.toLowerCase());
-    const nowMs = today.getTime();
-    const atpEntries  = atpMatchHistory
-      .filter((m: any) => {
-        if (!m.date) return false;
-        const [y, mo, d] = m.date.split('-').map(Number);
-        if (new Date(y, mo - 1, d).getTime() >= nowMs) return false; // past only
-        const month = m.date.slice(0, 7);
-        if (localMonths.has(month)) return false;
-        const aName = (m.tournamentName ?? '').toLowerCase();
-        return !localNames.some(n => n && aName && (n.includes(aName.split(' ')[0]) || aName.includes(n.split(' ')[0])));
-      })
+  // Season timeline — ATP scraper only
+  const timeline = useMemo(() =>
+    [...atpMatchHistory]
+      .sort((a: any, b: any) => (a.date ?? '').localeCompare(b.date ?? ''))
       .map((m: any) => ({
         id: `atp-${m.tournamentName}-${m.date}`,
         name: m.tournamentName ?? '',
@@ -186,10 +126,8 @@ export default function MyPerformanceScreen() {
         prize: 0,
         roundReached: m.roundReached as string | undefined,
         source: 'atp' as const,
-      }));
-
-    return [...local, ...atpEntries].sort((a, b) => (a.startDate ?? '').localeCompare(b.startDate ?? ''));
-  }, [pastTournaments, atpMatchHistory]);
+      }))
+  , [atpMatchHistory]);
 
   // Optimal suggestion (needs ≥ 3 tournaments with expenses)
 
@@ -353,7 +291,7 @@ export default function MyPerformanceScreen() {
         )}
 
         {/* TOURNAMENTS BY CATEGORY */}
-        {(pastTournaments.length >= 1 || atpMatchHistory.length >= 1) && (
+        {atpMatchHistory.length >= 1 && (
           <View style={s.section}>
             <Text style={s.sectionLabel}>TOURNAMENTS BY CATEGORY</Text>
             <View style={{ flexDirection: 'row', gap: 10 }}>
@@ -423,7 +361,7 @@ export default function MyPerformanceScreen() {
                     </View>
                     <Text style={s.miniCity} numberOfLines={1}>{t.name}</Text>
                     {t.roundReached ? (
-                      <Text style={s.miniPrize}>{t.roundReached}{t.pointsEarned ? ` · ${t.pointsEarned}pts` : ''}</Text>
+                      <Text style={s.miniPrize}>{t.roundReached}</Text>
                     ) : t.prize > 0 ? (
                       <Text style={s.miniPrize}>{fmtUSD(t.prize)}</Text>
                     ) : null}
@@ -488,9 +426,6 @@ export default function MyPerformanceScreen() {
             </View>
             <ScrollView style={{ maxHeight: 400 }} showsVerticalScrollIndicator={false}>
               {matchModalEntries.map((m: any, i: number) => {
-                const rnd = (m.roundReached ?? '').toUpperCase().replace(' ', '');
-                const w = ROUND_WINS[rnd] ?? 0;
-                const l = rnd === 'W' ? 0 : 1;
                 return (
                   <View key={i} style={s.modalRow}>
                     <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
