@@ -39,14 +39,17 @@ function lookupCoords(city?: string, country?: string, name?: string): [number, 
     if (hit) return hit;
   }
 
-  // 2. Try extracting a city from the tournament name.
-  //    "Temuco Challenger 50" → try "Temuco Challenger 50", "Temuco Challenger", "Temuco"
-  //    "Brasilia M25" → try "Brasilia M25", "Brasilia"
+  // 2. Try all contiguous word substrings from the tournament name (longest first).
+  //    "M15 Vero Beach" → tries "M15 Vero Beach", "M15 Vero", "Vero Beach", "M15", "Vero", "Beach"
+  //    → hits "Vero Beach" ✓
+  //    "Temuco Challenger 50" → hits "Temuco" ✓
   if (name) {
     const words = name.trim().split(/[\s,\-–]+/).filter(Boolean);
     for (let len = Math.min(words.length, 3); len >= 1; len--) {
-      const hit = matchCity(words.slice(0, len).join(' '));
-      if (hit) return hit;
+      for (let start = 0; start + len <= words.length; start++) {
+        const hit = matchCity(words.slice(start, start + len).join(' '));
+        if (hit) return hit;
+      }
     }
   }
 
@@ -112,16 +115,16 @@ const DARK_MAP_STYLE = [
     elementType: 'labels.text.stroke',
     stylers: [{ color: '#0F0F1A' }, { visibility: 'on' }, { weight: 2 }],
   },
-  // Province / state borders — subtle, dimmer than country borders
+  // Province / state borders — visible but dimmer than country borders
   {
     featureType: 'administrative.province',
     elementType: 'geometry.stroke',
-    stylers: [{ color: '#2A2A52' }, { visibility: 'on' }, { weight: 0.6 }],
+    stylers: [{ color: '#4A4A7A' }, { visibility: 'on' }, { weight: 1 }],
   },
   {
     featureType: 'administrative.province',
     elementType: 'labels.text.fill',
-    stylers: [{ color: '#5A5A8A' }, { visibility: 'on' }],
+    stylers: [{ color: '#7A7AAA' }, { visibility: 'on' }],
   },
   { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0F0F1A' }] },
   { featureType: 'road', stylers: [{ visibility: 'off' }] },
