@@ -614,11 +614,13 @@ class ATPPlayerScraper:
     def _parse_activity_text(self, text: str) -> list[dict]:
         """
         Parse the player-activity page innerText into tournament records.
-        Each tournament section ends with "Points: X, ATP Ranking: Y, Prize Money: Z".
-        Location line format: "City, Country | DD Mon, YY | Surface"
+        Splits on "Points: X" (with optional trailing ATP Ranking / Prize Money).
+        Captures all entries including 0-point R1 losses.
         """
+        # Match "Points: X" with optional ", ATP Ranking: Y, Prize Money: Z" suffix
         pts_re  = re.compile(
-            r'Points:\s*(\d+),\s*ATP Ranking:\s*[\d\-–]+,\s*Prize Money:\s*[€$£]?[\d,.]+'
+            r'(?:Points:\s*([0-9\-–]+)(?:\s*,\s*ATP Ranking\s*[\d\-–]+)?(?:\s*,\s*Prize Money\s*[€$£]?[\d,.]+)?|Prize Money\s*[€$£]?[\d,.]+)',
+            re.IGNORECASE
         )
         loc_re  = re.compile(
             r'^.+?,\s*.+?\s*\|\s*\d{1,2}\s+\w+,?\s*\d{2,4}\s*\|\s*.+$',
@@ -626,7 +628,7 @@ class ATPPlayerScraper:
         )
         date_re = re.compile(r'\|\s*(\d{1,2}\s+\w+,?\s*\d{2,4})\s*\|')
         surf_re = re.compile(r'\|\s*(\w[\w\s()]*)\s*$')
-        rnd_re  = re.compile(r'^(F|SF|QF|R\d{2,3}|RR)$', re.MULTILINE)
+        rnd_re  = re.compile(r'^(W|F|SF|QF|R\d{1,3}|RR)$', re.MULTILINE)
 
         SKIP_LINES = {
             "Activity", "Win/Loss", "Titles and Finals", "Player activity",
@@ -640,11 +642,12 @@ class ATPPlayerScraper:
         for i in range(0, len(chunks) - 1, 2):
             section = chunks[i].strip()
             try:
-                pts = int(chunks[i + 1])
+                val = chunks[i + 1]
+                pts_str = str(val).replace('-', '0').replace('–', '0').strip() if val else '0'
+                pts = int(pts_str) if pts_str.isdigit() else 0
             except (IndexError, ValueError):
                 continue
-            if not pts:
-                continue
+            # pts == 0 is valid (R1 loss) — only skip if we couldn't parse
 
             loc_match = loc_re.search(section)
             if not loc_match:
@@ -668,9 +671,37 @@ class ATPPlayerScraper:
             if not tournament_name:
                 continue
 
-            post_loc  = section[loc_match.end():]
-            rnd_match = rnd_re.search(post_loc)
+            post_loc   = section[loc_match.end():]
+            rnd_match  = rnd_re.search(post_loc)
             best_round = rnd_match.group(1) if rnd_match else None
+            rnd_key    = (best_round or "").upper().replace(" ", "")
+            wins       = self._ROUND_WINS.get(rnd_key, 0)
+            losses     = 0 if rnd_key == "W" else 1
+
+            matches_list = []
+            lines = [l.strip() for l in post_loc.replace('\t', '\n').split('\n') if l.strip()]
+            for j, line in enumerate(lines):
+                if re.fullmatch(r'^(W|F|SF|QF|R16|R32|R64|R128|RR)$', line, re.IGNORECASE):
+                    # We found a match block. The next line is opponent.
+                    if j + 1 < len(lines):
+                        opponent = lines[j+1]
+                        score = ""
+                        for offset in (2, 3, 1):
+                            if j + offset < len(lines):
+                                cand = lines[j+offset]
+                                if re.search(r'(RET|W/O|Default|Walkover)', cand, re.IGNORECASE) or \
+                                   re.search(r'\d{2}\s+\d{2}', cand) or \
+                                   re.search(r'\d-\d', cand) or \
+                                   re.search(r'\d{2}\(', cand):
+                                    score = cand
+                                    break
+                        
+                        if score:
+                            matches_list.append({
+                                "round": line.upper(),
+                                "opponent": opponent,
+                                "score": score
+                            })
 
             results.append({
                 "tournamentName": tournament_name,
@@ -678,6 +709,9 @@ class ATPPlayerScraper:
                 "roundReached":   best_round,
                 "pointsEarned":   pts,
                 "surface":        surface,
+                "wins":           wins,
+                "losses":         losses,
+                "matches":        matches_list,
             })
 
         return results

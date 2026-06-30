@@ -5,6 +5,8 @@ import {
   StyleSheet,
   TouchableOpacity,
   StatusBar,
+  Modal,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -18,10 +20,19 @@ const SURFACES: Array<{ key: 'clay' | 'hard'; label: string; color: string }> = 
   { key: 'hard', label: 'Hard', color: '#5A8CD4' },
 ];
 
-const CATEGORY_ORDER = ['M15', 'M25', 'M50', 'M60', 'Challenger', 'ATP 250', 'ATP 500', 'ATP 1000'];
+const CATEGORY_ORDER = ['M15', 'M25', 'M50', 'M60', 'Challenger', 'ATP 250', 'ATP 500', 'ATP 1000', 'Other'];
+
+const ROUND_WINS: Record<string, number> = { W: 6, F: 5, SF: 4, QF: 3, R16: 2, R32: 1, R64: 0, R128: 0 };
 
 function fmtUSD(amount: number) {
   return `$${amount.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+}
+
+function abbrevDate(dateStr: string | undefined): string {
+  if (!dateStr) return '';
+  const [, m, d] = dateStr.split('-').map(Number);
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${months[m - 1]} ${d}`;
 }
 
 export default function MyPerformanceScreen() {
@@ -31,8 +42,38 @@ export default function MyPerformanceScreen() {
   const expenses    = data?.expenses ?? [];
 
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
+  // Match detail modal: type = 'wins'|'losses'|'all', surface = null (all) or 'clay'|'hard'|'grass'
+  const [matchModal, setMatchModal] = useState<{ type: 'wins' | 'losses' | 'all'; surface: string | null } | null>(null);
 
   const today = useMemo(() => { const d = new Date(); d.setHours(0,0,0,0); return d; }, []);
+
+  // ── ATP player profile — must come BEFORE any memos that use it ──────────────
+  const [atpProfile, setAtpProfile] = useState<any>(null);
+  const [isLoadingProfile, setIsLoadingProfile] = useState(true);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) { setIsLoadingProfile(false); return; }
+      supabase.from('profiles').select('atp_player_name').eq('id', user.id).single()
+        .then(({ data: prof }) => {
+          if (!prof?.atp_player_name) { setIsLoadingProfile(false); return; }
+          const nameParts = prof.atp_player_name.trim().split(/\s+/).slice(0, 2).join(' ');
+          supabase.from('player_profiles').select('*')
+            .ilike('player_name', `%${nameParts}%`)
+            .order('last_updated', { ascending: false }).limit(1)
+            .then(({ data }) => { 
+              if (data?.[0]) setAtpProfile(data[0]); 
+              setIsLoadingProfile(false);
+            })
+            .catch(() => setIsLoadingProfile(false));
+        })
+        .catch(() => setIsLoadingProfile(false));
+    });
+  }, []);
+
+  const atpMatchHistory: any[] = useMemo(() =>
+    (atpProfile?.match_history as any[] ?? []).slice(0, 50)
+  , [atpProfile]);
 
   // Only tournaments already played (start date in the past)
   const pastTournaments = useMemo(() => {
@@ -74,20 +115,47 @@ export default function MyPerformanceScreen() {
     pastTournaments.filter((t: any) => expensesForTournament(t.id) > 0).length
   , [pastTournaments, expenses]);
 
-  // By category — past tournaments only
+  // By category — local past + ATP match history merged
   const byCategory = useMemo(() => {
     const map: Record<string, { count: number; totalPrize: number; tournaments: any[] }> = {};
+    const now = new Date(); now.setHours(0,0,0,0);
+
+    function inferCat(rawCat: string, name: string): string {
+      const c = (rawCat + ' ' + name).toUpperCase();
+      if (c.includes('CHALLENGER')) return 'Challenger';
+      if (c.includes('M15') || c.includes('ITF 15')) return 'M15';
+      if (c.includes('M25') || c.includes('ITF 25')) return 'M25';
+      if (c.includes('M50') || c.includes('ITF 50')) return 'M50';
+      if (c.includes('ATP 250')) return 'ATP 250';
+      if (c.includes('ATP 500')) return 'ATP 500';
+      if (c.includes('ATP 1000')) return 'ATP 1000';
+      return rawCat || 'Other';
+    }
+
     pastTournaments.forEach((t: any) => {
-      const cat = t.category ?? 'Other';
+      const cat = inferCat(t.category ?? '', t.city ?? t.name ?? '');
       if (!map[cat]) map[cat] = { count: 0, totalPrize: 0, tournaments: [] };
       map[cat].count += 1;
-      map[cat].tournaments.push(t);
-      const singles = t.singlesPrizeMoney ?? 0;
-      const doubles = t.doublesPrizeMoney ?? 0;
-      map[cat].totalPrize += singles + doubles > 0 ? singles + doubles : (t.prizeMoney ?? 0);
+      const prize = (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0) || (t.prizeMoney ?? 0);
+      map[cat].tournaments.push({ name: t.city ?? t.name, date: t.startDate, surface: t.surface, roundReached: undefined, prize });
+      map[cat].totalPrize += prize;
+    });
+
+    // ATP match history — past entries only, not already in local
+    const localMonths = new Set(pastTournaments.map((t: any) => (t.startDate ?? '').slice(0, 7)));
+    atpMatchHistory.forEach((m: any) => {
+      if (!m.date) return;
+      const [y, mo, d] = m.date.split('-').map(Number);
+      if (new Date(y, mo - 1, d) >= now) return; // skip future
+      const month = m.date.slice(0, 7);
+      if (localMonths.has(month)) return;
+      const cat = inferCat('', m.tournamentName ?? '');
+      if (!map[cat]) map[cat] = { count: 0, totalPrize: 0, tournaments: [] };
+      map[cat].count += 1;
+      map[cat].tournaments.push({ name: m.tournamentName, date: m.date, surface: m.surface, roundReached: m.roundReached, prize: 0, matches: m.matches });
     });
     return map;
-  }, [pastTournaments]);
+  }, [pastTournaments, atpMatchHistory]);
 
   const sortedCategories = useMemo(() =>
     Object.entries(byCategory).sort((a, b) => {
@@ -99,50 +167,43 @@ export default function MyPerformanceScreen() {
     })
   , [byCategory]);
 
-  // Season timeline — merge local past tournaments + ATP match history
+  // Season timeline — merge local past + ATP match history
   const timeline = useMemo(() => {
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const local = [...tournaments]
-      .filter((t: any) => {
-        if (!t.startDate) return false;
-        const [y, m, d] = t.startDate.split('-').map(Number);
-        return new Date(y, m - 1, d) < today;
-      })
-      .map((t: any) => ({
-        id: t.id,
-        name: t.city ?? t.name ?? '',
-        startDate: t.startDate,
-        surface: t.surface,
-        prize: (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0) || (t.prizeMoney ?? 0),
-        roundReached: undefined as string | undefined,
-        pointsEarned: undefined as number | undefined,
-        source: 'local' as const,
-      }));
-
-    // ATP match history entries — add ones not already covered by a local entry
-    const atpEntries = (atpProfile?.match_history as any[] ?? []).map((m: any) => ({
-      id: `atp-${m.tournamentName}-${m.date}`,
-      name: m.tournamentName ?? '',
-      startDate: m.date ?? '',
-      surface: m.surface,
-      prize: 0,
-      roundReached: m.roundReached as string | undefined,
-      pointsEarned: m.pointsEarned as number | undefined,
-      source: 'atp' as const,
+    const local = pastTournaments.map((t: any) => ({
+      id: t.id,
+      name: t.city ?? t.name ?? '',
+      startDate: t.startDate,
+      surface: t.surface,
+      prize: (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0) || (t.prizeMoney ?? 0),
+      roundReached: undefined as string | undefined,
+      source: 'local' as const,
     }));
 
-    // Deduplicate: skip ATP entry if a local entry has the same start date or close name match
-    const localDates = new Set(local.map(t => t.startDate?.slice(0, 7))); // year-month
-    const localNames = local.map(t => t.name.toLowerCase());
-    const deduped = atpEntries.filter(a => {
-      const monthKey = a.startDate?.slice(0, 7);
-      if (monthKey && localDates.has(monthKey)) return false;
-      const aName = a.name.toLowerCase();
-      return !localNames.some(n => n.includes(aName.split(' ')[0]) || aName.includes(n.split(' ')[0]));
-    });
+    const localMonths = new Set(local.map(t => t.startDate?.slice(0, 7)));
+    const localNames  = local.map(t => t.name.toLowerCase());
+    const nowMs = today.getTime();
+    const atpEntries  = atpMatchHistory
+      .filter((m: any) => {
+        if (!m.date) return false;
+        const [y, mo, d] = m.date.split('-').map(Number);
+        if (new Date(y, mo - 1, d).getTime() >= nowMs) return false; // past only
+        const month = m.date.slice(0, 7);
+        if (localMonths.has(month)) return false;
+        const aName = (m.tournamentName ?? '').toLowerCase();
+        return !localNames.some(n => n && aName && (n.includes(aName.split(' ')[0]) || aName.includes(n.split(' ')[0])));
+      })
+      .map((m: any) => ({
+        id: `atp-${m.tournamentName}-${m.date}`,
+        name: m.tournamentName ?? '',
+        startDate: m.date ?? '',
+        surface: m.surface,
+        prize: 0,
+        roundReached: m.roundReached as string | undefined,
+        source: 'atp' as const,
+      }));
 
-    return [...local, ...deduped].sort((a, b) => (a.startDate ?? '').localeCompare(b.startDate ?? ''));
-  }, [tournaments, atpProfile]);
+    return [...local, ...atpEntries].sort((a, b) => (a.startDate ?? '').localeCompare(b.startDate ?? ''));
+  }, [pastTournaments, atpMatchHistory]);
 
   // Optimal suggestion (needs ≥ 3 tournaments with expenses)
   const optimalSuggestion = useMemo(() => {
@@ -160,35 +221,21 @@ export default function MyPerformanceScreen() {
     return best;
   }, [bySurface, expenses, tournamentsWithExpenses]);
 
-  // ── ATP player profile from Supabase ────────────────────────────────────────
-  const [atpProfile, setAtpProfile] = useState<any>(null);
+  // Match detail modal data
+  const matchModalEntries = useMemo(() => {
+    if (!matchModal) return [];
+    return atpMatchHistory
+      .filter((m: any) => {
+        if (matchModal.surface && m.surface !== matchModal.surface) return false;
+        const rnd = (m.roundReached ?? '').toUpperCase().replace(' ', '');
+        const wins = ROUND_WINS[rnd] ?? 0;
+        if (matchModal.type === 'wins') return wins > 0;
+        if (matchModal.type === 'losses') return rnd !== 'W';
+        return true;
 
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!user) return;
-      supabase.from('profiles').select('atp_player_name').eq('id', user.id).single()
-        .then(({ data: prof }) => {
-          if (!prof?.atp_player_name) return;
-          const nameParts = prof.atp_player_name.trim().split(/\s+/).slice(0, 2).join(' ');
-          supabase.from('player_profiles').select('*')
-            .ilike('player_name', `%${nameParts}%`)
-            .order('last_updated', { ascending: false }).limit(1)
-            .then(({ data }) => { if (data?.[0]) setAtpProfile(data[0]); });
-        });
-    });
-  }, []);
-
-  const atpMatchHistory = useMemo(() => {
-    if (!atpProfile?.match_history) return [];
-    return (atpProfile.match_history as any[]).slice(0, 20);
-  }, [atpProfile]);
-
-  function abbrevDate(dateStr: string | undefined): string {
-    if (!dateStr) return '';
-    const [y, m, d] = dateStr.split('-').map(Number);
-    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    return `${months[m - 1]} ${d}`;
-  }
+      })
+      .sort((a: any, b: any) => (b.date ?? '').localeCompare(a.date ?? ''));
+  }, [matchModal, atpMatchHistory]);
 
   const surfaceLabel: Record<string, string> = { clay: 'Clay', hard: 'Hard', grass: 'Grass' };
 
@@ -207,14 +254,21 @@ export default function MyPerformanceScreen() {
       </View>
 
       <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent} showsVerticalScrollIndicator={false}>
-
-        {/* ATP RANKING */}
-        {atpProfile && (
+        {isLoadingProfile ? (
+          <View style={{ flex: 1, paddingTop: 60, alignItems: 'center' }}>
+            <ActivityIndicator size="large" color="#5B5BD6" />
+          </View>
+        ) : (
+          <>
+            {/* ATP RANKING */}
+            {atpProfile && (
           <View style={s.section}>
             <Text style={s.sectionLabel}>ATP RANKING</Text>
             <View style={[s.card, { flexDirection: 'row', alignItems: 'center', gap: 16 }]}>
               <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#5B5BD6', alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ fontSize: 22, fontWeight: '800', color: '#FAFAFA' }}>#{atpProfile.current_ranking ?? '—'}</Text>
+                <Text adjustsFontSizeToFit numberOfLines={1} style={{ fontSize: 22, fontWeight: '800', color: '#FAFAFA', paddingHorizontal: 4 }}>
+                  #{atpProfile.current_ranking ?? '—'}
+                </Text>
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={{ fontSize: 16, fontWeight: '700', color: '#FAFAFA' }}>{atpProfile.player_name}</Text>
@@ -247,20 +301,20 @@ export default function MyPerformanceScreen() {
               <View style={s.card}>
                 {/* Overall row */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
-                  <View style={{ flex: 1, alignItems: 'center' }}>
+                  <TouchableOpacity style={{ flex: 1, alignItems: 'center' }} onPress={() => setMatchModal({ type: 'wins', surface: null })} activeOpacity={0.7}>
                     <Text style={{ fontSize: 28, fontWeight: '800', color: '#2D9E6B' }}>{totalW}</Text>
                     <Text style={{ fontSize: 11, color: '#A0A0C8', marginTop: 2 }}>Wins</Text>
-                  </View>
+                  </TouchableOpacity>
                   {pct !== null && (
                     <View style={{ alignItems: 'center', paddingHorizontal: 16 }}>
                       <Text style={{ fontSize: 22, fontWeight: '800', color: '#5B5BD6' }}>{pct}%</Text>
                       <Text style={{ fontSize: 11, color: '#A0A0C8', marginTop: 2 }}>Win rate</Text>
                     </View>
                   )}
-                  <View style={{ flex: 1, alignItems: 'center' }}>
+                  <TouchableOpacity style={{ flex: 1, alignItems: 'center' }} onPress={() => setMatchModal({ type: 'losses', surface: null })} activeOpacity={0.7}>
                     <Text style={{ fontSize: 28, fontWeight: '800', color: '#E24B4A' }}>{totalL}</Text>
                     <Text style={{ fontSize: 11, color: '#A0A0C8', marginTop: 2 }}>Losses</Text>
-                  </View>
+                  </TouchableOpacity>
                 </View>
                 {/* Surface breakdown */}
                 {surfaces.map(({ key, label, color }) => {
@@ -268,13 +322,18 @@ export default function MyPerformanceScreen() {
                   if (!s2 || (s2.wins === 0 && s2.losses === 0)) return null;
                   const sp = s2.wins + s2.losses > 0 ? Math.round((s2.wins / (s2.wins + s2.losses)) * 100) : 0;
                   return (
-                    <View key={key} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, borderTopWidth: 1, borderTopColor: '#2A2A4A' }}>
+                    <TouchableOpacity
+                      key={key}
+                      onPress={() => setMatchModal({ type: 'all', surface: key })}
+                      activeOpacity={0.7}
+                      style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, borderTopWidth: 1, borderTopColor: '#2A2A4A' }}
+                    >
                       <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color, marginRight: 8 }} />
                       <Text style={{ fontSize: 13, color: '#A0A0C8', width: 44 }}>{label}</Text>
                       <Text style={{ fontSize: 13, fontWeight: '600', color: '#FAFAFA' }}>{s2.wins}W – {s2.losses}L</Text>
                       <View style={{ flex: 1 }} />
                       <Text style={{ fontSize: 12, color: '#5B5BD6', fontWeight: '600' }}>{sp}%</Text>
-                    </View>
+                    </TouchableOpacity>
                   );
                 })}
               </View>
@@ -308,7 +367,7 @@ export default function MyPerformanceScreen() {
         )}
 
         {/* TOURNAMENTS BY CATEGORY */}
-        {pastTournaments.length >= 1 && (
+        {(pastTournaments.length >= 1 || atpMatchHistory.length >= 1) && (
           <View style={s.section}>
             <Text style={s.sectionLabel}>TOURNAMENTS BY CATEGORY</Text>
             <View style={s.card}>
@@ -324,31 +383,31 @@ export default function MyPerformanceScreen() {
                     >
                       <Text style={s.catName}>{cat}</Text>
                       <Text style={s.catCount}>{stats.count} {stats.count === 1 ? 'tournament' : 'tournaments'}</Text>
-                      {avgPrize > 0 && (
-                        <Text style={s.catPrize}>{fmtUSD(avgPrize)} avg prize</Text>
-                      )}
+                      {avgPrize > 0 && <Text style={s.catPrize}>{fmtUSD(avgPrize)} avg prize</Text>}
                       <Ionicons name={isOpen ? 'chevron-up' : 'chevron-down'} size={13} color="#6060A0" style={{ marginLeft: 4 }} />
                     </TouchableOpacity>
                     {isOpen && (
                       <View style={s.resultsPanel}>
                         {[...(stats.tournaments ?? [])]
-                          .sort((a: any, b: any) => {
-                            const pa = (a.singlesPrizeMoney ?? 0) + (a.doublesPrizeMoney ?? 0) || (a.prizeMoney ?? 0);
-                            const pb = (b.singlesPrizeMoney ?? 0) + (b.doublesPrizeMoney ?? 0) || (b.prizeMoney ?? 0);
-                            return pb - pa;
-                          })
-                          .map((t: any) => {
-                            const prize = (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0) || (t.prizeMoney ?? 0);
-                            return (
-                              <View key={t.id} style={s.resultRow}>
-                                <View style={{ flex: 1 }}>
-                                  <Text style={s.resultCity}>{t.city ?? t.name}</Text>
-                                  <Text style={s.resultDate}>{abbrevDate(t.startDate)} · {t.surface}</Text>
-                                </View>
-                                {prize > 0 && <Text style={s.resultPrize}>{fmtUSD(prize)}</Text>}
+                          .sort((a: any, b: any) => (b.date ?? '').localeCompare(a.date ?? ''))
+                          .map((t: any, idx: number) => (
+                            <View key={idx} style={s.resultRow}>
+                              <View style={{ flex: 1 }}>
+                                <Text style={s.resultCity}>{t.name}</Text>
+                                <Text style={s.resultDate}>
+                                  {abbrevDate(t.date)} · {t.surface}
+                                  {t.roundReached ? ` · ${t.roundReached}` : ''}
+                                </Text>
+                                {/* Individual match scores */}
+                                {(t.matches ?? []).map((mx: any, mi: number) => (
+                                  <Text key={mi} style={{ fontSize: 11, color: mx.result === 'W' ? '#2D9E6B' : '#E24B4A', marginTop: 2 }}>
+                                    {mx.round} {mx.result === 'W' ? 'W' : 'L'} {mx.score}
+                                  </Text>
+                                ))}
                               </View>
-                            );
-                          })}
+                              {t.prize > 0 && <Text style={s.resultPrize}>{fmtUSD(t.prize)}</Text>}
+                            </View>
+                          ))}
                       </View>
                     )}
                   </View>
@@ -432,8 +491,63 @@ export default function MyPerformanceScreen() {
           </View>
         )}
 
+          </>
+        )}
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {/* MATCH DETAIL MODAL */}
+      <Modal visible={!!matchModal} animationType="slide" transparent>
+        <View style={s.modalOverlay}>
+          <View style={s.modalContent}>
+            <View style={s.modalHeader}>
+              <Text style={s.modalTitle}>
+                {matchModal?.surface ? surfaceLabel[matchModal.surface] + ' ' : ''}
+                {matchModal?.type === 'wins' ? 'Wins' : matchModal?.type === 'losses' ? 'Losses' : 'Match Record'}
+              </Text>
+              <TouchableOpacity onPress={() => setMatchModal(null)} style={s.modalClose} activeOpacity={0.7}>
+                <Ionicons name="close" size={20} color="#FAFAFA" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ maxHeight: 400 }} showsVerticalScrollIndicator={false}>
+              {matchModalEntries.map((m: any, i: number) => {
+                const rnd = (m.roundReached ?? '').toUpperCase().replace(' ', '');
+                const w = ROUND_WINS[rnd] ?? 0;
+                const l = rnd === 'W' ? 0 : 1;
+                return (
+                  <View key={i} style={s.modalRow}>
+                    <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={s.modalTournName} numberOfLines={1}>{m.tournamentName}</Text>
+                        <Text style={s.modalTournDate}>{m.date} · {m.surface}</Text>
+                      </View>
+                      <View style={{ alignItems: 'flex-end', marginLeft: 16 }}>
+                        <Text style={s.modalRound}>{m.roundReached}</Text>
+                      </View>
+                    </View>
+                    
+                    {m.matches && m.matches.length > 0 && (
+                      <View style={{ marginTop: 12, paddingLeft: 12, borderLeftWidth: 2, borderLeftColor: '#2A2A4A', gap: 6 }}>
+                        {m.matches.map((match: any, j: number) => (
+                          <View key={j} style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <Text style={{ fontSize: 11, fontWeight: '700', color: '#6060A0', width: 36 }}>{match.round}</Text>
+                            <Text style={{ fontSize: 12, color: '#A0A0C8', flex: 1 }} numberOfLines={1}>{match.opponent}</Text>
+                            <Text style={{ fontSize: 12, fontWeight: '600', color: '#FAFAFA', marginLeft: 8 }}>{match.score}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
+              {matchModalEntries.length === 0 && (
+                <Text style={{ color: '#A0A0C8', textAlign: 'center', padding: 20 }}>No matches found.</Text>
+              )}
+              <View style={{ height: 20 }} />
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -588,4 +702,15 @@ const s = StyleSheet.create({
   },
   suggestionText: { fontSize: 14, color: '#FAFAFA', lineHeight: 22 },
   suggestionHighlight: { fontWeight: '700', color: '#5B5BD6' },
+
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
+  modalContent: { backgroundColor: '#1A1A2E', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, paddingBottom: 16 },
+  modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: '#FAFAFA' },
+  modalClose: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#2A2A4A', alignItems: 'center', justifyContent: 'center' },
+  modalRow: { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#2A2A4A' },
+  modalTournName: { fontSize: 14, fontWeight: '600', color: '#FAFAFA' },
+  modalTournDate: { fontSize: 12, color: '#A0A0C8', marginTop: 2 },
+  modalRound: { fontSize: 13, fontWeight: '700', color: '#5B5BD6' },
+  modalWL: { fontSize: 12, color: '#A0A0C8', marginTop: 2 },
 });
