@@ -23,22 +23,34 @@ function stripAccents(s: string): string {
   return s.normalize('NFD').replace(/[̀-ͯ]/g, '');
 }
 
-function lookupCoords(city?: string, country?: string): [number, number] | null {
+function matchCity(candidate: string): [number, number] | null {
+  const norm = stripAccents(candidate.trim().toLowerCase());
+  if (!norm) return null;
+  for (const [k, v] of Object.entries(CITY_COORDS)) {
+    if (stripAccents(k.toLowerCase()) === norm) return v;
+  }
+  return null;
+}
+
+function lookupCoords(city?: string, country?: string, name?: string): [number, number] | null {
+  // 1. Try explicit city field
   if (city) {
-    const key = city.trim();
-    // Exact match
-    if (CITY_COORDS[key]) return CITY_COORDS[key];
-    // Case-insensitive
-    const lower = key.toLowerCase();
-    for (const [k, v] of Object.entries(CITY_COORDS)) {
-      if (k.toLowerCase() === lower) return v;
-    }
-    // Accent-insensitive (e.g. "Brasília" → "Brasilia")
-    const normalized = stripAccents(lower);
-    for (const [k, v] of Object.entries(CITY_COORDS)) {
-      if (stripAccents(k.toLowerCase()) === normalized) return v;
+    const hit = matchCity(city);
+    if (hit) return hit;
+  }
+
+  // 2. Try extracting a city from the tournament name.
+  //    "Temuco Challenger 50" → try "Temuco Challenger 50", "Temuco Challenger", "Temuco"
+  //    "Brasilia M25" → try "Brasilia M25", "Brasilia"
+  if (name) {
+    const words = name.trim().split(/[\s,\-–]+/).filter(Boolean);
+    for (let len = Math.min(words.length, 3); len >= 1; len--) {
+      const hit = matchCity(words.slice(0, len).join(' '));
+      if (hit) return hit;
     }
   }
+
+  // 3. Fall back to country centre
   if (country) {
     const code = country.toUpperCase();
     if (COUNTRY_CENTERS[code]) return COUNTRY_CENTERS[code];
@@ -158,7 +170,7 @@ export function TournamentMap({
   const mapped = useMemo(() => {
     return tournaments
       .map((t) => {
-        const coords = lookupCoords(t.city, t.country);
+        const coords = lookupCoords(t.city, t.country, t.name);
         if (!coords) return null;
         const [lon, lat] = coords;
         return { t, lat, lon };
