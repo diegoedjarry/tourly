@@ -326,28 +326,28 @@ export default function HomeScreen() {
                 </View>
               )}
 
-              {/* Compare Players & My Performance */}
+              {/* My Performance & Compare Players */}
               <View style={st.section}>
                 <Text style={st.sectionLabel}>Analytics</Text>
                 <TouchableOpacity
                   style={[st.deadlineCard, { borderLeftColor: T.accent, marginBottom: 6 }]}
+                  onPress={() => router.push('/my-performance' as any)}
+                  activeOpacity={0.8}
+                >
+                  <View style={st.cardLeft}>
+                    <Text style={st.cardTitle}>My Performance</Text>
+                    <Text style={st.cardSub}>Ranking, match record, season stats</Text>
+                  </View>
+                  <Text style={st.featureChevron}>›</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[st.deadlineCard, { borderLeftColor: T.accent }]}
                   onPress={() => router.push('/compare-players' as any)}
                   activeOpacity={0.8}
                 >
                   <View style={st.cardLeft}>
                     <Text style={st.cardTitle}>Compare Players</Text>
                     <Text style={st.cardSub}>Search any player and compare stats</Text>
-                  </View>
-                  <Text style={st.featureChevron}>›</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[st.deadlineCard, { borderLeftColor: T.accent }]}
-                  onPress={() => router.push('/my-performance' as any)}
-                  activeOpacity={0.8}
-                >
-                  <View style={st.cardLeft}>
-                    <Text style={st.cardTitle}>My Performance</Text>
-                    <Text style={st.cardSub}>Surface efficiency, season stats, optimal conditions</Text>
                   </View>
                   <Text style={st.featureChevron}>›</Text>
                 </TouchableOpacity>

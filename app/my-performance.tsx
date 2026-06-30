@@ -20,7 +20,11 @@ const SURFACES: Array<{ key: 'clay' | 'hard'; label: string; color: string }> = 
   { key: 'hard', label: 'Hard', color: '#5A8CD4' },
 ];
 
-const CATEGORY_ORDER = ['M15', 'M25', 'M50', 'M60', 'Challenger', 'ATP 250', 'ATP 500', 'ATP 1000', 'Other'];
+function inferTour(rawCat: string, name: string): 'ATP Tour' | 'ITF Tour' {
+  const c = (rawCat + ' ' + name).toUpperCase();
+  if (c.includes('CHALLENGER') || c.includes('ATP 250') || c.includes('ATP 500') || c.includes('ATP 1000')) return 'ATP Tour';
+  return 'ITF Tour';
+}
 
 const ROUND_WINS: Record<string, number> = { W: 6, F: 5, SF: 4, QF: 3, R16: 2, R32: 1, R64: 0, R128: 0 };
 
@@ -115,57 +119,33 @@ export default function MyPerformanceScreen() {
     pastTournaments.filter((t: any) => expensesForTournament(t.id) > 0).length
   , [pastTournaments, expenses]);
 
-  // By category — local past + ATP match history merged
-  const byCategory = useMemo(() => {
-    const map: Record<string, { count: number; totalPrize: number; tournaments: any[] }> = {};
+  // Two buckets: ATP Tour (Challenger+) and ITF Tour (M15/M25/etc)
+  const tourBuckets = useMemo(() => {
+    const map: Record<'ATP Tour' | 'ITF Tour', { count: number; tournaments: any[] }> = {
+      'ATP Tour': { count: 0, tournaments: [] },
+      'ITF Tour': { count: 0, tournaments: [] },
+    };
     const now = new Date(); now.setHours(0,0,0,0);
 
-    function inferCat(rawCat: string, name: string): string {
-      const c = (rawCat + ' ' + name).toUpperCase();
-      if (c.includes('CHALLENGER')) return 'Challenger';
-      if (c.includes('M15') || c.includes('ITF 15')) return 'M15';
-      if (c.includes('M25') || c.includes('ITF 25')) return 'M25';
-      if (c.includes('M50') || c.includes('ITF 50')) return 'M50';
-      if (c.includes('ATP 250')) return 'ATP 250';
-      if (c.includes('ATP 500')) return 'ATP 500';
-      if (c.includes('ATP 1000')) return 'ATP 1000';
-      return rawCat || 'Other';
-    }
-
     pastTournaments.forEach((t: any) => {
-      const cat = inferCat(t.category ?? '', t.city ?? t.name ?? '');
-      if (!map[cat]) map[cat] = { count: 0, totalPrize: 0, tournaments: [] };
-      map[cat].count += 1;
-      const prize = (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0) || (t.prizeMoney ?? 0);
-      map[cat].tournaments.push({ name: t.city ?? t.name, date: t.startDate, surface: t.surface, roundReached: undefined, prize });
-      map[cat].totalPrize += prize;
+      const bucket = inferTour(t.category ?? '', t.city ?? t.name ?? '');
+      map[bucket].count += 1;
+      map[bucket].tournaments.push({ name: t.city ?? t.name, date: t.startDate, surface: t.surface, roundReached: undefined, prize: (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0) || (t.prizeMoney ?? 0), matches: [] });
     });
 
-    // ATP match history — past entries only, not already in local
     const localMonths = new Set(pastTournaments.map((t: any) => (t.startDate ?? '').slice(0, 7)));
     atpMatchHistory.forEach((m: any) => {
       if (!m.date) return;
       const [y, mo, d] = m.date.split('-').map(Number);
-      if (new Date(y, mo - 1, d) >= now) return; // skip future
-      const month = m.date.slice(0, 7);
-      if (localMonths.has(month)) return;
-      const cat = inferCat('', m.tournamentName ?? '');
-      if (!map[cat]) map[cat] = { count: 0, totalPrize: 0, tournaments: [] };
-      map[cat].count += 1;
-      map[cat].tournaments.push({ name: m.tournamentName, date: m.date, surface: m.surface, roundReached: m.roundReached, prize: 0, matches: m.matches });
+      if (new Date(y, mo - 1, d) >= now) return;
+      if (localMonths.has(m.date.slice(0, 7))) return;
+      const bucket = inferTour('', m.tournamentName ?? '');
+      map[bucket].count += 1;
+      map[bucket].tournaments.push({ name: m.tournamentName, date: m.date, surface: m.surface, roundReached: m.roundReached, prize: 0, matches: m.matches ?? [] });
     });
+
     return map;
   }, [pastTournaments, atpMatchHistory]);
-
-  const sortedCategories = useMemo(() =>
-    Object.entries(byCategory).sort((a, b) => {
-      const ai = CATEGORY_ORDER.indexOf(a[0]);
-      const bi = CATEGORY_ORDER.indexOf(b[0]);
-      const ar = ai === -1 ? 99 : ai;
-      const br = bi === -1 ? 99 : bi;
-      return ar !== br ? ar - br : b[1].count - a[1].count;
-    })
-  , [byCategory]);
 
   // Season timeline — merge local past + ATP match history
   const timeline = useMemo(() => {
@@ -206,20 +186,6 @@ export default function MyPerformanceScreen() {
   }, [pastTournaments, atpMatchHistory]);
 
   // Optimal suggestion (needs ≥ 3 tournaments with expenses)
-  const optimalSuggestion = useMemo(() => {
-    if (tournamentsWithExpenses < 3) return null;
-    let best: { surface: string; category: string; avgCost: number } | null = null;
-    SURFACES.forEach(({ key }) => {
-      const ts = bySurface[key] ?? [];
-      ts.forEach((t: any) => {
-        const cost = expensesForTournament(t.id);
-        if (cost === 0) return;
-        const cat = t.category ?? 'Unknown';
-        if (!best || cost < best.avgCost) best = { surface: key, category: cat, avgCost: cost };
-      });
-    });
-    return best;
-  }, [bySurface, expenses, tournamentsWithExpenses]);
 
   // Match detail modal data
   const matchModalEntries = useMemo(() => {
@@ -370,50 +336,55 @@ export default function MyPerformanceScreen() {
         {(pastTournaments.length >= 1 || atpMatchHistory.length >= 1) && (
           <View style={s.section}>
             <Text style={s.sectionLabel}>TOURNAMENTS BY CATEGORY</Text>
-            <View style={s.card}>
-              {sortedCategories.map(([cat, stats]) => {
-                const avgPrize = stats.count > 0 ? Math.round(stats.totalPrize / stats.count) : 0;
-                const isOpen = expandedCategory === cat;
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              {(['ATP Tour', 'ITF Tour'] as const).map(bucket => {
+                const stats = tourBuckets[bucket];
+                const isOpen = expandedCategory === bucket;
                 return (
-                  <View key={cat}>
+                  <View key={bucket} style={{ flex: 1 }}>
                     <TouchableOpacity
-                      style={s.catRow}
-                      onPress={() => setExpandedCategory(v => v === cat ? null : cat)}
+                      style={[s.card, { alignItems: 'center', paddingVertical: 16, borderColor: isOpen ? '#5B5BD6' : '#2A2A4A' }]}
+                      onPress={() => setExpandedCategory(v => v === bucket ? null : bucket)}
                       activeOpacity={0.7}
                     >
-                      <Text style={s.catName}>{cat}</Text>
-                      <Text style={s.catCount}>{stats.count} {stats.count === 1 ? 'tournament' : 'tournaments'}</Text>
-                      {avgPrize > 0 && <Text style={s.catPrize}>{fmtUSD(avgPrize)} avg prize</Text>}
-                      <Ionicons name={isOpen ? 'chevron-up' : 'chevron-down'} size={13} color="#6060A0" style={{ marginLeft: 4 }} />
+                      <Text style={{ fontSize: 22, fontWeight: '800', color: '#5B5BD6' }}>{stats.count}</Text>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#FAFAFA', marginTop: 4 }}>{bucket}</Text>
+                      <Text style={{ fontSize: 10, color: '#6060A0', marginTop: 2 }}>
+                        {stats.count === 1 ? 'tournament' : 'tournaments'}
+                      </Text>
+                      <Ionicons name={isOpen ? 'chevron-up' : 'chevron-down'} size={13} color="#6060A0" style={{ marginTop: 6 }} />
                     </TouchableOpacity>
-                    {isOpen && (
-                      <View style={s.resultsPanel}>
-                        {[...(stats.tournaments ?? [])]
-                          .sort((a: any, b: any) => (b.date ?? '').localeCompare(a.date ?? ''))
-                          .map((t: any, idx: number) => (
-                            <View key={idx} style={s.resultRow}>
-                              <View style={{ flex: 1 }}>
-                                <Text style={s.resultCity}>{t.name}</Text>
-                                <Text style={s.resultDate}>
-                                  {abbrevDate(t.date)} · {t.surface}
-                                  {t.roundReached ? ` · ${t.roundReached}` : ''}
-                                </Text>
-                                {/* Individual match scores */}
-                                {(t.matches ?? []).map((mx: any, mi: number) => (
-                                  <Text key={mi} style={{ fontSize: 11, color: mx.result === 'W' ? '#2D9E6B' : '#E24B4A', marginTop: 2 }}>
-                                    {mx.round} {mx.result === 'W' ? 'W' : 'L'} {mx.score}
-                                  </Text>
-                                ))}
-                              </View>
-                              {t.prize > 0 && <Text style={s.resultPrize}>{fmtUSD(t.prize)}</Text>}
-                            </View>
-                          ))}
-                      </View>
-                    )}
                   </View>
                 );
               })}
             </View>
+            {(['ATP Tour', 'ITF Tour'] as const).map(bucket => {
+              if (expandedCategory !== bucket) return null;
+              const stats = tourBuckets[bucket];
+              return (
+                <View key={bucket} style={[s.resultsPanel, { marginTop: 8 }]}>
+                  {[...stats.tournaments]
+                    .sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''))
+                    .map((t: any, idx: number) => (
+                      <View key={idx} style={s.resultRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={s.resultCity}>{t.name}</Text>
+                          <Text style={s.resultDate}>
+                            {abbrevDate(t.date)} · {t.surface ?? '—'}
+                            {t.roundReached ? ` · ${t.roundReached}` : ''}
+                          </Text>
+                          {(t.matches ?? []).map((mx: any, mi: number) => (
+                            <Text key={mi} style={{ fontSize: 11, color: mx.result === 'W' ? '#2D9E6B' : '#E24B4A', marginTop: 2 }}>
+                              {mx.round} {mx.result === 'W' ? 'W' : 'L'} {mx.score}
+                            </Text>
+                          ))}
+                        </View>
+                        {t.prize > 0 && <Text style={s.resultPrize}>{fmtUSD(t.prize)}</Text>}
+                      </View>
+                    ))}
+                </View>
+              );
+            })}
           </View>
         )}
 
@@ -443,31 +414,17 @@ export default function MyPerformanceScreen() {
           </View>
         )}
 
-        {/* OPTIMAL CALENDAR SUGGESTION */}
+        {/* OPTIMAL CALENDAR SUGGESTION — coming soon */}
         <View style={s.section}>
-          <Text style={s.sectionLabel}>OPTIMAL CALENDAR SUGGESTION</Text>
-          {tournamentsWithExpenses < 3 ? (
-            <View style={s.card}>
-              <Text style={s.lockedText}>Add 3+ tournaments with expenses to get your personalized calendar suggestion</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <Text style={s.sectionLabel}>OPTIMAL CALENDAR SUGGESTION</Text>
+            <View style={{ backgroundColor: '#2A2A4A', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
+              <Text style={{ fontSize: 9, fontWeight: '700', color: '#6060A0', letterSpacing: 0.5 }}>COMING SOON</Text>
             </View>
-          ) : optimalSuggestion ? (
-            <View style={s.suggestionCard}>
-              <Ionicons name="bulb-outline" size={20} color="#FAFAFA" style={{ marginBottom: 8 }} />
-              <Text style={s.suggestionText}>
-                Based on your data,{' '}
-                <Text style={s.suggestionHighlight}>
-                  {surfaceLabel[optimalSuggestion.surface] ?? optimalSuggestion.surface} {optimalSuggestion.category}
-                </Text>
-                {' '}tournaments offer your best cost efficiency at{' '}
-                <Text style={s.suggestionHighlight}>{fmtUSD(optimalSuggestion.avgCost)}</Text>
-                {' '}per tournament.
-              </Text>
-            </View>
-          ) : (
-            <View style={s.card}>
-              <Text style={s.lockedText}>Not enough expense data yet</Text>
-            </View>
-          )}
+          </View>
+          <View style={s.card}>
+            <Text style={s.lockedText}>We're working on this. Once you have enough data, Tourly will suggest which tournaments give you the best return.</Text>
+          </View>
         </View>
 
         {/* ── ATP MATCH HISTORY ── */}
