@@ -20,17 +20,16 @@ const SURFACES: Array<{ key: 'clay' | 'hard'; label: string; color: string }> = 
   { key: 'hard', label: 'Hard', color: '#5A8CD4' },
 ];
 
-function inferTour(rawCat: string, name: string): 'ATP Tour' | 'ITF Tour' {
+function inferTour(rawCat: string, name: string, pointsEarned?: number): 'ATP Tour' | 'ITF Tour' {
   const c = (rawCat + ' ' + name).toUpperCase();
-  // ATP Tour: Challenger events (all prize levels: 50, 75, 100, 125) and ATP-branded events
   if (
     c.includes('CHALLENGER') ||
     c.includes('ATP 250') || c.includes('ATP 500') || c.includes('ATP 1000') ||
-    // "Challenger 50 / 75 / 100 / 125" without the word "Challenger" spelled out
     /\bCH\s*\d{2,3}\b/.test(c) ||
-    // standalone prize bracket numbers that only appear on Challenger level
     /\b(50|75|100|125)\b/.test(c)
   ) return 'ATP Tour';
+  // Points heuristic: Challenger 50 SF = 80 pts; M25 max = 30 pts; M15 max = 18 pts
+  if ((pointsEarned ?? 0) >= 40) return 'ATP Tour';
   return 'ITF Tour';
 }
 
@@ -55,6 +54,7 @@ export default function MyPerformanceScreen() {
 
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
   const [matchModal, setMatchModal] = useState<{ type: 'wins' | 'losses' | 'all'; surface: string | null } | null>(null);
+  const [detailMatch, setDetailMatch] = useState<any | null>(null);
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
 
   const today = useMemo(() => { const d = new Date(); d.setHours(0,0,0,0); return d; }, []);
@@ -115,7 +115,7 @@ export default function MyPerformanceScreen() {
       'ITF Tour': { count: 0, tournaments: [] },
     };
     atpMatchHistory.forEach((m: any) => {
-      const bucket = inferTour('', m.tournamentName ?? '');
+      const bucket = inferTour('', m.tournamentName ?? '', m.pointsEarned);
       map[bucket].count += 1;
       map[bucket].tournaments.push({ name: m.tournamentName, date: m.date, surface: m.surface, roundReached: m.roundReached, prize: 0, matches: m.matches ?? [] });
     });
@@ -332,28 +332,16 @@ export default function MyPerformanceScreen() {
                   {[...stats.tournaments]
                     .sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''))
                     .map((t: any, idx: number) => (
-                      <View key={idx} style={s.resultRow}>
+                      <TouchableOpacity key={idx} style={s.resultRow} onPress={() => setDetailMatch(t)} activeOpacity={0.7}>
                         <View style={{ flex: 1 }}>
                           <Text style={s.resultCity}>{t.name}</Text>
                           <Text style={s.resultDate}>
                             {abbrevDate(t.date)} · {t.surface ?? '—'}
                             {t.roundReached ? ` · ${t.roundReached}` : ''}
                           </Text>
-                          {(t.matches ?? []).map((mx: any, mi: number, arr: any[]) => {
-                            const isLastMatch = mi === arr.length - 1;
-                            const isWin = t.roundReached === 'W' ? true : !isLastMatch;
-                            return (
-                              <View key={mi} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 6 }}>
-                                <Text style={{ fontSize: 10, fontWeight: '700', color: '#6060A0', width: 28 }}>{mx.round}</Text>
-                                <Text style={{ fontSize: 10, fontWeight: '700', color: isWin ? '#2D9E6B' : '#E24B4A', width: 14 }}>{isWin ? 'W' : 'L'}</Text>
-                                <Text style={{ fontSize: 11, color: '#A0A0C8', flex: 1 }} numberOfLines={1}>{mx.opponent}</Text>
-                                <Text style={{ fontSize: 11, fontWeight: '600', color: '#FAFAFA' }}>{mx.score}</Text>
-                              </View>
-                            );
-                          })}
                         </View>
-                        {t.prize > 0 && <Text style={s.resultPrize}>{fmtUSD(t.prize)}</Text>}
-                      </View>
+                        <Ionicons name="chevron-forward" size={14} color="#6060A0" />
+                      </TouchableOpacity>
                     ))}
                 </View>
               );
@@ -406,16 +394,17 @@ export default function MyPerformanceScreen() {
             <Text style={s.sectionLabel}>ATP RESULTS THIS YEAR</Text>
             <View style={s.card}>
               {atpMatchHistory.map((m: any, i: number) => (
-                <View key={i} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: i < atpMatchHistory.length - 1 ? 1 : 0, borderBottomColor: '#2A2A4A' }}>
+                <TouchableOpacity key={i} onPress={() => setDetailMatch(m)} activeOpacity={0.7}
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: i < atpMatchHistory.length - 1 ? 1 : 0, borderBottomColor: '#2A2A4A' }}>
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 13, fontWeight: '600', color: '#FAFAFA' }} numberOfLines={1}>{m.tournamentName}</Text>
-                    <Text style={{ fontSize: 11, color: '#A0A0C8', marginTop: 2 }}>{m.date} · {m.surface}</Text>
+                    <Text style={{ fontSize: 11, color: '#A0A0C8', marginTop: 2 }}>{abbrevDate(m.date)} · {m.surface}</Text>
                   </View>
-                  <View style={{ alignItems: 'flex-end' }}>
+                  <View style={{ alignItems: 'flex-end', marginLeft: 12 }}>
                     <Text style={{ fontSize: 13, fontWeight: '700', color: '#5B5BD6' }}>{m.roundReached}</Text>
-                    {m.pointsEarned > 0 && <Text style={{ fontSize: 11, color: '#A0A0C8' }}>{m.pointsEarned} pts</Text>}
                   </View>
-                </View>
+                  <Ionicons name="chevron-forward" size={14} color="#6060A0" style={{ marginLeft: 6 }} />
+                </TouchableOpacity>
               ))}
             </View>
           </View>
@@ -425,6 +414,60 @@ export default function MyPerformanceScreen() {
         )}
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {/* TOURNAMENT DETAIL MODAL */}
+      <Modal visible={!!detailMatch} animationType="slide" transparent>
+        <View style={s.modalOverlay}>
+          <View style={s.modalContent}>
+            <View style={s.modalHeader}>
+              <Text style={[s.modalTitle, { fontSize: 16 }]} numberOfLines={2}>
+                {detailMatch?.tournamentName ?? detailMatch?.name ?? ''}
+              </Text>
+              <TouchableOpacity onPress={() => setDetailMatch(null)} style={s.modalClose} activeOpacity={0.7}>
+                <Ionicons name="close" size={20} color="#FAFAFA" />
+              </TouchableOpacity>
+            </View>
+            {/* Meta row */}
+            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+              {(detailMatch?.date) && <Text style={{ fontSize: 12, color: '#A0A0C8' }}>{abbrevDate(detailMatch.date)}</Text>}
+              {(detailMatch?.surface) && <Text style={{ fontSize: 12, color: '#A0A0C8', textTransform: 'capitalize' }}>{detailMatch.surface}</Text>}
+              {(detailMatch?.roundReached) && (
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#5B5BD6' }}>{detailMatch.roundReached}</Text>
+              )}
+              {((detailMatch?.pointsEarned ?? 0) > 0) && (
+                <Text style={{ fontSize: 12, color: '#A0A0C8' }}>{detailMatch.pointsEarned} pts</Text>
+              )}
+            </View>
+            <ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={false}>
+              {(detailMatch?.matches ?? []).length > 0 ? (
+                (detailMatch.matches as any[]).map((mx: any, i: number, arr: any[]) => {
+                  const isLast = i === arr.length - 1;
+                  const isWin = detailMatch.roundReached === 'W' ? true : !isLast;
+                  return (
+                    <View key={i} style={[s.modalRow, { paddingVertical: 10 }]}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                        <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: isWin ? 'rgba(45,158,107,0.18)' : 'rgba(226,75,74,0.18)', alignItems: 'center', justifyContent: 'center' }}>
+                          <Text style={{ fontSize: 11, fontWeight: '800', color: isWin ? '#2D9E6B' : '#E24B4A' }}>{isWin ? 'W' : 'L'}</Text>
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#6060A0' }}>{mx.round}</Text>
+                          <Text style={{ fontSize: 13, color: '#FAFAFA', marginTop: 1 }} numberOfLines={1}>{mx.opponent}</Text>
+                        </View>
+                        <Text style={{ fontSize: 14, fontWeight: '700', color: '#FAFAFA' }}>{mx.score}</Text>
+                      </View>
+                    </View>
+                  );
+                })
+              ) : (
+                <Text style={{ color: '#6060A0', textAlign: 'center', padding: 24, fontSize: 13 }}>
+                  No match details available yet.{'\n'}Re-run the scraper to fetch scores.
+                </Text>
+              )}
+              <View style={{ height: 20 }} />
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       {/* MATCH DETAIL MODAL */}
       <Modal visible={!!matchModal} animationType="slide" transparent>
