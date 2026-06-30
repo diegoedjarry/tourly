@@ -46,10 +46,11 @@ export default function MyPerformanceScreen() {
   const expenses    = data?.expenses ?? [];
 
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
-  // Match detail modal: type = 'wins'|'losses'|'all', surface = null (all) or 'clay'|'hard'|'grass'
   const [matchModal, setMatchModal] = useState<{ type: 'wins' | 'losses' | 'all'; surface: string | null } | null>(null);
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
 
   const today = useMemo(() => { const d = new Date(); d.setHours(0,0,0,0); return d; }, []);
+  const currentYear = new Date().getFullYear();
 
   // ── ATP player profile — must come BEFORE any memos that use it ──────────────
   const [atpProfile, setAtpProfile] = useState<any>(null);
@@ -76,17 +77,19 @@ export default function MyPerformanceScreen() {
   }, []);
 
   const atpMatchHistory: any[] = useMemo(() =>
-    (atpProfile?.match_history as any[] ?? []).slice(0, 50)
-  , [atpProfile]);
+    (atpProfile?.match_history as any[] ?? [])
+      .filter((m: any) => (m.date ?? '').startsWith(String(selectedYear)))
+      .slice(0, 50)
+  , [atpProfile, selectedYear]);
 
-  // Only tournaments already played (start date in the past)
+  // Past non-withdrawn tournaments, filtered to selectedYear
   const pastTournaments = useMemo(() => {
     return tournaments.filter((t: any) => {
-      if (!t.startDate) return false;
+      if (!t.startDate || t.isWithdrawn) return false;
       const [y, m, d] = t.startDate.split('-').map(Number);
-      return new Date(y, m - 1, d) < today;
+      return new Date(y, m - 1, d) < today && y === selectedYear;
     });
-  }, [tournaments, today]);
+  }, [tournaments, today, selectedYear]);
 
   // Past tournaments grouped by surface
   const bySurface = useMemo(() => {
@@ -129,8 +132,11 @@ export default function MyPerformanceScreen() {
 
     pastTournaments.forEach((t: any) => {
       const bucket = inferTour(t.category ?? '', t.city ?? t.name ?? '');
+      const cat = t.category ?? '';
+      const city = t.city ?? t.name ?? '';
+      const displayName = cat && !city.toLowerCase().includes(cat.toLowerCase()) ? `${cat} ${city}`.trim() : city;
       map[bucket].count += 1;
-      map[bucket].tournaments.push({ name: t.city ?? t.name, date: t.startDate, surface: t.surface, roundReached: undefined, prize: (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0) || (t.prizeMoney ?? 0), matches: [] });
+      map[bucket].tournaments.push({ name: displayName, date: t.startDate, surface: t.surface, roundReached: undefined, prize: (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0) || (t.prizeMoney ?? 0), matches: [] });
     });
 
     const localMonths = new Set(pastTournaments.map((t: any) => (t.startDate ?? '').slice(0, 7)));
@@ -226,6 +232,20 @@ export default function MyPerformanceScreen() {
           </View>
         ) : (
           <>
+            {/* Year toggle */}
+            <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 8, marginTop: 16 }}>
+              {[currentYear - 1, currentYear].map(yr => (
+                <TouchableOpacity
+                  key={yr}
+                  onPress={() => { setSelectedYear(yr); setExpandedCategory(null); }}
+                  style={{ paddingHorizontal: 20, paddingVertical: 8, borderRadius: 20, backgroundColor: selectedYear === yr ? '#5B5BD6' : '#1A1A2E', borderWidth: 1, borderColor: selectedYear === yr ? '#5B5BD6' : '#2A2A4A' }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: selectedYear === yr ? '#FAFAFA' : '#6060A0' }}>{yr}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
             {/* ATP RANKING */}
             {atpProfile && (
           <View style={s.section}>
