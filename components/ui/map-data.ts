@@ -39,6 +39,61 @@ export const CITY_COORDS: Record<string, [number, number]> = {
   'Mendoza': [-68.84, -32.89],
   'Mar del Plata': [-57.55, -38.00],
 
+  // Chile — inland/southern cities common on ITF circuit
+  'Temuco': [-72.59, -38.74],
+  'Curicó': [-71.24, -34.99],
+  'Curico': [-71.24, -34.99],
+  'Antofagasta': [-70.40, -23.65],
+  'Iquique': [-70.14, -20.21],
+  'Arica': [-70.33, -18.48],
+  'Rancagua': [-70.74, -34.17],
+  'Talca': [-71.67, -35.43],
+  'Puerto Montt': [-72.94, -41.47],
+  'La Serena': [-71.25, -29.90],
+
+  // Brazil — additional cities (Brasília is the capital, often missing due to accent)
+  'Brasilia': [-47.93, -15.78],
+  'Brasília': [-47.93, -15.78],
+  'Manaus': [-60.02, -3.10],
+  'Fortaleza': [-38.54, -3.72],
+  'Belém': [-48.50, -1.46],
+  'Belem': [-48.50, -1.46],
+  'Vitória': [-40.34, -20.32],
+  'Vitoria': [-40.34, -20.32],
+  'Natal': [-35.22, -5.79],
+  'João Pessoa': [-34.86, -7.11],
+  'Joao Pessoa': [-34.86, -7.11],
+  'Maceió': [-35.74, -9.67],
+  'Maceio': [-35.74, -9.67],
+  'Uberlândia': [-48.28, -18.92],
+  'Uberlandia': [-48.28, -18.92],
+
+  // Ecuador & Peru additions
+  'Salinas': [-80.95, -2.22],
+  'Cuenca': [-79.00, -2.90],
+  'Ibarra': [-78.12, 0.35],
+  'Arequipa': [-71.54, -16.41],
+  'Trujillo': [-79.03, -8.11],
+  'Piura': [-80.63, -5.19],
+
+  // Colombia & Venezuela additions
+  'Cartagena': [-75.51, 10.40],
+  'Bucaramanga': [-73.13, 7.13],
+  'Pereira': [-75.69, 4.81],
+  'Manizales': [-75.52, 5.07],
+
+  // Argentina additions
+  'Tucumán': [-65.20, -26.82],
+  'Tucuman': [-65.20, -26.82],
+  'Salta': [-65.41, -24.79],
+  'Neuquén': [-68.06, -38.95],
+  'Neuquen': [-68.06, -38.95],
+  'Bahía Blanca': [-62.27, -38.72],
+  'Bahia Blanca': [-62.27, -38.72],
+  'San Luis': [-66.35, -33.30],
+  'San Juan': [-68.53, -31.54],
+  'Resistencia': [-59.01, -27.46],
+
   // North/Central America & Caribbean
   'Mexico City': [-99.13, 19.43],
   'Miami': [-80.19, 25.76],

@@ -19,13 +19,24 @@ import { CITY_COORDS, COUNTRY_CENTERS } from './map-data';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
+function stripAccents(s: string): string {
+  return s.normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
 function lookupCoords(city?: string, country?: string): [number, number] | null {
   if (city) {
     const key = city.trim();
+    // Exact match
     if (CITY_COORDS[key]) return CITY_COORDS[key];
+    // Case-insensitive
     const lower = key.toLowerCase();
     for (const [k, v] of Object.entries(CITY_COORDS)) {
       if (k.toLowerCase() === lower) return v;
+    }
+    // Accent-insensitive (e.g. "Brasília" → "Brasilia")
+    const normalized = stripAccents(lower);
+    for (const [k, v] of Object.entries(CITY_COORDS)) {
+      if (stripAccents(k.toLowerCase()) === normalized) return v;
     }
   }
   if (country) {
@@ -89,10 +100,16 @@ const DARK_MAP_STYLE = [
     elementType: 'labels.text.stroke',
     stylers: [{ color: '#0F0F1A' }, { visibility: 'on' }, { weight: 2 }],
   },
+  // Province / state borders — subtle, dimmer than country borders
   {
     featureType: 'administrative.province',
     elementType: 'geometry.stroke',
-    stylers: [{ visibility: 'off' }],
+    stylers: [{ color: '#2A2A52' }, { visibility: 'on' }, { weight: 0.6 }],
+  },
+  {
+    featureType: 'administrative.province',
+    elementType: 'labels.text.fill',
+    stylers: [{ color: '#5A5A8A' }, { visibility: 'on' }],
   },
   { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0F0F1A' }] },
   { featureType: 'road', stylers: [{ visibility: 'off' }] },
