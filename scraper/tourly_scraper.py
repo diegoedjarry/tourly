@@ -1367,7 +1367,7 @@ class TourlyDataIntegrator:
 
     def upsert_player_profile(self, data: dict):
         try:
-            self.sb.table("player_profiles").upsert(data, on_conflict="ipin").execute()
+            self.sb.table("player_profiles").upsert(data, on_conflict="player_name").execute()
             print(f"✓  Player profile synced for '{data['player_name']}'.")
         except Exception as e:
             print(f"⚠  Could not save player profile: {e}")
