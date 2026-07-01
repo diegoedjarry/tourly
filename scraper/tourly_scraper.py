@@ -24,7 +24,7 @@ from typing import Optional
 
 from curl_cffi.requests import AsyncSession
 from dotenv import load_dotenv
-from playwright.async_api import async_playwright, Page
+from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
 from supabase import create_client, Client
 
@@ -373,127 +373,153 @@ class ITFTournamentScraper:
         return tournaments
 
 
-# ── Player Scraper (ATP website) ───────────────────────────────────────────────
+# ── Player Scraper (Tennis Abstract) ──────────────────────────────────────────
 
-class ATPPlayerScraper:
+class TennisAbstractScraper:
     """
-    Searches the ATP Tour website by player name and scrapes their public profile:
-    ranking, match history (last 52 weeks), win/loss by surface, ranking evolution.
+    Scrapes player profiles from Tennis Abstract (tennisabstract.com).
+
+    Strategy per player type:
+    - ITF/Challenger players: page loads jsfrags/{Slug}.js which contains pre-rendered
+      HTML tables (recent-results, year-end-rankings). Ranking is in var currentrank=N.
+    - Profile ranking fallback: jsplayers/curr_rank_atp.js has a currRank dict for all
+      ATP-ranked players.
+
+    Name → slug conversion: strip accents, remove spaces, try full name first then
+    drop last surname part (e.g. "Diego Jarry Fillol" → "DiegoJarryFillol").
     """
 
-    def __init__(self, page: Page):
-        self.page = page
+    TA_BASE       = "https://www.tennisabstract.com"
+    CURR_RANK_URL = "https://www.tennisabstract.com/jsplayers/curr_rank_atp.js"
+
+    # Approximate wins based on round reached (assumes standard draw size)
+    _ROUND_WINS = {"W": 6, "F": 5, "SF": 4, "QF": 3, "R16": 2, "R32": 1, "R64": 0, "R128": 0}
+
+    def __init__(self):
+        self._curr_rank_cache: Optional[dict] = None
+
+    # ── public entry point ────────────────────────────────────────────────────
 
     async def scrape_player(self, player_name: str, store_name: Optional[str] = None) -> Optional[dict]:
         """
-        store_name: the name to persist in player_profiles.player_name (defaults to player_name).
-        Useful when the user registered as "Diego Jarry Fillol" but ATP lists them as "Diego Jarry".
+        Scrape a player from Tennis Abstract.
+        store_name: name to persist in player_profiles.player_name (defaults to player_name).
         """
-        print(f"\n📡  Searching ATP for player '{player_name}'...")
+        import unicodedata
 
-        # ── Step 1: search ATP autocomplete API ──────────────────────────────
-        # Try each part of the name from last to first — handles Latin double surnames
-        name_parts = player_name.split()
-        profile_url = None
-        for search_term in reversed(name_parts):
-            profile_url = await self._find_profile_url(search_term, player_name)
-            if profile_url:
-                # Verify all name parts appear in the URL (prevents "Jarry" matching "nicolas-jarry")
-                url_lower = profile_url.lower()
-                if all(p.lower() in url_lower for p in name_parts):
-                    print(f"   ✓  Found via search term '{search_term}'")
-                    break
+        print(f"\n📡  Tennis Abstract scrape for '{player_name}'...")
+
+        # ── Step 1: build slug candidates ─────────────────────────────────────
+        # Strip accents: "Jarry Fillol" → "Jarry Fillol" (already ASCII), "Ñ" → "N"
+        def to_slug(name: str) -> str:
+            norm = unicodedata.normalize("NFKD", name)
+            ascii_name = "".join(c for c in norm if not unicodedata.combining(c))
+            return ascii_name.replace(" ", "").replace("-", "")
+
+        parts = player_name.split()
+        slugs: list[str] = []
+        # Try full name first, then progressively drop the last name part
+        for end in range(len(parts), 0, -1):
+            slug = to_slug(" ".join(parts[:end]))
+            if slug not in slugs:
+                slugs.append(slug)
+
+        # ── Step 2: fetch page HTML and jsfrags to get ranking + match data ──
+        current_ranking: Optional[int] = None
+        fullname: Optional[str] = None
+        match_rows: list[list[str]] = []
+        year_end_rows: list[list[str]] = []
+        working_slug: Optional[str] = None
+
+        headers = {
+            "User-Agent": HTTP_HEADERS["User-Agent"],
+            "Accept": "text/html,application/xhtml+xml,*/*;q=0.9",
+            "Referer": self.TA_BASE + "/",
+        }
+
+        async with AsyncSession(impersonate="chrome120") as client:
+            for slug in slugs:
+                url = f"{self.TA_BASE}/cgi-bin/player.cgi?p={slug}"
+                try:
+                    r = await client.get(url, headers=headers, timeout=20)
+                except Exception as e:
+                    print(f"   ⚠  HTTP error for {slug}: {e}")
+                    continue
+
+                if r.status_code == 429:
+                    print(f"   ⚠  Rate limited — waiting 30s...")
+                    await asyncio.sleep(30)
+                    r = await client.get(url, headers=headers, timeout=20)
+
+                if r.status_code != 200:
+                    print(f"   {slug}: HTTP {r.status_code} — skipping")
+                    continue
+
+                html = r.text
+                title_m = re.search(r"<title>Tennis Abstract:\s*([^<]+?)\s*Match Results", html)
+                if not title_m:
+                    print(f"   {slug}: page has no TA title — skipping")
+                    continue
+
+                fullname = title_m.group(1).strip()
+                print(f"   ✓  Found page for '{fullname}' (slug: {slug})")
+
+                # Extract currentrank from inline script
+                cr_m = re.search(r"var\s+currentrank\s*=\s*(\d+)", html)
+                if cr_m:
+                    current_ranking = int(cr_m.group(1))
+                    print(f"   Ranking from page: {current_ranking}")
+
+                # Check if this is a jsfrags-style page (has pre-rendered tables)
+                frag_m = re.search(r"jsfrags/([^'\"]+\.js)", html)
+                if frag_m:
+                    frag_url = f"{self.TA_BASE}/jsfrags/{frag_m.group(1)}"
+                    print(f"   Fetching jsfrags: {frag_url}")
+                    try:
+                        rf = await client.get(frag_url, headers=headers, timeout=20)
+                        if rf.status_code == 200:
+                            frag_html = rf.text
+                            # The frag is: var player_frag = `...html...`
+                            frag_content_m = re.search(r"var\s+player_frag\s*=\s*`([\s\S]*?)`", frag_html)
+                            if frag_content_m:
+                                frag_content = frag_content_m.group(1)
+                                match_rows    = self._parse_html_table(frag_content, "recent-results")
+                                year_end_rows = self._parse_html_table(frag_content, "year-end-rankings")
+                                print(f"   Match rows: {len(match_rows)}, year-end rows: {len(year_end_rows)}")
+                        else:
+                            print(f"   ⚠  jsfrags HTTP {rf.status_code}")
+                    except Exception as e:
+                        print(f"   ⚠  jsfrags fetch error: {e}")
                 else:
-                    print(f"   ⚠  '{profile_url}' matched '{search_term}' but not all name parts — skipping")
-                    profile_url = None
+                    print(f"   ⚠  No jsfrags on this page — match history unavailable for {slug}")
 
-        if not profile_url:
-            print(f"   ⚠  No ATP profile found for '{player_name}'.")
-            return None
+                working_slug = slug
+                break  # found a valid player page
 
-        print(f"   ✓  Profile URL: {profile_url}")
+        # ── Step 3: fallback ranking from curr_rank_atp.js ───────────────────
+        if current_ranking is None:
+            current_ranking = await self._lookup_curr_rank(player_name)
+            if current_ranking:
+                print(f"   Ranking from currRank fallback: {current_ranking}")
 
-        # ── Step 2: navigate to overview ─────────────────────────────────────
-        try:
-            await self.page.goto(profile_url, wait_until="domcontentloaded", timeout=60_000)
-        except Exception as e:
-            print(f"   ⚠  Navigation warning: {e}")
-        await self.page.wait_for_timeout(4_000)
+        if current_ranking is None:
+            print(f"   ⚠  No ranking found for '{player_name}'")
 
-        title = await self.page.title()
-        print(f"   Page title: {title}")
+        # ── Step 4: build ranking evolution from year-end-rankings table ─────
+        ranking_evolution = self._parse_year_end_rankings(year_end_rows)
 
-        # Dump all text nodes that contain a number — helps find ranking location
-        debug = await self.page.evaluate("""() => {
-            const get = sel => { const el = document.querySelector(sel); return el ? el.textContent.trim() : null; };
-            // Find elements whose text is a small number (likely ranking)
-            const numbers = [...document.querySelectorAll('*')]
-                .filter(el => el.children.length === 0 && /^\\d{1,4}$/.test(el.textContent.trim()))
-                .slice(0, 10)
-                .map(el => ({ tag: el.tagName, cls: el.className, text: el.textContent.trim() }));
-            return {
-                titleTag: document.title,
-                numbers,
-                bodySnippet: document.body.innerText.slice(0, 500),
-            };
-        }""")
-        print(f"   Number elements: {debug.get('numbers')}")
-        print(f"   Body snippet: {debug.get('bodySnippet', '')[:300]}")
+        # ── Step 5: group match rows into tournament history ──────────────────
+        # recent-results headers (from debug):
+        # [Date, Tournament, Surface, Rd, Rk, vRk, Score, DR, A%, DF%, 1stIn, 1st%, 2nd%, BPSvd, Time]
+        # col indices: 0=date, 1=tourn, 2=surf, 3=round, 4=player_rank, 5=opp_rank, 6=score_desc
+        match_history = self._build_match_history(match_rows)
 
-        # Extract name from page title (most reliable — "Carlos Alcaraz | Overview | ATP Tour | Tennis")
-        page_title   = debug.get("titleTag") or ""
-        confirmed_name = page_title.split("|")[0].strip() if "|" in page_title else (
-            debug.get("heroName") or debug.get("playerName") or debug.get("h1") or player_name
-        )
-
-        # Read the singles ranking specifically — the page has singles + doubles + career-high numbers.
-        # Strategy: find "Singles" label in innerText and grab the adjacent number.
-        current_ranking = await self.page.evaluate("""() => {
-            const text = document.body.innerText;
-            // ATP page typically shows rank then label: "1090\\nSingles" or "Singles\\n1090"
-            let m = text.match(/(\\d{1,4})\\s*\\nSingles|Singles\\s*\\n(\\d{1,4})/);
-            if (m) return parseInt(m[1] || m[2]);
-            // Fallback: find the 'Singles' label element and look for a number in the same parent
-            const allEls = [...document.querySelectorAll('*')];
-            const singlesLabel = allEls.find(el =>
-                el.children.length === 0 && el.textContent.trim() === 'Singles'
-            );
-            if (singlesLabel) {
-                const parent = singlesLabel.parentElement;
-                if (parent) {
-                    const nums = [...parent.querySelectorAll('*')].filter(el =>
-                        el.children.length === 0 && /^\\d{1,4}$/.test(el.textContent.trim())
-                    );
-                    if (nums.length > 0) return parseInt(nums[0].textContent.trim());
-                }
-            }
-            // Last resort: first <strong> containing a 1–4 digit number
-            const strongs = [...document.querySelectorAll('strong')];
-            for (const s of strongs) {
-                const t = s.textContent.trim();
-                if (/^\\d{1,4}$/.test(t)) return parseInt(t);
-            }
-            return null;
-        }""")
-        print(f"   Name: {confirmed_name}  |  Ranking: {current_ranking}")
-
-        # ── Step 3: player ID from URL for stats API ──────────────────────────
-        player_id_match = re.search(r"/players/[^/]+/([A-Za-z0-9]+)/overview", profile_url)
-        player_id       = player_id_match.group(1) if player_id_match else None
-        print(f"   ATP player ID: {player_id}")
-
-        match_history, total_wins, total_losses = await self._scrape_activity(profile_url)
-        win_loss          = self._calc_win_loss(match_history, total_wins, total_losses)
-        # Primary: ATP ranking points breakdown (exact defending data, 52-week window)
-        # Fallback: calculated from match history if page returned nothing
-        ranking_points    = await self._scrape_ranking_points(profile_url)
-        points_defending  = ranking_points if ranking_points else self._calc_defending_points(match_history)
-        ranking_evolution = await self._scrape_ranking_evolution(profile_url)
+        win_loss         = self._calc_win_loss(match_history)
+        points_defending = self._calc_defending_points(match_history)
 
         return {
-            "ipin":                player_id or player_name,
-            # Use store_name (from profiles table) so the app ILIKE lookup always matches
-            "player_name":         store_name or confirmed_name or player_name,
+            "ipin":                working_slug or player_name,
+            "player_name":         store_name or player_name,
             "current_ranking":     current_ranking,
             "ranking_evolution":   ranking_evolution,
             "win_loss_by_surface": win_loss,
@@ -502,450 +528,302 @@ class ATPPlayerScraper:
             "last_updated":        datetime.now(timezone.utc).isoformat(),
         }
 
-    async def _find_profile_url(self, last_name: str, full_name: str) -> Optional[str]:
-        """Use ATP autocomplete endpoint to get the player's profile URL."""
-        try:
-            async with AsyncSession(impersonate="chrome120") as client:
-                r = await client.get(ATP_SEARCH_URL, params={"term": last_name}, headers=HTTP_HEADERS, timeout=15)
-                print(f"   ATP search status: {r.status_code}")
-                if r.status_code == 200:
-                    data = r.json()
-                    # ATP returns a list of {label, url, playerSlug, ...}
-                    players = data if isinstance(data, list) else data.get("players") or data.get("results") or []
-                    print(f"   ATP search results: {[p.get('label') or p.get('name') for p in players[:5]]}")
-                    for p in players:
-                        label = p.get("label") or p.get("name") or p.get("value") or ""
-                        url   = p.get("url") or p.get("profileUrl") or p.get("href") or ""
-                        if all(part.lower() in label.lower() for part in full_name.split()):
-                            return url if url.startswith("http") else f"https://www.atptour.com{url}"
-        except Exception as e:
-            print(f"   ⚠  ATP search API failed: {e}")
+    # ── HTML table parser ──────────────────────────────────────────────────────
 
-        # Fallback: browser search on atptour.com
-        url = await self._browser_search(full_name)
-        if not url:
-            # Last resort: try ATP rankings page which always lists ranked players
-            url = await self._search_rankings_page(last_name, full_name)
-        return url
+    def _parse_html_table(self, html: str, table_id: str) -> list[list[str]]:
+        """Extract data rows (skip header) from a table with the given id in raw HTML."""
+        from html.parser import HTMLParser
 
-    async def _browser_search(self, player_name: str) -> Optional[str]:
-        """Use the ATP site search page to find a player profile URL."""
-        name_parts = player_name.split()
-        # Try each name part from last to first
-        for search_term in reversed(name_parts):
-            slug = search_term.lower().replace(" ", "-")
-            search_url = f"https://www.atptour.com/en/search#q={search_term}&t=players"
-            try:
-                await self.page.goto(search_url, wait_until="domcontentloaded", timeout=60_000)
-            except Exception as e:
-                print(f"   ⚠  Browser nav warning: {e}")
-            await self.page.wait_for_timeout(5_000)
+        class TableParser(HTMLParser):
+            def __init__(self, target_id: str):
+                super().__init__()
+                self.target_id = target_id
+                self.in_target = False
+                self.depth = 0
+                self.rows: list[list[str]] = []
+                self._cur_row: list[str] = []
+                self._cur_cell: list[str] = []
+                self._in_cell = False
+                self._header_done = False
 
-            # Dismiss cookie banner
-            try:
-                await self.page.evaluate("""() => {
-                    const btn = document.getElementById('onetrust-accept-btn-handler');
-                    if (btn) btn.click();
-                    const sdk = document.getElementById('onetrust-consent-sdk');
-                    if (sdk) sdk.remove();
-                }""")
-                await self.page.wait_for_timeout(500)
-            except Exception:
-                pass
+            def handle_starttag(self, tag, attrs):
+                adict = dict(attrs)
+                if tag == "table" and adict.get("id") == self.target_id:
+                    self.in_target = True
+                    self.depth = 1
+                elif self.in_target:
+                    if tag == "table":
+                        self.depth += 1
+                    elif tag in ("tr",) and self.depth == 1:
+                        self._cur_row = []
+                    elif tag in ("td", "th") and self.depth == 1:
+                        self._in_cell = True
+                        self._cur_cell = []
 
-            all_hrefs = await self.page.evaluate("""() =>
-                [...document.querySelectorAll('a[href*="/players/"]')]
-                  .map(a => ({href: a.href, text: a.textContent.trim()}))
-                  .filter(x => x.href.includes('/overview'))
-            """)
-            print(f"   Search '{search_term}': {len(all_hrefs)} player links")
-
-            # Require all name parts to appear in the URL (not just the search term)
-            full_parts = [p.lower() for p in player_name.split()]
-            for item in all_hrefs:
-                href_lower = item.get("href", "").lower()
-                if all(p in href_lower for p in full_parts):
-                    print(f"   ✓  Found via search slug '{slug}' (all name parts match)")
-                    return item["href"]
-
-        return None
-
-    async def _search_rankings_page(self, last_name: str, full_name: str = "") -> Optional[str]:
-        """Paginate through ATP rankings in batches of 500 to find any ranked player."""
-        last_slug = last_name.lower().replace(" ", "-")
-        full_parts = [p.lower() for p in (full_name or last_name).split()]
-        for start in range(1, 2500, 500):
-            end = start + 499
-            url = f"https://www.atptour.com/en/rankings/singles?rankRange={start}-{end}&perPageCount=500"
-            try:
-                await self.page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-                await self.page.wait_for_timeout(4_000)
-                await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                await self.page.wait_for_timeout(1_500)
-                links = await self.page.evaluate("""() =>
-                    [...document.querySelectorAll('a[href*="/players/"]')]
-                      .map(a => a.href).filter(h => h.includes('/overview'))
-                """)
-                print(f"   Rankings {start}-{end}: {len(links)} links")
-                for href in links:
-                    href_lower = href.lower()
-                    # Require all name parts to appear in URL (prevents "jarry" matching "nicolas-jarry")
-                    if last_slug in href_lower and all(p in href_lower for p in full_parts):
-                        print(f"   ✓  Found via rankings {start}-{end}: {href}")
-                        return href
-                if len(links) < 10:
-                    break  # no more players at this rank range
-            except Exception as e:
-                print(f"   ⚠  Rankings {start}-{end}: {e}")
-        return None
-
-    async def _scrape_activity(self, profile_url: str) -> tuple[list[dict], int, int]:
-        """
-        Fetch match history for the previous and current year.
-        Returns (match_list, total_wins_current_year, total_losses_current_year).
-        The ATP player-activity page is server-side rendered — all data is in the
-        DOM innerText as structured tournament sections ending with "Points: X".
-        """
-        all_results: list[dict] = []
-        current_year = datetime.now(timezone.utc).year
-        wl_re = re.compile(r'Win/Loss\s*\n?\s*(\d+)\s*[-–]\s*(\d+)', re.IGNORECASE)
-        total_wins = 0
-        total_losses = 0
-
-        for year in [current_year - 1, current_year]:
-            url = profile_url.replace("/overview", "/player-activity") + f"?year={year}&surface=all&match=singles"
-            print(f"   Activity {year}: {url}")
-            try:
-                await self.page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-                await self.page.wait_for_timeout(6_000)
-                await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                await self.page.wait_for_timeout(2_000)
-            except Exception as e:
-                print(f"   ⚠  Nav {year}: {e}")
-                continue
-
-            full_text = await self.page.evaluate("() => document.body.innerText")
-            # Guard: if Cloudflare blocked the page we get a security-check wall, not real data
-            if 'security verification' in full_text.lower() or 'cloudflare' in full_text.lower():
-                print(f"   ⚠  {year}: Cloudflare blocked — skipping to preserve existing data")
-                continue
-            tournaments = self._parse_activity_text(full_text)
-            print(f"   {year}: {len(tournaments)} tournaments parsed from DOM")
-            all_results.extend(tournaments)
-
-            if year == current_year:
-                wl_m = wl_re.search(full_text)
-                if wl_m:
-                    total_wins   = int(wl_m.group(1))
-                    total_losses = int(wl_m.group(2))
-                    print(f"   W/L {year}: {total_wins}-{total_losses}")
-
-        print(f"   Total tournaments scraped: {len(all_results)}")
-        return all_results, total_wins, total_losses
-
-    def _parse_activity_text(self, text: str) -> list[dict]:
-        """
-        Parse the player-activity page innerText into tournament records.
-        Splits on "Points: X" (with optional trailing ATP Ranking / Prize Money).
-        Captures all entries including 0-point R1 losses.
-        """
-        # Match "Points: X" with optional ", ATP Ranking: Y, Prize Money: Z" suffix
-        pts_re  = re.compile(
-            r'(?:Points:\s*([0-9\-–]+)(?:\s*,\s*ATP Ranking\s*[\d\-–]+)?(?:\s*,\s*Prize Money\s*[€$£]?[\d,.]+)?|Prize Money\s*[€$£]?[\d,.]+)',
-            re.IGNORECASE
-        )
-        loc_re  = re.compile(
-            r'^.+?,\s*.+?\s*\|\s*\d{1,2}\s+\w+,?\s*\d{2,4}\s*\|\s*.+$',
-            re.MULTILINE
-        )
-        date_re = re.compile(r'\|\s*(\d{1,2}\s+\w+,?\s*\d{2,4})\s*\|')
-        surf_re = re.compile(r'\|\s*(\w[\w\s()]*)\s*$')
-        rnd_re  = re.compile(r'^(W|F|SF|QF|R\d{1,3}|RR)$', re.MULTILINE)
-
-        SKIP_LINES = {
-            "Activity", "Win/Loss", "Titles and Finals", "Player activity",
-            "Singles", "Doubles", "Career", "Tourn(All)", "ATP Tour",
-            "Overview", "Bio", "Stats", "Ranking",
-        }
-
-        chunks = pts_re.split(text)
-        results = []
-
-        for i in range(0, len(chunks) - 1, 2):
-            section = chunks[i].strip()
-            try:
-                val = chunks[i + 1]
-                pts_str = str(val).replace('-', '0').replace('–', '0').strip() if val else '0'
-                pts = int(pts_str) if pts_str.isdigit() else 0
-            except (IndexError, ValueError):
-                continue
-            # pts == 0 is valid (R1 loss) — only skip if we couldn't parse
-
-            # Skip doubles entries: the ATP page renders both singles and doubles activity
-            # regardless of any URL parameter. Doubles entries are identified by "Partner:"
-            # appearing in the text immediately after the matched Points: line (in chunks[i+2]).
-            partner_leadin = chunks[i + 2][:120] if i + 2 < len(chunks) else ''
-            if re.search(r'Partner\s*:', partner_leadin, re.IGNORECASE):
-                continue
-
-            loc_match = loc_re.search(section)
-            if not loc_match:
-                continue
-
-            loc_line = loc_match.group(0)
-            date_m   = date_re.search(loc_line)
-            surf_m   = surf_re.search(loc_line)
-            date_str = normalise_date(date_m.group(1).strip()) if date_m else None
-            surface  = normalise_surface(surf_m.group(1).strip()) if surf_m else "hard"
-
-            # Extract city from the location line ("Temuco, Chile | ...") → "Temuco"
-            city_from_loc = loc_line.split(',')[0].strip() if loc_line else ""
-
-            # Collect up to 2 meaningful lines before the location (reversed order)
-            pre_lines = [l.strip() for l in section[:loc_match.start()].split('\n') if l.strip()]
-            name_parts: list[str] = []
-            for line in reversed(pre_lines):
-                if line and line not in SKIP_LINES and not re.fullmatch(r'\d{4}', line) \
-                        and not re.fullmatch(r'[\d\s\-–W$€£,%.]+', line) \
-                        and not re.search(r'ATP Ranking|Prize Money', line, re.IGNORECASE):
-                    name_parts.append(line)
-                    if len(name_parts) == 2:
-                        break
-
-            # Build full name: "Category City" order (e.g. "M15 Vero Beach", "Temuco Challenger 50")
-            # name_parts[0] = last pre-line before location  (often category like "M15")
-            # name_parts[1] = second-to-last                 (rarely used)
-            if not name_parts:
-                continue
-            category_part = name_parts[1] if len(name_parts) > 1 else ""
-            city_part     = name_parts[0]
-
-            if city_from_loc and city_from_loc.lower() in city_part.lower():
-                # city_part already contains the city (e.g. "M15 Vero Beach" or "Vero Beach")
-                tournament_name = city_part
-            elif category_part and city_from_loc and city_from_loc.lower() not in category_part.lower():
-                # Two distinct pre-lines: put category before city → "M15 Vero Beach"
-                tournament_name = f"{category_part} {city_from_loc}"
-            elif city_from_loc and ' ' not in city_part.strip():
-                # city_part is a pure category code (e.g. "M15", "M25") — no city yet
-                tournament_name = f"{city_part} {city_from_loc}"
-            else:
-                # city_part already contains category + city (e.g. "M25 Coquimbo");
-                # appending city_from_loc would duplicate — even if spellings differ.
-                tournament_name = city_part
-
-            # Strip ATP Ranking / Prize Money that leaks into the name on some ATP pages
-            tournament_name = re.sub(r'\s*,?\s*ATP Ranking[:\s]*[\d\-–]+.*', '', tournament_name, flags=re.IGNORECASE).strip()
-            tournament_name = re.sub(r'\s*,?\s*Prize Money.*',                '', tournament_name, flags=re.IGNORECASE).strip()
-            # Strip trailing US state abbreviation (e.g. "M15 Vero Beach, FL" → "M15 Vero Beach")
-            tournament_name = re.sub(r',\s*[A-Z]{2}$', '', tournament_name).strip()
-            # Prevent city-name duplication (e.g., "M25 Coquimbo Coquimbo" → "M25 Coquimbo")
-            if city_from_loc:
-                city_esc = re.escape(city_from_loc)
-                tournament_name = re.sub(rf'(?i)({city_esc})\s+\1', r'\1', tournament_name).strip()
-
-            if not tournament_name:
-                continue
-
-            post_loc   = section[loc_match.end():]
-            rnd_match  = rnd_re.search(post_loc)
-            best_round = rnd_match.group(1) if rnd_match else None
-            rnd_key    = (best_round or "").upper().replace(" ", "")
-            wins       = self._ROUND_WINS.get(rnd_key, 0)
-            losses     = 0 if rnd_key == "W" else 1
-
-            # Capture ATP ranking that week (appears in "Points: X, ATP Ranking: Y" suffix)
-            rank_re = re.compile(r'ATP Ranking\s*[:\s]*([\d\-–]+)', re.IGNORECASE)
-            rank_m  = rank_re.search(section)
-            if rank_m:
-                rank_raw = rank_m.group(1).strip()
-                atp_ranking_that_week = int(rank_raw) if rank_raw.isdigit() else None
-            else:
-                atp_ranking_that_week = None
-
-            matches_list = []
-            # ATP innerText format: "Rd\nOpponent\nScore\nR32\nT. Gentzsch (296)\n674\n36\n..."
-            # Set scores are bare 2-3 digit strings: "36"=3-6, "64"=6-4, "674"=6-7(4), "766"=7-6(6)
-            ROUND_FULL_RE = re.compile(r'^(W|F|SF|QF|R\d{1,3}|RR|Q\d{1,2})$', re.IGNORECASE)
-            SET_SCORE_RE  = re.compile(r'^(\d{2,3}|\(RET\)|\(W/O\))$')
-            ATP_HEADERS   = {"Rd", "Opponent", "Score", "Round", "Player", "Sets"}
-            raw_lines = [l.strip() for l in post_loc.replace('\t', '\n').split('\n') if l.strip()]
-            # Strip page-header labels that always appear at the top
-            match_lines = [l for l in raw_lines if l not in ATP_HEADERS]
-            idx = 0
-            while idx < len(match_lines):
-                line = match_lines[idx]
-                if ROUND_FULL_RE.fullmatch(line):
-                    rnd_label = line.upper()
-                    if idx + 1 >= len(match_lines):
-                        idx += 1
-                        continue
-                    opponent = match_lines[idx + 1]
-                    opp_offset = 1
-                    # Skip navigation arrows/chevrons that the ATP page renders next to player names
-                    _NAV_CHARS = {">", "›", "<", "‹", "→", "←", "»", "«", "▸", "▹"}
-                    while (opp_offset < 4 and
-                           (not opponent or
-                            opponent in _NAV_CHARS or
-                            (len(opponent) <= 2 and not any(c.isalpha() for c in opponent)))):
-                        opp_offset += 1
-                        if idx + opp_offset >= len(match_lines):
-                            break
-                        opponent = match_lines[idx + opp_offset]
-                    # Skip bye entries
-                    if 'bye' in opponent.lower():
-                        idx += opp_offset + 1
-                        continue
-                    # Collect all consecutive set-score lines after the opponent
-                    score_parts = []
-                    j = idx + opp_offset + 1
-                    while j < len(match_lines):
-                        cand = match_lines[j]
-                        if SET_SCORE_RE.fullmatch(cand) or \
-                           re.search(r'(RET|W/O|Default|Walkover)', cand, re.IGNORECASE) or \
-                           re.search(r'\d{1,2}-\d{1,2}', cand) or \
-                           re.search(r'\d{2}\(', cand):
-                            score_parts.append(cand)
-                            j += 1
+            def handle_endtag(self, tag):
+                if not self.in_target:
+                    return
+                if tag == "table":
+                    self.depth -= 1
+                    if self.depth == 0:
+                        self.in_target = False
+                elif tag == "tr" and self.depth == 1:
+                    if self._cur_row:
+                        if not self._header_done:
+                            self._header_done = True  # skip header row
                         else:
-                            break
-                    score = " ".join(score_parts)
-                    if opponent and score:
-                        matches_list.append({
-                            "round":    rnd_label,
-                            "opponent": opponent,
-                            "score":    score,
-                        })
-                    idx = j if score_parts else idx + opp_offset + 1
-                else:
-                    idx += 1
+                            self.rows.append(self._cur_row)
+                    self._cur_row = []
+                elif tag in ("td", "th") and self.depth == 1:
+                    self._cur_row.append("".join(self._cur_cell).strip())
+                    self._in_cell = False
+                    self._cur_cell = []
 
-            # For Challenger events the ATP page shows only the city name. Add "Challenger"
-            # prefix when pts > 30 (above M25 max of 30) OR when qualifying rounds appear in
-            # the parsed matches — qualifying only shows on ATP pages for Challenger-level events.
-            if tournament_name == city_from_loc:
-                Q_RE = re.compile(r'^Q\d', re.IGNORECASE)
-                has_qualifying = any(Q_RE.match(mx.get("round", "")) for mx in matches_list)
-                if pts > 30 or has_qualifying:
-                    tournament_name = f"Challenger {tournament_name}"
+            def handle_data(self, data):
+                if self._in_cell:
+                    self._cur_cell.append(data)
 
-            results.append({
-                "tournamentName":     tournament_name,
-                "date":               date_str,
-                "roundReached":       best_round,
-                "pointsEarned":       pts,
-                "rankingThatWeek":    atp_ranking_that_week,
-                "surface":            surface,
-                "wins":               wins,
-                "losses":             losses,
-                "matches":        matches_list,
+            def handle_entityref(self, name):
+                if self._in_cell:
+                    import html as _html
+                    self._cur_cell.append(_html.unescape(f"&{name};"))
+
+            def handle_charref(self, name):
+                if self._in_cell:
+                    import html as _html
+                    self._cur_cell.append(_html.unescape(f"&#{name};"))
+
+        p = TableParser(table_id)
+        p.feed(html)
+        return p.rows
+
+    # ── curr_rank lookup ───────────────────────────────────────────────────────
+
+    async def _lookup_curr_rank(self, player_name: str) -> Optional[int]:
+        """Fetch jsplayers/curr_rank_atp.js and look up the player by name."""
+        if self._curr_rank_cache is None:
+            try:
+                async with AsyncSession(impersonate="chrome120") as client:
+                    r = await client.get(self.CURR_RANK_URL, timeout=15)
+                    if r.status_code == 200:
+                        m = re.search(r"var\s+currRank\s*=\s*(\{[\s\S]*?\});", r.text)
+                        if m:
+                            import json as _json
+                            self._curr_rank_cache = _json.loads(m.group(1))
+                        else:
+                            self._curr_rank_cache = {}
+                    else:
+                        self._curr_rank_cache = {}
+            except Exception as e:
+                print(f"   ⚠  curr_rank fetch failed: {e}")
+                self._curr_rank_cache = {}
+
+        cache = self._curr_rank_cache or {}
+        # Exact match first
+        if player_name in cache:
+            return int(cache[player_name])
+        # Case-insensitive partial match (any word in player_name must appear in key)
+        name_lower = player_name.lower()
+        for key, val in cache.items():
+            if key.lower() == name_lower:
+                return int(val)
+        # Try matching on last surname part (e.g. "Jarry Fillol" in "Diego Jarry Fillol")
+        parts = player_name.split()
+        if len(parts) >= 2:
+            last_two = " ".join(parts[-2:]).lower()
+            for key, val in cache.items():
+                if last_two in key.lower():
+                    return int(val)
+        return None
+
+    # ── match history builder ──────────────────────────────────────────────────
+
+    def _build_match_history(self, rows: list[list[str]]) -> list[dict]:
+        """
+        Convert recent-results table rows into grouped tournament match history.
+
+        Row format (from debug):
+        [date, tournament, surface, round, player_rank, opp_rank, score_desc, DR, ...]
+        date: "11-May-2026"
+        score_desc: "Ryan Colby [USA] d. Melnic" or "Melnic d. Maxwell Mckennon [USA]"
+        round: "R32", "QF", etc.
+
+        Groups consecutive rows for the same tournament+date into one tournament entry.
+        Singles only: score format is "6-4 7-5" (not "10-5" tiebreaks from doubles).
+        """
+        if not rows:
+            return []
+
+        def parse_ta_date(s: str) -> Optional[str]:
+            """'11-May-2026' → '2026-05-11'"""
+            try:
+                return datetime.strptime(s.strip(), "%d-%b-%Y").strftime("%Y-%m-%d")
+            except Exception:
+                return normalise_date(s)
+
+        def player_won(score_desc: str, player_ref: str) -> bool:
+            """Determine if the player (referenced by last-name part) won the match."""
+            # score_desc: "Opponent [CC] d. Player" (loss) or "Player d. Opponent [CC]" (win)
+            # "d." separates winner from loser
+            if " d. " not in score_desc:
+                return False
+            winner_part = score_desc.split(" d. ")[0].strip()
+            # Check if our player name appears in the winner part
+            p_lower = player_ref.lower()
+            return p_lower in winner_part.lower()
+
+        def extract_opponent(score_desc: str, player_ref: str) -> str:
+            """Extract opponent name and ranking from score_desc cell."""
+            if " d. " not in score_desc:
+                return score_desc.strip()
+            parts = score_desc.split(" d. ")
+            winner, loser = parts[0].strip(), parts[1].strip()
+            p_lower = player_ref.lower()
+            if p_lower in winner.lower():
+                return loser  # player won; opponent is the loser
+            return winner  # player lost; opponent is the winner
+
+        def extract_score(cells: list[str]) -> str:
+            """Score is in cell index 7 (the 8th cell, after score_desc)."""
+            if len(cells) > 7:
+                return cells[7].strip()
+            return ""
+
+        # Determine player reference: the name that appears in EVERY score_desc row.
+        # In Tennis Abstract the format is always "Winner d. Loser [CC]" — our player
+        # appears on alternating sides (winner when they win, loser when they lose).
+        # We collect candidate tokens from all rows, strip country codes, then pick
+        # the token that appears in the most rows — that's the player.
+        player_ref = ""
+        descs = [row[6] for row in rows if len(row) > 6 and " d. " in row[6]]
+        if descs:
+            from collections import Counter
+            token_counts: Counter = Counter()
+            for desc in descs:
+                # Strip country codes like [USA], [CHI] etc.
+                clean_desc = re.sub(r"\s*\[[A-Z]{2,3}\]", "", desc)
+                # Each side of "d." is one player — collect each side as a candidate
+                for side in clean_desc.split(" d. "):
+                    token = side.strip()
+                    if token:
+                        token_counts[token] += 1
+            # The player's name appears in every row (either side); opponents vary.
+            # Pick the token with the highest count that is not a pure country string.
+            for token, _ in token_counts.most_common():
+                if token and not re.fullmatch(r"[A-Z]{2,3}", token):
+                    player_ref = token
+                    break
+
+        # Group rows by (tournament, date) → collect all match rows per tournament
+        from collections import OrderedDict
+        tournaments_map: dict[str, dict] = OrderedDict()
+
+        for row in rows:
+            if len(row) < 7:
+                continue
+
+            date_raw = row[0]
+            tourn    = row[1].strip()
+            surf_raw = row[2].strip()
+            rnd      = row[3].strip().upper()
+            opp_rank_raw = row[5].strip() if len(row) > 5 else ""
+            score_desc   = row[6].strip() if len(row) > 6 else ""
+            score        = row[7].strip() if len(row) > 7 else ""
+
+            # Skip doubles: doubles scores are like "10-5" (super-tiebreak)
+            # Singles scores are always "X-Y" with X,Y <= 7 in each set
+            if self._is_doubles_score(score):
+                continue
+
+            date_iso = parse_ta_date(date_raw)
+            surface  = normalise_surface(surf_raw)
+
+            key = f"{tourn}|{date_iso}"
+            if key not in tournaments_map:
+                tournaments_map[key] = {
+                    "tournamentName": tourn,
+                    "date":           date_iso,
+                    "surface":        surface,
+                    "roundReached":   rnd,
+                    "wins":           0,
+                    "losses":         0,
+                    "pointsEarned":   0,
+                    "rankingThatWeek": int(row[4]) if len(row) > 4 and row[4].isdigit() else None,
+                    "matches":        [],
+                }
+
+            t = tournaments_map[key]
+            won = player_won(score_desc, player_ref)
+            if won:
+                t["wins"] += 1
+            else:
+                t["losses"] += 1
+
+            # Track best round reached
+            if rnd in self._ROUND_WINS:
+                cur_best = t.get("roundReached", "")
+                if self._ROUND_WINS.get(rnd, 0) > self._ROUND_WINS.get(cur_best, -1):
+                    t["roundReached"] = rnd
+
+            # Extract opponent
+            opp_display = extract_opponent(score_desc, player_ref)
+            opp_rank_str = f" ({opp_rank_raw})" if opp_rank_raw and opp_rank_raw.isdigit() else ""
+            t["matches"].append({
+                "round":    rnd,
+                "opponent": f"{opp_display}{opp_rank_str}".strip(),
+                "score":    score,
             })
 
-        return results
+        return list(tournaments_map.values())
 
-    async def _scrape_ranking_points(self, _profile_url: str) -> list[dict]:
-        """
-        Placeholder — the ATP rankings/breakdown page returns 404.
-        points_defending is calculated from match history in _calc_defending_points instead.
-        """
-        return []
+    def _is_doubles_score(self, score: str) -> bool:
+        """Return True if score looks like a doubles super-tiebreak (e.g. '10-5')."""
+        if not score:
+            return False
+        # Super-tiebreak: one or both sets have a score > 7 (e.g. 10-5, 10-3)
+        set_scores = score.split()
+        for s in set_scores:
+            m = re.match(r"^(\d+)-(\d+)", s)
+            if m:
+                a, b = int(m.group(1)), int(m.group(2))
+                if a > 7 or b > 7:
+                    return True
+        return False
 
-    async def _scrape_ranking_evolution(self, profile_url: str) -> list[dict]:
+    # ── ranking evolution ──────────────────────────────────────────────────────
+
+    def _parse_year_end_rankings(self, rows: list[list[str]]) -> list[dict]:
+        """
+        Parse year-end-rankings table rows.
+        Row format: [year_label, atp_rank, points, elo_rank, elo, ...]
+        year_label: "Current (2026-06-29)", "2025", "2024", ...
+        """
         evolution = []
-        rankings_url = profile_url.replace("/overview", "/rankings-history")
-        print(f"   Rankings URL: {rankings_url}")
-        try:
-            await self.page.goto(rankings_url, wait_until="domcontentloaded", timeout=60_000)
-            # Wait for JS-rendered content — ATP site renders ranking tables via React
-            await self.page.wait_for_timeout(8_000)
-            await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await self.page.wait_for_timeout(3_000)
-
-            # Try extracting structured data from the page via JS evaluation.
-            # The ATP rankings-history page embeds data in React state or a JSON script tag.
-            raw = await self.page.evaluate("""() => {
-                // 1. Try JSON embedded in <script type="application/json"> or window.__INITIAL_STATE__
-                const scripts = [...document.querySelectorAll('script')];
-                for (const s of scripts) {
-                    const t = s.textContent || '';
-                    if (t.includes('rankingDate') || t.includes('singlesRanking')) {
-                        try {
-                            const m = t.match(/\\[\\s*\\{[^\\[\\]]*"rankingDate"[^\\[\\]]*\\}/);
-                            if (m) return { source: 'script', data: m[0] };
-                        } catch(e) {}
-                    }
-                }
-                // 2. Try table rows with multiple selectors ATP has used historically
-                const selectors = [
-                    '.rankings-history-table tbody tr',
-                    'table.mega-table tbody tr',
-                    '.table-rankings-history tr',
-                    'table tbody tr',
-                    'tr[class*="ranking"]',
-                    '[class*="history"] tr',
-                ];
-                for (const sel of selectors) {
-                    const rows = [...document.querySelectorAll(sel)];
-                    if (rows.length > 0) {
-                        return {
-                            source: sel,
-                            rows: rows.slice(0, 60).map(r => r.innerText.trim().replace(/\\t/g, ' | '))
-                        };
-                    }
-                }
-                // 3. Fallback: grab all visible text that looks like a ranking table
-                const allRows = [...document.querySelectorAll('tr')];
-                const ranking_rows = allRows.filter(r => /\\d{4}/.test(r.innerText) && /^\\d+$/.test(r.innerText.trim().split(/\\s+/).pop() || ''));
-                return {
-                    source: 'fallback-tr',
-                    rows: ranking_rows.slice(0, 60).map(r => r.innerText.trim())
-                };
-            }""")
-
-            print(f"   Rankings raw source: {raw.get('source') if raw else None}")
-
-            if raw and raw.get('rows'):
-                rows_text = raw['rows']
-                print(f"   Ranking sample rows: {rows_text[:3]}")
-                for row_text in rows_text:
-                    try:
-                        # Typical format: "10 Jan 2025  |  512" or "2025-01-10  512"
-                        parts = re.split(r'\s*\|\s*|\t+|\s{2,}', row_text.strip())
-                        parts = [p.strip() for p in parts if p.strip()]
-                        if len(parts) < 2:
-                            continue
-                        date_str = normalise_date(parts[0])
-                        # Ranking is the last numeric token
-                        ranking_str = next((p for p in reversed(parts) if re.fullmatch(r'\d+', p)), None)
-                        ranking = int(ranking_str) if ranking_str else None
-                        if date_str and ranking and 1 <= ranking <= 3000:
-                            evolution.append({"date": date_str, "ranking": ranking})
-                    except Exception:
-                        continue
-            elif raw and raw.get('data'):
-                # JSON embedded in script tag
-                try:
-                    import json as _json
-                    items = _json.loads(raw['data']) if raw['data'].startswith('[') else []
-                    for item in items:
-                        date_str = normalise_date(item.get('rankingDate') or item.get('date') or '')
-                        ranking = item.get('singlesRanking') or item.get('ranking')
-                        if date_str and ranking:
-                            evolution.append({"date": date_str, "ranking": int(ranking)})
-                except Exception:
-                    pass
+        for row in rows:
+            if len(row) < 2:
+                continue
+            year_label = row[0].strip()
+            rank_str   = row[1].strip()
+            if not rank_str.isdigit():
+                continue
+            ranking = int(rank_str)
+            # Parse date: "Current (2026-06-29)" → "2026-06-29", "2025" → "2025-12-31"
+            date_m = re.search(r"(\d{4}-\d{2}-\d{2})", year_label)
+            if date_m:
+                date_str = date_m.group(1)
             else:
-                print(f"   Ranking sample rows: []")
-
-            print(f"   Ranking evolution points captured: {len(evolution)}")
-        except Exception as e:
-            print(f"   ⚠  Rankings history failed: {e}")
+                year_m = re.search(r"(\d{4})", year_label)
+                if year_m:
+                    date_str = f"{year_m.group(1)}-12-31"
+                else:
+                    continue
+            if 1 <= ranking <= 5000:
+                evolution.append({"date": date_str, "ranking": ranking})
         return evolution
 
-    # Approximate wins based on round reached (assumes standard draw size)
-    _ROUND_WINS = {"W": 6, "F": 5, "SF": 4, "QF": 3, "R16": 2, "R32": 1, "R64": 0, "R128": 0}
+    # ── win/loss and defending points ──────────────────────────────────────────
 
-    def _calc_win_loss(self, matches: list[dict], total_wins: int = 0, total_losses: int = 0) -> dict:
+    def _calc_win_loss(self, matches: list[dict]) -> dict:
         result = {
             "clay":  {"wins": 0, "losses": 0},
             "hard":  {"wins": 0, "losses": 0},
@@ -953,27 +831,17 @@ class ATPPlayerScraper:
         }
         for m in matches:
             surface = m.get("surface", "hard") if m.get("surface") in result else "hard"
-            rnd = (m.get("roundReached") or "").upper().replace(" ", "")
-            wins = self._ROUND_WINS.get(rnd, 0)
-            # Each tournament = 1 loss (you always exit via a loss, unless you won the title)
-            losses = 0 if rnd == "W" else 1
-            result[surface]["wins"]   += wins
-            result[surface]["losses"] += losses
-
-        # Prefer page-scraped totals (more accurate); fall back to per-surface sum
-        if total_wins or total_losses:
-            result["total"] = {"wins": total_wins, "losses": total_losses}
-        else:
-            tw = sum(v["wins"] for v in result.values() if isinstance(v, dict) and "wins" in v)
-            tl = sum(v["losses"] for v in result.values() if isinstance(v, dict) and "losses" in v)
-            result["total"] = {"wins": tw, "losses": tl}
+            result[surface]["wins"]   += m.get("wins", 0)
+            result[surface]["losses"] += m.get("losses", 0)
+        tw = sum(v["wins"] for v in result.values() if isinstance(v, dict))
+        tl = sum(v["losses"] for v in result.values() if isinstance(v, dict))
+        result["total"] = {"wins": tw, "losses": tl}
         return result
 
     def _calc_defending_points(self, matches: list[dict]) -> list[dict]:
         """
         Maps each match's points to the equivalent week ONE YEAR LATER (52 weeks).
-        This tells the player when they need to defend points earned in the prior year.
-        Only includes matches from the previous calendar year.
+        Only uses matches from the previous calendar year.
         """
         defending: dict[str, dict] = {}
         current_year = datetime.now().year
@@ -987,20 +855,14 @@ class ATPPlayerScraper:
                 dt = datetime.strptime(date, "%Y-%m-%d")
             except ValueError:
                 continue
-            # Only use results from the previous year (points expire after 52 weeks)
             if dt.year != prev_year:
                 continue
-            # Shift forward exactly 52 weeks so the defending week falls in current year
             defending_dt = dt + timedelta(weeks=52)
             monday = (defending_dt - timedelta(days=defending_dt.weekday())).strftime("%Y-%m-%d")
             if monday not in defending:
                 defending[monday] = {"weekOf": monday, "points": 0, "tournamentName": m.get("tournamentName") or ""}
             defending[monday]["points"] += points
         return sorted(defending.values(), key=lambda x: x["weekOf"])
-
-    async def _text(self, selector: str) -> Optional[str]:
-        el = await self.page.query_selector(selector)
-        return (await el.inner_text()).strip() if el else None
 
 
 # ── Supabase Integrator ────────────────────────────────────────────────────────
@@ -1073,95 +935,11 @@ async def run_tournament_phase(integrator: TourlyDataIntegrator):
     integrator.sync_tournaments(tournaments)
 
 
-async def fetch_all_ranked_players() -> list[str]:
-    """
-    Scrapes the ATP singles rankings page and returns a list of all player names.
-    Uses the ATP rankings JSON endpoint which returns all ranked players.
-    """
-    url = "https://www.atptour.com/en/rankings/singles"
-    # ATP rankings JSON API — returns all players with their name and ranking
-    json_url = "https://www.atptour.com/en/rankings/singles?rankRange=1-2000&region=all&surface=all&raceTo=0&inDecider=false&compareType=none&perPageCount=200&rankingTab=singles&format=json"
-    headers = {**HTTP_HEADERS, "Accept": "application/json, text/javascript, */*; q=0.01",
-               "X-Requested-With": "XMLHttpRequest", "Referer": url}
-    names: list[str] = []
-    try:
-        async with AsyncSession(impersonate="chrome120") as client:
-            for start in range(0, 2000, 200):
-                paged = json_url.replace("rankRange=1-2000", f"rankRange={start+1}-{start+200}")
-                r = await client.get(paged, headers=headers, timeout=20)
-                if r.status_code != 200:
-                    break
-                data = r.json()
-                players = (data.get("rankingPlayers") or data.get("players")
-                           or data.get("data") or [])
-                if not players:
-                    break
-                for p in players:
-                    name = (p.get("playerName") or p.get("fullName")
-                            or f"{p.get('firstName','')} {p.get('lastName','')}").strip()
-                    if name:
-                        names.append(name)
-                if len(players) < 200:
-                    break
-    except Exception as e:
-        print(f"   ⚠  Rankings fetch error: {e}")
-    print(f"   Found {len(names)} ranked players from ATP rankings page.")
-    return names
-
-
-async def run_all_players_phase(integrator: TourlyDataIntegrator):
-    """Scrapes every ranked ATP player and upserts their profile into Supabase."""
-    print("\n> Phase 2b: All Ranked Players")
-    player_names = await fetch_all_ranked_players()
-    if not player_names:
-        print("   ⚠  No players found — aborting all-players phase.")
-        return
-
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True, channel="chrome", args=BROWSER_ARGS)
-        ctx = await browser.new_context(
-            user_agent=HTTP_HEADERS["User-Agent"],
-            viewport={"width": 1280, "height": 900},
-            locale="en-US",
-        )
-        page = await ctx.new_page()
-        await Stealth().apply_stealth_async(page)
-        scraper = ATPPlayerScraper(page)
-        try:
-            for i, name in enumerate(player_names, 1):
-                print(f"   [{i}/{len(player_names)}] Scraping {name}...")
-                try:
-                    profile = await scraper.scrape_player(name)
-                    if profile:
-                        integrator.upsert_player_profile(profile)
-                        print(f"   ✓  {name} saved.")
-                    else:
-                        print(f"   ⚠  No data for {name}.")
-                except Exception as e:
-                    print(f"   ✗  {name} failed: {e}")
-                # Polite delay between players to avoid getting blocked
-                await asyncio.sleep(3)
-        finally:
-            await browser.close()
-
 
 async def run_player_phase(integrator: TourlyDataIntegrator, player_name: str):
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(
-            headless=True, channel="chrome", args=BROWSER_ARGS
-        )
-        ctx  = await browser.new_context(
-            user_agent=HTTP_HEADERS["User-Agent"],
-            viewport={"width": 1280, "height": 900},
-            locale="en-US",
-        )
-        page = await ctx.new_page()
-        await Stealth().apply_stealth_async(page)
-        try:
-            scraper = ATPPlayerScraper(page)
-            profile = await scraper.scrape_player(player_name, store_name=player_name)
-        finally:
-            await browser.close()
+    scraper = TennisAbstractScraper()
+    profile = await scraper.scrape_player(player_name, store_name=player_name)
+    await asyncio.sleep(6)  # polite rate limit between players
 
     if profile:
         integrator.upsert_player_profile(profile)
@@ -1206,36 +984,27 @@ async def main():
         error_msg = f"Tournament scraper: {e}"
         print(f"✗  {error_msg}")
 
-    all_players_mode = "--all-players" in sys.argv
     player_name = os.getenv("PLAYER_NAME", "").strip()
 
-    if all_players_mode:
-        try:
-            await run_all_players_phase(integrator)
-        except Exception as e:
-            print(f"✗  All-players scraper: {e}")
-            if status == "success":
-                status = "partial"
+    # Prefer explicit PLAYER_NAME env var; fall back to all names in profiles table
+    if player_name:
+        profile_players = [player_name]
     else:
-        # Prefer explicit PLAYER_NAME env var; fall back to all names in profiles table
-        if player_name:
-            profile_players = [player_name]
-        else:
-            print("\n> Phase 2: Player Profiles — reading from profiles table")
-            profile_players = await fetch_players_from_profiles(integrator.sb)
+        print("\n> Phase 2: Player Profiles — reading from profiles table")
+        profile_players = await fetch_players_from_profiles(integrator.sb)
 
-        if profile_players:
-            for pname in profile_players:
-                print(f"\n> Phase 2: Player Profile — {pname}")
-                try:
-                    await run_player_phase(integrator, pname)
-                except Exception as e:
-                    print(f"✗  Player scraper ({pname}): {e}")
-                    if status == "success":
-                        status = "partial"
-        else:
-            print("\nℹ  No ATP player names found — skipping player profile phase.")
-            print("   Set atp_player_name in the app profile to enable this.")
+    if profile_players:
+        for pname in profile_players:
+            print(f"\n> Phase 2: Player Profile — {pname}")
+            try:
+                await run_player_phase(integrator, pname)
+            except Exception as e:
+                print(f"✗  Player scraper ({pname}): {e}")
+                if status == "success":
+                    status = "partial"
+    else:
+        print("\nℹ  No player names found — skipping player profile phase.")
+        print("   Set atp_player_name in the app profile to enable this.")
 
     integrator.log_run(status=status, error=error_msg)
     print("\n✅  Scraper run complete.\n")
