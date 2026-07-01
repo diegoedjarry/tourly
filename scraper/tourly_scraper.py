@@ -625,6 +625,10 @@ class ATPPlayerScraper:
                 continue
 
             full_text = await self.page.evaluate("() => document.body.innerText")
+            # Guard: if Cloudflare blocked the page we get a security-check wall, not real data
+            if 'security verification' in full_text.lower() or 'cloudflare' in full_text.lower():
+                print(f"   ⚠  {year}: Cloudflare blocked — skipping to preserve existing data")
+                continue
             tournaments = self._parse_activity_text(full_text)
             print(f"   {year}: {len(tournaments)} tournaments parsed from DOM")
             all_results.extend(tournaments)
@@ -676,6 +680,13 @@ class ATPPlayerScraper:
             except (IndexError, ValueError):
                 continue
             # pts == 0 is valid (R1 loss) — only skip if we couldn't parse
+
+            # Skip doubles entries: the ATP page renders both singles and doubles activity
+            # regardless of any URL parameter. Doubles entries are identified by "Partner:"
+            # appearing in the text immediately after the matched Points: line (in chunks[i+2]).
+            partner_leadin = chunks[i + 2][:120] if i + 2 < len(chunks) else ''
+            if re.search(r'Partner\s*:', partner_leadin, re.IGNORECASE):
+                continue
 
             loc_match = loc_re.search(section)
             if not loc_match:
