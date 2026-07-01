@@ -1,21 +1,16 @@
-name: Weekly ATP Scraper
+name: Weekly Tennis Abstract Scraper
 
 on:
   schedule:
     # Every Monday at 06:00 UTC (after weekend results are posted)
     - cron: '0 6 * * 1'
   workflow_dispatch:
-    inputs:
-      player_name:
-        description: 'Single player name to scrape (leave empty for scheduled run)'
-        required: false
-        type: string
 
 jobs:
-  scrape-player:
-    name: Scrape Player Profile
+  scrape-profiles:
+    name: Scrape All Player Profiles
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -31,52 +26,10 @@ jobs:
           pip install -r requirements.txt
           playwright install chromium --with-deps
 
-      - name: Run scraper (player profile only)
+      - name: Run Tennis Abstract scraper (all players from player_profiles)
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          PLAYER_NAME: ${{ github.event.inputs.player_name || secrets.PLAYER_NAME }}
         run: |
           cd scraper
           python tourly_scraper.py
-
-  scrape-all-players:
-    name: Scrape All Ranked Players (monthly)
-    runs-on: ubuntu-latest
-    # Only runs on the first Monday of the month
-    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.schedule, '0 6 * * 1') }}
-    timeout-minutes: 480  # 8 hours max
-    needs: []  # runs in parallel with player scrape
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          cd scraper
-          pip install -r requirements.txt
-          playwright install chromium --with-deps
-
-      - name: Check if first Monday of month
-        id: check-date
-        run: |
-          DAY=$(date +%d)
-          if [ "$DAY" -le 7 ]; then
-            echo "run=true" >> $GITHUB_OUTPUT
-          else
-            echo "run=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Run all-players scrape (first Monday of month only)
-        if: steps.check-date.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: |
-          cd scraper
-          python tourly_scraper.py --all-players

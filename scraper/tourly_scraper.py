@@ -1,8 +1,9 @@
 """
 Tourly ITF/ATP Scraper
 ----------------------
-P1 — Tournament calendar:  ITF via direct HTTP (daily at 06:00 UTC)
-P2 — Player profile:       ATP website by player name (weekly on Monday)
+P1  — ITF tournament calendar:        ITF official API via browser (daily at 06:00 UTC)
+P1b — ATP Challenger calendar:        ATP Tour JSON API via browser (same daily run)
+P2  — Player profile:                 Tennis Abstract by player name (weekly on Monday)
 
 Required env vars:
     SUPABASE_URL          — your Supabase project URL
@@ -37,10 +38,12 @@ os.environ.setdefault("PLAYER_NAME", "")
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-ITF_CALENDAR_URL = "https://www.itftennis.com/en/tournament-calendar/mens-world-tennis-tour/"
-ITF_API_URL      = "https://www.itftennis.com/tennis/api/TournamentApi/GetCalendar"
-ATP_SEARCH_URL   = "https://www.atptour.com/en/search/player-results"
-ATP_PLAYER_BASE  = "https://www.atptour.com/en/players"
+ITF_CALENDAR_URL    = "https://www.itftennis.com/en/tournament-calendar/mens-world-tennis-tour/"
+ITF_API_URL         = "https://www.itftennis.com/tennis/api/TournamentApi/GetCalendar"
+ATP_SEARCH_URL      = "https://www.atptour.com/en/search/player-results"
+ATP_PLAYER_BASE     = "https://www.atptour.com/en/players"
+ATP_CHALLENGER_URL  = "https://www.atptour.com/en/tournaments?tourCodes=CH"
+ATP_TOUR_API_BASE   = "https://www.atptour.com"
 
 # Sofascore — fallback calendar source (ITF Men's category IDs)
 SOFASCORE_API    = "https://api.sofascore.com/api/v1"
@@ -373,6 +376,392 @@ class ITFTournamentScraper:
         return tournaments
 
 
+# ── ATP Challenger Scraper ────────────────────────────────────────────────────
+
+class ATPChallengerScraper:
+    """
+    Fetches the ATP Challenger tournament calendar.
+
+    Strategy:
+    1. Primary:  ATP Tour website (atptour.com/en/tournaments?tourCodes=CH) via
+                 Playwright + stealth.  Intercepts the XHR calls that power the
+                 tournament grid and parses the JSON payload.
+    2. Fallback: ITF API with circuitCode=CH (Challenger events also appear in
+                 the ITF system under the CH circuit code).
+
+    Category normalisation:
+    - Maps ATP prize-money tiers to the app's canonical strings
+      ("Challenger 50", "Challenger 75", "Challenger 100", "Challenger 125",
+       "Challenger 175") so that `getCircuit()` in deadlines.ts recognises them.
+
+    Deadlines (from utils/deadlines.ts — CHALLENGER_DEADLINES):
+    - signUpDeadline:      start_date − 21 days  (Mon, 12:00 PM ET)
+    - freezeDeadline:      start_date − 7 days   (Mon, 12:00 PM ET)
+    - withdrawalDeadline:  start_date − 3 days   (Fri, 10:00 AM ET)
+    These are *not* stored by the scraper; they are computed at read time by
+    calcDeadlines() in the app.  The scraper stores only name/dates/surface/prize.
+    """
+
+    # Prize-money thresholds → canonical Challenger category label
+    # Based on ATP Challenger tier structure (approximate USD prize fund)
+    _PRIZE_TIERS = [
+        (175_000, "Challenger 175"),
+        (125_000, "Challenger 125"),
+        (100_000, "Challenger 100"),
+        (75_000,  "Challenger 75"),
+        (50_000,  "Challenger 50"),
+    ]
+
+    # Surface codes ATP uses in their API responses
+    _ATP_SURFACE_MAP = {
+        "clay":          "clay",
+        "hard":          "hard",
+        "grass":         "grass",
+        "hard (i)":      "hard",
+        "clay (i)":      "clay",
+        "carpet":        "hard",
+        "carpet (i)":    "hard",
+    }
+
+    def _normalise_category(self, prize_raw: Optional[str], category_raw: Optional[str] = None) -> str:
+        """
+        Map a prize-money string or raw category label to a canonical
+        Challenger category string the app's getCircuit() will recognise.
+        """
+        # If the source already provides a structured category string, try it first
+        if category_raw:
+            cat_lower = category_raw.lower().strip()
+            for threshold, label in self._PRIZE_TIERS:
+                tier_str = label.lower().replace("challenger ", "")  # "175"
+                if tier_str in cat_lower:
+                    return label
+            if "challenger" in cat_lower:
+                return "Challenger 50"  # default tier when amount unclear
+
+        # Fall back to prize money parsing
+        prize = parse_prize(prize_raw)
+        if prize is not None:
+            for threshold, label in self._PRIZE_TIERS:
+                if prize >= threshold:
+                    return label
+        return "Challenger 50"
+
+    async def scrape_calendar(self) -> list[dict]:
+        print("📡  Fetching ATP Challenger calendar (primary: ATP Tour website)...")
+        tournaments = await self._fetch_via_browser()
+        if tournaments:
+            print(f"   ✓  ATP browser returned {len(tournaments)} Challenger tournaments.")
+            return tournaments
+        print("   ⚠  ATP browser returned nothing — falling back to ITF API (circuitCode=CH)...")
+        return await self._fetch_itf_challenger_fallback()
+
+    async def _fetch_via_browser(self) -> list[dict]:
+        """
+        Open the ATP Challenger calendar page in a stealth browser, intercept
+        the JSON API calls the page makes for tournament data, and collect results
+        month-by-month for the next 12 months.
+
+        ATP Tour uses a Next.js / React frontend that calls internal endpoints like:
+          /api/tournament-schedule?tourCode=CH&year=YYYY
+        or populates the page with embedded __NEXT_DATA__ JSON.  We try both approaches:
+        1. Intercept any XHR/fetch that returns a list of tournaments.
+        2. If interception yields nothing, read __NEXT_DATA__ from the page DOM.
+        """
+        captured: list[dict] = []
+
+        async def intercept(route):
+            try:
+                resp = await route.fetch()
+                url  = route.request.url
+                # ATP's internal schedule API — capture anything that looks like it
+                if any(kw in url for kw in ("tournament-schedule", "tourCode=CH", "challengers", "schedule")):
+                    try:
+                        body = await resp.json()
+                        # ATP API shapes vary; handle both list and dict wrappers
+                        if isinstance(body, list):
+                            if body and isinstance(body[0], dict) and ("name" in body[0] or "tournamentName" in body[0]):
+                                captured.extend(body)
+                                print(f"   +{len(body)} from ATP API (list): {url[:80]}")
+                        elif isinstance(body, dict):
+                            for key in ("tournaments", "data", "results", "items"):
+                                items = body.get(key)
+                                if isinstance(items, list) and items:
+                                    captured.extend(items)
+                                    print(f"   +{len(items)} from ATP API ({key}): {url[:80]}")
+                                    break
+                    except Exception:
+                        pass
+                await route.fulfill(response=resp)
+            except Exception:
+                await route.continue_()
+
+        today = datetime.now(timezone.utc)
+
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=True, channel="chrome", args=BROWSER_ARGS)
+            ctx = await browser.new_context(
+                user_agent=HTTP_HEADERS["User-Agent"],
+                viewport={"width": 1280, "height": 900},
+                locale="en-US",
+            )
+            page = await ctx.new_page()
+            await Stealth().apply_stealth_async(page)
+            await page.route("**/*", intercept)
+            await page.route("**/(doubleclick|google-analytics|facebook|googletagmanager).**", lambda r: r.abort())
+
+            # ── Step 1: load the page to establish session and trigger initial XHRs ──
+            try:
+                await page.goto(
+                    ATP_CHALLENGER_URL,
+                    wait_until="domcontentloaded", timeout=50_000,
+                )
+                await page.wait_for_timeout(6_000)
+            except Exception as e:
+                print(f"   ⚠  ATP page nav: {e}")
+
+            # ── Step 2: if interception got nothing, try reading __NEXT_DATA__ ──
+            if not captured:
+                try:
+                    next_data_raw = await page.evaluate(
+                        "() => document.getElementById('__NEXT_DATA__')?.textContent || ''"
+                    )
+                    if next_data_raw:
+                        import json as _json
+                        next_data = _json.loads(next_data_raw)
+                        # Walk the page props to find tournament arrays
+                        def find_arrays(obj, depth=0):
+                            if depth > 8:
+                                return
+                            if isinstance(obj, list) and len(obj) > 0 and isinstance(obj[0], dict):
+                                first = obj[0]
+                                if any(k in first for k in ("name", "tournamentName", "tournamentSlug")):
+                                    captured.extend(obj)
+                                    print(f"   +{len(obj)} from __NEXT_DATA__")
+                            elif isinstance(obj, dict):
+                                for v in obj.values():
+                                    find_arrays(v, depth + 1)
+                        find_arrays(next_data)
+                except Exception as e:
+                    print(f"   ⚠  __NEXT_DATA__ parse error: {e}")
+
+            # ── Step 3: try year-based API calls directly from the page context ──
+            # ATP Tour exposes /api/v1/tournaments?tourCode=CH&year=YYYY on some versions
+            years_to_fetch = sorted({today.year, today.year + 1})
+            for year in years_to_fetch:
+                candidate_urls = [
+                    f"https://www.atptour.com/api/tournament-schedule?tourCode=CH&year={year}",
+                    f"https://www.atptour.com/api/v1/tournaments?tourCode=CH&year={year}",
+                    f"https://www.atptour.com/en/scores/current-ytd-results?tourId=CH&pageName=tournaments&year={year}",
+                ]
+                for api_url in candidate_urls:
+                    try:
+                        result = await page.evaluate(f"""async () => {{
+                            try {{
+                                const r = await fetch('{api_url}', {{
+                                    headers: {{
+                                        'Accept': 'application/json',
+                                        'X-Requested-With': 'XMLHttpRequest',
+                                        'Referer': 'https://www.atptour.com/'
+                                    }}
+                                }});
+                                if (!r.ok) return null;
+                                return await r.json();
+                            }} catch (e) {{ return null; }}
+                        }}""")
+                        if result is None:
+                            continue
+                        items = []
+                        if isinstance(result, list):
+                            items = result
+                        elif isinstance(result, dict):
+                            for key in ("tournaments", "data", "results", "items"):
+                                if isinstance(result.get(key), list):
+                                    items = result[key]
+                                    break
+                        if items:
+                            captured.extend(items)
+                            print(f"   {year}: +{len(items)} from {api_url[:70]}")
+                            break  # found a working URL for this year
+                    except Exception as e:
+                        print(f"   {year} API {api_url[:60]}: {e}")
+
+            await browser.close()
+
+        if not captured:
+            return []
+
+        # ── Normalise captured items ───────────────────────────────────────────
+        # ATP API field names vary between endpoints; handle the most common shapes.
+        seen: set[str] = set()
+        tournaments = []
+        for item in captured:
+            if not isinstance(item, dict):
+                continue
+
+            # ID — prefer tournamentId / id / slug
+            tid = (
+                str(item.get("tournamentId") or item.get("id") or "")
+                or item.get("tournamentSlug") or item.get("slug") or ""
+            )
+            if not tid:
+                continue
+            # Prefix to avoid collisions with ITF IDs
+            atp_id = f"atp_ch_{tid}"
+            if atp_id in seen:
+                continue
+            seen.add(atp_id)
+
+            name = (
+                item.get("tournamentName") or item.get("name") or
+                item.get("title") or item.get("tournament") or ""
+            ).strip()
+
+            city = (
+                item.get("city") or item.get("location") or
+                item.get("venue") or item.get("country") or ""
+            ).strip()
+
+            country = (
+                item.get("country") or item.get("countryCode") or
+                item.get("nation") or ""
+            ).strip()
+
+            surface_raw = (
+                item.get("surface") or item.get("surfaceDesc") or
+                item.get("courtSurface") or ""
+            )
+            surface = normalise_surface(surface_raw)
+
+            start_date = normalise_date(
+                item.get("startDate") or item.get("start_date") or
+                item.get("dateFrom") or item.get("date") or ""
+            )
+            end_date = normalise_date(
+                item.get("endDate") or item.get("end_date") or
+                item.get("dateTo") or ""
+            )
+
+            prize_raw = str(
+                item.get("prizeMoney") or item.get("prize_money") or
+                item.get("totalPrizeMoney") or item.get("purse") or ""
+            )
+            prize = parse_prize(prize_raw)
+
+            category_raw = str(item.get("category") or item.get("tier") or item.get("type") or "")
+            category = self._normalise_category(prize_raw, category_raw)
+
+            if not name or not start_date:
+                continue
+
+            tournaments.append({
+                "itf_id":            atp_id,
+                "name":              name,
+                "city":              city or None,
+                "country":           country or None,
+                "surface":           surface,
+                "category":          category,
+                "start_date":        start_date,
+                "end_date":          end_date,
+                "prize_money_total": prize,
+                "is_auto_populated": True,
+            })
+
+        return tournaments
+
+    async def _fetch_itf_challenger_fallback(self) -> list[dict]:
+        """
+        Fallback: call the ITF GetCalendar API with circuitCode=CH (ATP Challengers
+        are co-sanctioned with the ITF and appear in their system).
+        Uses the same browser session pattern as ITFTournamentScraper.
+        """
+        print("   Trying ITF API with circuitCode=CH...")
+        captured_items: list[dict] = []
+        today = datetime.now(timezone.utc)
+
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=True, channel="chrome", args=BROWSER_ARGS)
+            ctx = await browser.new_context(
+                user_agent=HTTP_HEADERS["User-Agent"],
+                viewport={"width": 1280, "height": 900},
+                locale="en-US",
+            )
+            page = await ctx.new_page()
+            await Stealth().apply_stealth_async(page)
+
+            # Warm up the session on the ITF site to get valid cookies/tokens
+            try:
+                await page.goto(
+                    "https://www.itftennis.com/en/tournament-calendar/mens-world-tennis-tour-calendar/",
+                    wait_until="domcontentloaded", timeout=50_000,
+                )
+                await page.wait_for_timeout(4_000)
+            except Exception as e:
+                print(f"   ⚠  ITF warmup nav: {e}")
+
+            base_url = ITF_API_URL
+            for month_offset in range(0, 12):
+                dt = datetime(today.year, today.month, 1) + timedelta(days=32 * month_offset)
+                first = datetime(dt.year, dt.month, 1)
+                if dt.month == 12:
+                    last = datetime(dt.year + 1, 1, 1) - timedelta(days=1)
+                else:
+                    last = datetime(dt.year, dt.month + 1, 1) - timedelta(days=1)
+
+                date_from = first.strftime("%Y-%m-%d")
+                date_to   = last.strftime("%Y-%m-%d")
+
+                # circuitCode=CH is the ATP Challenger circuit in the ITF system
+                api_url = (
+                    f"{base_url}?circuitCode=CH&searchString=&skip=0&take=200"
+                    f"&nationCodes=&zoneCodes=&dateFrom={date_from}&dateTo={date_to}"
+                    f"&surfaces=&indoorOutdoor=&categories=&drawSizes="
+                )
+                try:
+                    result = await page.evaluate(f"""async () => {{
+                        const r = await fetch('{api_url}', {{
+                            headers: {{'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest'}}
+                        }});
+                        return await r.json();
+                    }}""")
+                    items = result.get("items", []) if isinstance(result, dict) else []
+                    if items:
+                        captured_items.extend(items)
+                        print(f"   {date_from}: +{len(items)} Challenger (ITF/CH)")
+                    else:
+                        print(f"   {date_from}: 0 Challenger tournaments")
+                except Exception as e:
+                    print(f"   {date_from}: ITF/CH fetch error — {e}")
+
+            await browser.close()
+
+        print(f"   ITF/CH raw items: {len(captured_items)}")
+        seen: set[str] = set()
+        tournaments = []
+        for item in captured_items:
+            tid = str(item.get("tournamentKey") or item.get("id") or "")
+            if not tid or tid in seen:
+                continue
+            seen.add(tid)
+
+            surface_raw = item.get("surfaceDesc") or item.get("surfaceCode") or ""
+            prize_raw   = str(item.get("prizeMoney") or "")
+            cat_raw     = str(item.get("category") or "")
+
+            tournaments.append({
+                "itf_id":            f"atp_ch_{tid}",
+                "name":              item.get("tournamentName") or item.get("name") or "",
+                "city":              item.get("venue") or item.get("location"),
+                "country":           item.get("hostNation"),
+                "surface":           normalise_surface(surface_raw),
+                "category":          self._normalise_category(prize_raw, cat_raw),
+                "start_date":        normalise_date(item.get("startDate")),
+                "end_date":          normalise_date(item.get("endDate")),
+                "prize_money_total": parse_prize(prize_raw),
+                "is_auto_populated": True,
+            })
+        return [t for t in tournaments if t["name"] and t["start_date"]]
+
+
 # ── Player Scraper (Tennis Abstract) ──────────────────────────────────────────
 
 class TennisAbstractScraper:
@@ -470,28 +859,28 @@ class TennisAbstractScraper:
                     current_ranking = int(cr_m.group(1))
                     print(f"   Ranking from page: {current_ranking}")
 
-                # Check if this is a jsfrags-style page (has pre-rendered tables)
+                # Check if this is a jsfrags-style page (has pre-rendered tables).
+                # If HTML doesn't reference jsfrags, try {slug}.js directly as fallback
+                # (happens when atp_player_name uses a shorter slug than the full-name slug).
                 frag_m = re.search(r"jsfrags/([^'\"]+\.js)", html)
-                if frag_m:
-                    frag_url = f"{self.TA_BASE}/jsfrags/{frag_m.group(1)}"
-                    print(f"   Fetching jsfrags: {frag_url}")
-                    try:
-                        rf = await client.get(frag_url, headers=headers, timeout=20)
-                        if rf.status_code == 200:
-                            frag_html = rf.text
-                            # The frag is: var player_frag = `...html...`
-                            frag_content_m = re.search(r"var\s+player_frag\s*=\s*`([\s\S]*?)`", frag_html)
-                            if frag_content_m:
-                                frag_content = frag_content_m.group(1)
-                                match_rows    = self._parse_html_table(frag_content, "recent-results")
-                                year_end_rows = self._parse_html_table(frag_content, "year-end-rankings")
-                                print(f"   Match rows: {len(match_rows)}, year-end rows: {len(year_end_rows)}")
-                        else:
-                            print(f"   ⚠  jsfrags HTTP {rf.status_code}")
-                    except Exception as e:
-                        print(f"   ⚠  jsfrags fetch error: {e}")
-                else:
-                    print(f"   ⚠  No jsfrags on this page — match history unavailable for {slug}")
+                frag_filename = frag_m.group(1) if frag_m else f"{slug}.js"
+                frag_url = f"{self.TA_BASE}/jsfrags/{frag_filename}"
+                print(f"   Fetching jsfrags: {frag_url}")
+                try:
+                    rf = await client.get(frag_url, headers=headers, timeout=20)
+                    if rf.status_code == 200:
+                        frag_html = rf.text
+                        # The frag is: var player_frag = `...html...`
+                        frag_content_m = re.search(r"var\s+player_frag\s*=\s*`([\s\S]*?)`", frag_html)
+                        if frag_content_m:
+                            frag_content = frag_content_m.group(1)
+                            match_rows    = self._parse_html_table(frag_content, "recent-results")
+                            year_end_rows = self._parse_html_table(frag_content, "year-end-rankings")
+                            print(f"   Match rows: {len(match_rows)}, year-end rows: {len(year_end_rows)}")
+                    else:
+                        print(f"   ⚠  jsfrags HTTP {rf.status_code} — no match history for {slug}")
+                except Exception as e:
+                    print(f"   ⚠  jsfrags fetch error: {e}")
 
                 working_slug = slug
                 break  # found a valid player page
@@ -501,6 +890,17 @@ class TennisAbstractScraper:
             current_ranking = await self._lookup_curr_rank(player_name)
             if current_ranking:
                 print(f"   Ranking from currRank fallback: {current_ranking}")
+
+        # ── Step 4: last resort — most recent rankingThatWeek from match rows ──
+        # Handles players just entering rankings who aren't yet in the cache.
+        if current_ranking is None and match_rows:
+            mh_temp = self._build_match_history(match_rows)
+            for entry in mh_temp:
+                rk = entry.get("rankingThatWeek")
+                if rk and isinstance(rk, int) and rk > 0:
+                    current_ranking = rk
+                    print(f"   Ranking from most-recent match entry: {current_ranking}")
+                    break
 
         if current_ranking is None:
             print(f"   ⚠  No ranking found for '{player_name}'")
@@ -689,6 +1089,23 @@ class TennisAbstractScraper:
                 return cells[7].strip()
             return ""
 
+        def sets_won_from_score(score: str) -> tuple[int, int]:
+            """Parse '6-4 6-3' → (2, 0). Returns (player_sets, opp_sets)."""
+            player_sets, opp_sets = 0, 0
+            for part in score.split():
+                m = re.match(r"^(\d+)-(\d+)", part)
+                if m:
+                    a, b = int(m.group(1)), int(m.group(2))
+                    if a > b:
+                        player_sets += 1
+                    elif b > a:
+                        opp_sets += 1
+            return player_sets, opp_sets
+
+        def is_qualifying_round(rnd: str) -> bool:
+            """Q1, Q2, Q3 are qualifying rounds; exclude from main-draw stats."""
+            return len(rnd) == 2 and rnd[0] == "Q" and rnd[1].isdigit()
+
         # Determine player reference: the name that appears in EVERY score_desc row.
         # In Tennis Abstract the format is always "Winner d. Loser [CC]" — our player
         # appears on alternating sides (winner when they win, loser when they lose).
@@ -739,42 +1156,85 @@ class TennisAbstractScraper:
             surface  = normalise_surface(surf_raw)
 
             key = f"{tourn}|{date_iso}"
+            qualifying_first = is_qualifying_round(rnd)
             if key not in tournaments_map:
+                initial_rnd = "" if qualifying_first else rnd
                 tournaments_map[key] = {
-                    "tournamentName": tourn,
-                    "date":           date_iso,
-                    "surface":        surface,
-                    "roundReached":   rnd,
-                    "wins":           0,
-                    "losses":         0,
-                    "pointsEarned":   0,
+                    "tournamentName":  tourn,
+                    "date":            date_iso,
+                    "surface":         surface,
+                    "roundReached":    initial_rnd,
+                    "wins":            0,
+                    "losses":          0,
+                    "pointsEarned":    self.calc_itf_points(self._infer_category(tourn), initial_rnd),
                     "rankingThatWeek": int(row[4]) if len(row) > 4 and row[4].isdigit() else None,
-                    "matches":        [],
+                    "matches":         [],
                 }
 
             t = tournaments_map[key]
-            won = player_won(score_desc, player_ref)
-            if won:
-                t["wins"] += 1
-            else:
-                t["losses"] += 1
+            qualifying = is_qualifying_round(rnd)
 
-            # Track best round reached
-            if rnd in self._ROUND_WINS:
-                cur_best = t.get("roundReached", "")
-                if self._ROUND_WINS.get(rnd, 0) > self._ROUND_WINS.get(cur_best, -1):
-                    t["roundReached"] = rnd
+            # Determine win/loss from actual set scores, not from score_desc text
+            ps, os_ = sets_won_from_score(score)
+            won = ps > os_
 
-            # Extract opponent
+            if not qualifying:
+                if won:
+                    t["wins"] += 1
+                else:
+                    t["losses"] += 1
+
+                # Track best round reached (main draw only) and sync pointsEarned
+                if rnd in self._ROUND_WINS:
+                    cur_best = t.get("roundReached", "")
+                    if self._ROUND_WINS.get(rnd, 0) > self._ROUND_WINS.get(cur_best, -1):
+                        t["roundReached"] = rnd
+                        t["pointsEarned"] = self.calc_itf_points(self._infer_category(tourn), rnd)
+
+            # Extract opponent — always append to matches (qualifying included for reference)
             opp_display = extract_opponent(score_desc, player_ref)
             opp_rank_str = f" ({opp_rank_raw})" if opp_rank_raw and opp_rank_raw.isdigit() else ""
             t["matches"].append({
-                "round":    rnd,
-                "opponent": f"{opp_display}{opp_rank_str}".strip(),
-                "score":    score,
+                "round":       rnd,
+                "opponent":    f"{opp_display}{opp_rank_str}".strip(),
+                "score":       score,
+                "qualifying":  qualifying,
             })
 
         return list(tournaments_map.values())
+
+    # ── ITF/ATP points table ───────────────────────────────────────────────────
+
+    _ITF_POINTS: dict[str, dict[str, int]] = {
+        "M15":           {"W":18, "F":12, "SF":8,  "QF":4,  "R16":2, "R32":1, "R64":0},
+        "M25":           {"W":30, "F":20, "SF":12, "QF":6,  "R16":3, "R32":1, "R64":0},
+        "Challenger 50": {"W":80, "F":48, "SF":28, "QF":16, "R16":8, "R32":4, "R64":0},
+        "Challenger 75": {"W":110,"F":65, "SF":38, "QF":22, "R16":11,"R32":5, "R64":0},
+        "Challenger 100":{"W":150,"F":90, "SF":52, "QF":30, "R16":15,"R32":8, "R64":0},
+        "Challenger 125":{"W":175,"F":105,"SF":60, "QF":35, "R16":18,"R32":9, "R64":0},
+        "Challenger 175":{"W":225,"F":135,"SF":80, "QF":45, "R16":22,"R32":11,"R64":0},
+    }
+
+    @staticmethod
+    def _infer_category(name: str) -> Optional[str]:
+        """Infer the ITF/Challenger category from a tournament name."""
+        n = name.upper()
+        if "M15" in n or "ITF15" in n:          return "M15"
+        if "M25" in n or "ITF25" in n:          return "M25"
+        for tier in ("175", "125", "100", "75", "50"):
+            if f"CHALLENGER {tier}" in n or f"CH{tier}" in n or f"CH {tier}" in n:
+                return f"Challenger {tier}"
+            if re.search(rf"\bCH\s*{tier}\b", n):
+                return f"Challenger {tier}"
+        if "CHALLENGER" in n or re.search(r"\bCH\b", n):
+            return "Challenger 50"  # default tier
+        return None
+
+    def calc_itf_points(self, category: Optional[str], rnd: Optional[str]) -> int:
+        if not category or not rnd:
+            return 0
+        table = self._ITF_POINTS.get(category, {})
+        return table.get((rnd or "").upper(), 0)
 
     def _is_doubles_score(self, score: str) -> bool:
         """Return True if score looks like a doubles super-tiebreak (e.g. '10-5')."""
@@ -935,6 +1395,12 @@ async def run_tournament_phase(integrator: TourlyDataIntegrator):
     integrator.sync_tournaments(tournaments)
 
 
+async def run_challenger_phase(integrator: TourlyDataIntegrator):
+    """Phase 1b — ATP Challenger calendar, stored in the same itf_tournaments table."""
+    scraper     = ATPChallengerScraper()
+    tournaments = await scraper.scrape_calendar()
+    integrator.sync_tournaments(tournaments)
+
 
 async def run_player_phase(integrator: TourlyDataIntegrator, player_name: str):
     scraper = TennisAbstractScraper()
@@ -949,17 +1415,39 @@ async def run_player_phase(integrator: TourlyDataIntegrator, player_name: str):
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
-async def fetch_players_from_profiles(supabase: Client) -> list[str]:
-    """Returns all distinct non-null atp_player_name values from the profiles table."""
+async def fetch_players_to_scrape(supabase: Client) -> list[str]:
+    """
+    Returns all player names to scrape, in priority order:
+    1. player_profiles.player_name — already-scraped profiles (keep them fresh)
+    2. profiles.atp_player_name   — app users who don't yet have a scraped profile
+    """
+    names: list[str] = []
+
+    # Source 1: existing scraped profiles
     try:
-        res = supabase.from_("profiles").select("atp_player_name").neq("atp_player_name", None).execute()
-        names = [row["atp_player_name"].strip() for row in (res.data or []) if row.get("atp_player_name", "").strip()]
-        unique = list(dict.fromkeys(names))
-        print(f"   Found {len(unique)} ATP player(s) in profiles table: {unique}")
-        return unique
+        res = supabase.table("player_profiles").select("player_name").execute()
+        for row in res.data or []:
+            n = (row.get("player_name") or "").strip()
+            if n:
+                names.append(n)
     except Exception as e:
-        print(f"   ⚠  Could not fetch players from profiles: {e}")
-        return []
+        print(f"   ⚠  Could not fetch from player_profiles: {e}")
+
+    # Source 2: app users with atp_player_name not already covered
+    try:
+        res2 = supabase.from_("profiles").select("atp_player_name").neq("atp_player_name", None).execute()
+        existing_lower = {n.lower() for n in names}
+        for row in res2.data or []:
+            n = (row.get("atp_player_name") or "").strip()
+            if n and n.lower() not in existing_lower:
+                names.append(n)
+                existing_lower.add(n.lower())
+    except Exception as e:
+        print(f"   ⚠  Could not fetch from profiles: {e}")
+
+    unique = list(dict.fromkeys(names))
+    print(f"   Found {len(unique)} player(s) to scrape: {unique}")
+    return unique
 
 
 async def main():
@@ -976,13 +1464,21 @@ async def main():
     status    = "success"
     error_msg = None
 
-    print("\n> Phase 1: ITF Tournament Calendar")
+    print("\n> Phase 1: ITF Tournament Calendar (M15/M25)")
     try:
         await run_tournament_phase(integrator)
     except Exception as e:
         status    = "failed"
         error_msg = f"Tournament scraper: {e}"
         print(f"✗  {error_msg}")
+
+    print("\n> Phase 1b: ATP Challenger Calendar")
+    try:
+        await run_challenger_phase(integrator)
+    except Exception as e:
+        print(f"✗  Challenger scraper: {e}")
+        if status == "success":
+            status = "partial"
 
     player_name = os.getenv("PLAYER_NAME", "").strip()
 
@@ -991,7 +1487,7 @@ async def main():
         profile_players = [player_name]
     else:
         print("\n> Phase 2: Player Profiles — reading from profiles table")
-        profile_players = await fetch_players_from_profiles(integrator.sb)
+        profile_players = await fetch_players_to_scrape(integrator.sb)
 
     if profile_players:
         for pname in profile_players:
