@@ -1367,8 +1367,23 @@ class TourlyDataIntegrator:
 
     def upsert_player_profile(self, data: dict):
         try:
+            player_name = data["player_name"]
+            new_mh = data.get("match_history") or []
+
+            # Guard: if new scrape returned empty match_history, preserve existing data
+            if not new_mh:
+                existing = self.sb.table("player_profiles") \
+                    .select("match_history") \
+                    .eq("player_name", player_name) \
+                    .maybe_single() \
+                    .execute()
+                existing_mh = (existing.data or {}).get("match_history") or []
+                if existing_mh:
+                    print(f"⚠  Scrape returned empty match_history for '{player_name}' — preserving existing {len(existing_mh)} entries.")
+                    data = {k: v for k, v in data.items() if k != "match_history"}
+
             self.sb.table("player_profiles").upsert(data, on_conflict="player_name").execute()
-            print(f"✓  Player profile synced for '{data['player_name']}'.")
+            print(f"✓  Player profile synced for '{player_name}'.")
         except Exception as e:
             print(f"⚠  Could not save player profile: {e}")
 
