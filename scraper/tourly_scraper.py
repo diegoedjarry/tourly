@@ -1175,9 +1175,10 @@ class TennisAbstractScraper:
             t = tournaments_map[key]
             qualifying = is_qualifying_round(rnd)
 
-            # Determine win/loss from actual set scores, not from score_desc text
-            ps, os_ = sets_won_from_score(score)
-            won = ps > os_
+            # Determine win/loss from score_desc ("Winner d. Loser") name position.
+            # Tennis Abstract always lists the winner first; the numeric score is
+            # always from the winner's perspective, so set-count inference is wrong.
+            won = player_won(score_desc, player_ref)
 
             if not qualifying:
                 if won:
@@ -1205,6 +1206,20 @@ class TennisAbstractScraper:
                 "score":       score,
                 "qualifying":  qualifying,
             })
+
+        # Final pass: recalculate pointsEarned for every entry using its COMPLETE
+        # match list.  Tennis Abstract delivers rows in reverse-chronological order,
+        # so qualifying rounds (Q1, Q2, …) are appended AFTER the main-draw round
+        # that already called calc_qualifying_points with an empty q_matches list.
+        # Reading the full list here produces the correct qualifying-points total.
+        for entry in tournaments_map.values():
+            rnd = entry.get("roundReached", "")
+            cat = self._infer_category(entry.get("tournamentName", ""))
+            q_matches = [m for m in entry["matches"] if m.get("qualifying")]
+            entry["pointsEarned"] = (
+                self.calc_itf_points(cat, rnd)
+                + self.calc_qualifying_points(cat, q_matches, rnd)
+            )
 
         return list(tournaments_map.values())
 
