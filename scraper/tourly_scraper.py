@@ -1062,27 +1062,55 @@ class TennisAbstractScraper:
             except Exception:
                 return normalise_date(s)
 
-        def player_won(score_desc: str, player_ref: str) -> bool:
-            """Determine if the player (referenced by last-name part) won the match."""
-            # score_desc: "Opponent [CC] d. Player" (loss) or "Player d. Opponent [CC]" (win)
-            # "d." separates winner from loser
+        _PREFIX_RE = re.compile(r"^\([^)]+\)\s*")
+
+        def strip_entry_prefix(s: str) -> str:
+            """Remove entry-type prefixes like (WC), (Q), (LL), (5), (Alt), (JE)."""
+            return _PREFIX_RE.sub("", s).strip()
+
+        def player_won(score_desc: str, player_ref: str) -> Optional[bool]:
+            """
+            Return True (won), False (lost), or None (cannot match — do not guess).
+
+            Tennis Abstract uses "Winner d. Loser [CC]" format.  Entry-type prefixes
+            like (WC), (Q), (LL), (5) are stripped before comparing so that a player
+            who appears as "(WC)Zapp" in some rows and "Zapp" in others is matched
+            correctly in both cases.
+
+            None is returned when:
+              - score_desc uses " vs " (incomplete/pending result)
+              - " d. " is missing for any other reason
+              - the player's clean name cannot be found in either the winner or loser slot
+            """
             if " d. " not in score_desc:
+                return None  # " vs " or unparseable — no result to read
+            # Strip country codes then split
+            clean = re.sub(r"\s*\[[A-Z]{2,3}\]", "", score_desc)
+            winner_raw, loser_raw = clean.split(" d. ", 1)
+            winner_clean = strip_entry_prefix(winner_raw).lower()
+            loser_clean  = strip_entry_prefix(loser_raw).lower()
+            p = strip_entry_prefix(player_ref).lower()
+            # Substring match in both directions: handles abbreviated/partial names
+            in_winner = bool(p) and (p in winner_clean or winner_clean in p)
+            in_loser  = bool(p) and (p in loser_clean  or loser_clean  in p)
+            if in_winner and not in_loser:
+                return True
+            if in_loser and not in_winner:
                 return False
-            winner_part = score_desc.split(" d. ")[0].strip()
-            # Check if our player name appears in the winner part
-            p_lower = player_ref.lower()
-            return p_lower in winner_part.lower()
+            return None  # ambiguous or not found — do not guess
 
         def extract_opponent(score_desc: str, player_ref: str) -> str:
-            """Extract opponent name and ranking from score_desc cell."""
+            """Extract opponent name from score_desc cell."""
             if " d. " not in score_desc:
                 return score_desc.strip()
-            parts = score_desc.split(" d. ")
-            winner, loser = parts[0].strip(), parts[1].strip()
-            p_lower = player_ref.lower()
-            if p_lower in winner.lower():
-                return loser  # player won; opponent is the loser
-            return winner  # player lost; opponent is the winner
+            parts = score_desc.split(" d. ", 1)
+            winner_raw, loser_raw = parts[0].strip(), parts[1].strip()
+            p = strip_entry_prefix(player_ref).lower()
+            winner_clean = strip_entry_prefix(winner_raw).lower()
+            in_winner = bool(p) and (p in winner_clean or winner_clean in p)
+            if in_winner:
+                return loser_raw   # player won; opponent is the loser
+            return winner_raw      # player lost (or unknown); opponent is the winner
 
         def extract_score(cells: list[str]) -> str:
             """Score is in cell index 7 (the 8th cell, after score_desc)."""
@@ -1107,11 +1135,10 @@ class TennisAbstractScraper:
             """Q1, Q2, Q3 are qualifying rounds; exclude from main-draw stats."""
             return len(rnd) == 2 and rnd[0] == "Q" and rnd[1].isdigit()
 
-        # Determine player reference: the name that appears in EVERY score_desc row.
-        # In Tennis Abstract the format is always "Winner d. Loser [CC]" — our player
-        # appears on alternating sides (winner when they win, loser when they lose).
-        # We collect candidate tokens from all rows, strip country codes, then pick
-        # the token that appears in the most rows — that's the player.
+        # Determine player reference: the clean name that appears in every score_desc row.
+        # Entry-type prefixes like (WC), (Q), (LL), (5) are stripped before counting so
+        # the same player listed as "(WC)Zapp", "(Q)Zapp", or "Zapp" always accumulates
+        # to the same token "Zapp" — not split across three competing tokens.
         player_ref = ""
         descs = [row[6] for row in rows if len(row) > 6 and " d. " in row[6]]
         if descs:
@@ -1120,9 +1147,9 @@ class TennisAbstractScraper:
             for desc in descs:
                 # Strip country codes like [USA], [CHI] etc.
                 clean_desc = re.sub(r"\s*\[[A-Z]{2,3}\]", "", desc)
-                # Each side of "d." is one player — collect each side as a candidate
+                # Each side of "d." is one player — collect entry-prefix-stripped tokens
                 for side in clean_desc.split(" d. "):
-                    token = side.strip()
+                    token = strip_entry_prefix(side.strip())
                     if token:
                         token_counts[token] += 1
             # The player's name appears in every row (either side); opponents vary.
@@ -1176,15 +1203,16 @@ class TennisAbstractScraper:
             qualifying = is_qualifying_round(rnd)
 
             # Determine win/loss from score_desc ("Winner d. Loser") name position.
-            # Tennis Abstract always lists the winner first; the numeric score is
-            # always from the winner's perspective, so set-count inference is wrong.
+            # Returns True/False/None — None means the player's name could not be
+            # matched to either slot (name variant or unparseable format).
             won = player_won(score_desc, player_ref)
 
             if not qualifying:
-                if won:
+                if won is True:
                     t["wins"] += 1
-                else:
+                elif won is False:
                     t["losses"] += 1
+                # won is None → name_match_failed; do not guess wins or losses
 
                 # Track best round reached (main draw only) and sync pointsEarned
                 if rnd in self._ROUND_WINS:
@@ -1200,12 +1228,16 @@ class TennisAbstractScraper:
             # Extract opponent — always append to matches (qualifying included for reference)
             opp_display = extract_opponent(score_desc, player_ref)
             opp_rank_str = f" ({opp_rank_raw})" if opp_rank_raw and opp_rank_raw.isdigit() else ""
-            t["matches"].append({
-                "round":       rnd,
-                "opponent":    f"{opp_display}{opp_rank_str}".strip(),
-                "score":       score,
-                "qualifying":  qualifying,
-            })
+            match_entry: dict = {
+                "round":      rnd,
+                "opponent":   f"{opp_display}{opp_rank_str}".strip(),
+                "score":      score,
+                "playerWon":  won,      # True / False / None (None = name_match_failed)
+                "qualifying": qualifying,
+            }
+            if won is None:
+                match_entry["name_match_failed"] = True
+            t["matches"].append(match_entry)
 
         # Final pass: recalculate pointsEarned for every entry using its COMPLETE
         # match list.  Tennis Abstract delivers rows in reverse-chronological order,
