@@ -1189,7 +1189,10 @@ class TennisAbstractScraper:
                     cur_best = t.get("roundReached", "")
                     if self._ROUND_WINS.get(rnd, 0) > self._ROUND_WINS.get(cur_best, -1):
                         t["roundReached"] = rnd
-                        t["pointsEarned"] = self.calc_itf_points(self._infer_category(tourn), rnd)
+                        md_pts = self.calc_itf_points(self._infer_category(tourn), rnd)
+                        q_matches = [m for m in t["matches"] if m.get("qualifying")]
+                        q_pts = self.calc_qualifying_points(self._infer_category(tourn), q_matches, rnd)
+                        t["pointsEarned"] = md_pts + q_pts
 
             # Extract opponent — always append to matches (qualifying included for reference)
             opp_display = extract_opponent(score_desc, player_ref)
@@ -1203,38 +1206,115 @@ class TennisAbstractScraper:
 
         return list(tournaments_map.values())
 
-    # ── ITF/ATP points table ───────────────────────────────────────────────────
+    # ── Points tables (official ATP/ITF values) ────────────────────────────────
 
+    # Main draw points — earned only when advancing past a round (i.e. winning a match).
+    # R32/R64 = 0 for M15/M25 because losing your first main-draw match earns nothing.
     _ITF_POINTS: dict[str, dict[str, int]] = {
-        "M15":           {"W":18, "F":12, "SF":8,  "QF":4,  "R16":2, "R32":1, "R64":0},
-        "M25":           {"W":30, "F":20, "SF":12, "QF":6,  "R16":3, "R32":1, "R64":0},
-        "Challenger 50": {"W":80, "F":48, "SF":28, "QF":16, "R16":8, "R32":4, "R64":0},
-        "Challenger 75": {"W":110,"F":65, "SF":38, "QF":22, "R16":11,"R32":5, "R64":0},
-        "Challenger 100":{"W":150,"F":90, "SF":52, "QF":30, "R16":15,"R32":8, "R64":0},
-        "Challenger 125":{"W":175,"F":105,"SF":60, "QF":35, "R16":18,"R32":9, "R64":0},
-        "Challenger 175":{"W":225,"F":135,"SF":80, "QF":45, "R16":22,"R32":11,"R64":0},
+        "M15":           {"W":15, "F":8,  "SF":4,  "QF":2,  "R16":1, "R32":0, "R64":0},
+        "M25":           {"W":25, "F":14, "SF":7,  "QF":3,  "R16":1, "R32":0, "R64":0},
+        "Challenger 50": {"W":50, "F":25, "SF":14, "QF":8,  "R16":4, "R32":3, "R64":1},
+        "Challenger 75": {"W":75, "F":44, "SF":22, "QF":12, "R16":7, "R32":4, "R64":2},
+        "Challenger 100":{"W":100,"F":50, "SF":25, "QF":16, "R16":7, "R32":4, "R64":2},
+        "Challenger 125":{"W":125,"F":64, "SF":35, "QF":16, "R16":8, "R32":4, "R64":2},
+        "Challenger 175":{"W":175,"F":90, "SF":50, "QF":25, "R16":13,"R32":6, "R64":3},
+    }
+
+    # Qualifying points (Challengers only; ITF qualifying = 0).
+    # "qualifier" = won all qualifying rounds and entered main draw.
+    # "last_round_loser" = won at least one qualifying match, lost in the final qualifying round.
+    _QUALIFYING_POINTS: dict[str, dict[str, int]] = {
+        "Challenger 50":  {"qualifier": 3, "last_round_loser": 1},
+        "Challenger 75":  {"qualifier": 4, "last_round_loser": 2},
+        "Challenger 100": {"qualifier": 4, "last_round_loser": 2},
+        "Challenger 125": {"qualifier": 5, "last_round_loser": 3},
+        "Challenger 175": {"qualifier": 6, "last_round_loser": 3},
+    }
+
+    # Per-name overrides for tournaments whose names don't include a tier number.
+    # Keys are UPPERCASED tournament name substrings (matched via `in`).
+    # Add entries here whenever a real-calendar cross-check confirms a tier.
+    # Tournaments marked UNVERIFIED are NOT listed here — they fall through to the
+    # generic CH default (Challenger 50) and are flagged explicitly in match_history.
+    _CHALLENGER_TIER_OVERRIDES: dict[str, str] = {
+        "TEMUCO":     "Challenger 100",  # confirmed CH100 (user-verified)
+        "CARY":       "Challenger 75",   # confirmed CH75 (ITF listing)
+        "SARASOTA":   "Challenger 75",   # confirmed CH75 (ITF listing)
+        "PIRACICABA": "Challenger 75",   # confirmed CH75 (Perfect Tennis)
+        # UNVERIFIED — fall to default CH50 until cross-checked:
+        #   San Luis Potosi CH, Santa Cruz de la Sierra CH, Asuncion CIT CH
     }
 
     @staticmethod
     def _infer_category(name: str) -> Optional[str]:
         """Infer the ITF/Challenger category from a tournament name."""
         n = name.upper()
-        if "M15" in n or "ITF15" in n:          return "M15"
-        if "M25" in n or "ITF25" in n:          return "M25"
+        if "M15" in n or "ITF15" in n: return "M15"
+        if "M25" in n or "ITF25" in n: return "M25"
+        # Check explicit tier numbers in name first
         for tier in ("175", "125", "100", "75", "50"):
             if f"CHALLENGER {tier}" in n or f"CH{tier}" in n or f"CH {tier}" in n:
                 return f"Challenger {tier}"
             if re.search(rf"\bCH\s*{tier}\b", n):
                 return f"Challenger {tier}"
+        # Per-name override for ambiguous tournament names (cross-checked against ATP calendar)
         if "CHALLENGER" in n or re.search(r"\bCH\b", n):
-            return "Challenger 50"  # default tier
+            for key, tier in TennisAbstractScraper._CHALLENGER_TIER_OVERRIDES.items():
+                if key in n:
+                    return tier
+            return "Challenger 50"  # default — unverified entries fall here
         return None
 
     def calc_itf_points(self, category: Optional[str], rnd: Optional[str]) -> int:
+        """Main draw points for the deepest round reached."""
         if not category or not rnd:
             return 0
-        table = self._ITF_POINTS.get(category, {})
-        return table.get((rnd or "").upper(), 0)
+        return self._ITF_POINTS.get(category, {}).get((rnd or "").upper(), 0)
+
+    def calc_qualifying_points(self, category: Optional[str],
+                                qualifying_matches: list,
+                                round_reached: str) -> int:
+        """
+        Qualifying points (Challengers only; ITF always 0).
+        qualifying_matches: list of match dicts with qualifying=True.
+        round_reached: the main-draw round reached (empty string if player didn't make the draw).
+        """
+        if not category or category not in self._QUALIFYING_POINTS:
+            return 0
+        q_table = self._QUALIFYING_POINTS[category]
+        if round_reached:
+            # Player made the main draw — they are a Qualifier
+            return q_table["qualifier"]
+        if not qualifying_matches:
+            return 0
+        # Player didn't make the main draw. Determine outcome from scores.
+        q_round_order = {"Q1": 1, "Q2": 2, "Q3": 3, "Q4": 4}
+        highest_loss_round = 0
+        highest_win_round  = 0
+        for m in qualifying_matches:
+            rnd_key = m.get("round", "").upper()
+            order   = q_round_order.get(rnd_key, 0)
+            score   = m.get("score", "")
+            ps, os_ = 0, 0
+            for part in score.split():
+                mx = re.match(r"^(\d+)-(\d+)", part)
+                if mx:
+                    a, b = int(mx.group(1)), int(mx.group(2))
+                    if a > b: ps += 1
+                    elif b > a: os_ += 1
+            if ps > os_:
+                highest_win_round = max(highest_win_round, order)
+            else:
+                highest_loss_round = max(highest_loss_round, order)
+        if highest_loss_round == 0 and highest_win_round > 0:
+            # All stored matches are wins but didn't make main draw — incomplete data.
+            # Conservative: treat as last-round loser.
+            return q_table["last_round_loser"]
+        if highest_loss_round >= 2:
+            # Lost at Q2 or later — Last Round Loser
+            return q_table["last_round_loser"]
+        # Lost at Q1 — earlier loss = 0
+        return 0
 
     def _is_doubles_score(self, score: str) -> bool:
         """Return True if score looks like a doubles super-tiebreak (e.g. '10-5')."""
