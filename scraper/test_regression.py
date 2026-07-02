@@ -190,6 +190,32 @@ q5 = [m for m in e5["matches"] if m.get("qualifying")]
 check("qualifying match count", len(q5), 2)
 
 # ═══════════════════════════════════════════════════════════════════
+# CASE 6 — Martinez, Quito CH: roundReached must not be set on unconfirmed
+#   R32 uses " vs " separator — result unknown at scrape time.
+#   roundReached must be "unconfirmed", NOT "R32".
+#   pointsEarned must reflect qualifying-only (qualifier, not main draw pts).
+#   For CH50: qualifier=3 pts, R32 main draw=3 pts. Correct total = 3 (no md).
+# ═══════════════════════════════════════════════════════════════════
+print("\nCASE 6 — Martinez, Quito CH (roundReached must not be set from unconfirmed match)")
+rows6 = [
+    ["some-date", "Quito CH", "Clay", "R32", "883", "400",
+     "(Q)Martinez vs (6)Eduardo Ribeiro [BRA]", ""],
+    ["some-date", "Quito CH", "Clay", "Q2", "883", "",
+     "(6)Martinez d. (Alt)Mauricio Echazu [PER]", "6-3 6-2"],
+    ["some-date", "Quito CH", "Clay", "Q1", "883", "",
+     "(6)Martinez d. (Alt)Patricio Alvarado [ECU]", "6-4 6-2"],
+]
+mh6 = scraper._build_match_history(rows6)
+assert len(mh6) == 1, f"Expected 1 tournament entry, got {len(mh6)}"
+e6 = mh6[0]
+check("roundReached is 'unconfirmed' (not 'R32')",
+      e6["roundReached"], "unconfirmed")
+check("pointsEarned = 3 (CH50 qualifier only, no R32 main draw pts)",
+      e6["pointsEarned"], 3)
+check("wins = 0",   e6["wins"],   0)
+check("losses = 0", e6["losses"], 0)
+
+# ═══════════════════════════════════════════════════════════════════
 print(f"\n{'='*50}")
 print(f"Results: {PASS} passed, {FAIL} failed")
 if FAIL:

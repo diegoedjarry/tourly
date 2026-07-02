@@ -1185,8 +1185,18 @@ class TennisAbstractScraper:
 
             key = f"{tourn}|{date_iso}"
             qualifying_first = is_qualifying_round(rnd)
+            # Determine win/loss BEFORE creating the entry so initial_rnd can
+            # respect the confirmed-result requirement.  Rows are processed in
+            # reverse-chronological order, so the first row seen for a tournament
+            # is often the deepest (main-draw) round.
+            won_pre = player_won(score_desc, player_ref) if not qualifying_first else None
             if key not in tournaments_map:
-                initial_rnd = "" if qualifying_first else rnd
+                if qualifying_first:
+                    initial_rnd = ""
+                elif won_pre is not None:
+                    initial_rnd = rnd           # confirmed result → set round
+                else:
+                    initial_rnd = "unconfirmed" # no result recorded
                 tournaments_map[key] = {
                     "tournamentName":  tourn,
                     "date":            date_iso,
@@ -1217,13 +1227,24 @@ class TennisAbstractScraper:
                 # Track best round reached (main draw only) and sync pointsEarned
                 if rnd in self._ROUND_WINS:
                     cur_best = t.get("roundReached", "")
-                    if self._ROUND_WINS.get(rnd, 0) > self._ROUND_WINS.get(cur_best, -1):
-                        t["roundReached"] = rnd
-                        cat = self._infer_category(tourn)
-                        md_pts = self.calc_itf_points(cat, rnd)
-                        q_matches = [m for m in t["matches"] if m.get("qualifying")]
-                        q_pts = self.calc_qualifying_points(cat, q_matches, rnd)
-                        t["pointsEarned"] = md_pts + q_pts
+                    if won is not None:
+                        # Confirmed result (win or loss) — advance roundReached normally.
+                        # "unconfirmed" sentinel has _ROUND_WINS value -1, so any real
+                        # confirmed round always supersedes it.
+                        if self._ROUND_WINS.get(rnd, 0) > self._ROUND_WINS.get(cur_best, -1):
+                            t["roundReached"] = rnd
+                            cat = self._infer_category(tourn)
+                            md_pts = self.calc_itf_points(cat, rnd)
+                            q_matches = [m for m in t["matches"] if m.get("qualifying")]
+                            q_pts = self.calc_qualifying_points(cat, q_matches, rnd)
+                            t["pointsEarned"] = md_pts + q_pts
+                    elif cur_best in ("", "unconfirmed"):
+                        # No result recorded (playerWon=None). Mark as unconfirmed so
+                        # display code knows this round was attempted but not resolved.
+                        # "unconfirmed" is truthy → calc_qualifying_points treats the
+                        # player as a qualifier if qualifying matches are present.
+                        # "unconfirmed" is NOT in _ITF_POINTS → main draw pts = 0.
+                        t["roundReached"] = "unconfirmed"
 
             # Extract opponent — always append to matches (qualifying included for reference)
             opp_display = extract_opponent(score_desc, player_ref)
