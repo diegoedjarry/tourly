@@ -781,8 +781,12 @@ class TennisAbstractScraper:
     TA_BASE       = "https://www.tennisabstract.com"
     CURR_RANK_URL = "https://www.tennisabstract.com/jsplayers/curr_rank_atp.js"
 
-    # Approximate wins based on round reached (assumes standard draw size)
+    # Ordering used to track deepest round played (not wins)
     _ROUND_WINS = {"W": 6, "F": 5, "SF": 4, "QF": 3, "R16": 2, "R32": 1, "R64": 0, "R128": 0}
+
+    # When a player WINS round R, they advance to _NEXT_ROUND[R].
+    # Points are awarded for the round advanced TO, not the round won in.
+    _NEXT_ROUND = {"R64": "R32", "R32": "R16", "R16": "QF", "QF": "SF", "SF": "F", "F": "W"}
 
     def __init__(self):
         self._curr_rank_cache: Optional[dict] = None
@@ -1189,9 +1193,14 @@ class TennisAbstractScraper:
                     cur_best = t.get("roundReached", "")
                     if self._ROUND_WINS.get(rnd, 0) > self._ROUND_WINS.get(cur_best, -1):
                         t["roundReached"] = rnd
-                        md_pts = self.calc_itf_points(self._infer_category(tourn), rnd)
+                        # Points go to the round ADVANCED TO, not the round won in.
+                        # A win at R32 → player reached R16 → award R16 points.
+                        # A loss at R32 → player was eliminated at R32 → award R32 points.
+                        pts_rnd = self._NEXT_ROUND.get(rnd, rnd) if won else rnd
+                        cat = self._infer_category(tourn)
+                        md_pts = self.calc_itf_points(cat, pts_rnd)
                         q_matches = [m for m in t["matches"] if m.get("qualifying")]
-                        q_pts = self.calc_qualifying_points(self._infer_category(tourn), q_matches, rnd)
+                        q_pts = self.calc_qualifying_points(cat, q_matches, rnd)
                         t["pointsEarned"] = md_pts + q_pts
 
             # Extract opponent — always append to matches (qualifying included for reference)
@@ -1281,9 +1290,13 @@ class TennisAbstractScraper:
         """
         if not category or category not in self._QUALIFYING_POINTS:
             return 0
+        # No qualifying matches stored → award 0 regardless of round_reached.
+        # round_reached alone does not prove the player came through qualifying.
+        if not qualifying_matches:
+            return 0
         q_table = self._QUALIFYING_POINTS[category]
         if round_reached:
-            # Player made the main draw — they are a Qualifier
+            # Qualifying matches exist AND player made the main draw → Qualifier
             return q_table["qualifier"]
         if not qualifying_matches:
             return 0
