@@ -26,25 +26,9 @@ for row in rows.data or []:
         md_matches  = [m for m in matches if not m.get("qualifying")]
         cat         = scraper._infer_category(tourn)
 
-        # Determine if the deepest-round main-draw match was a win or loss.
-        # If it was a win, points go to the next round (the one advanced to).
-        pts_rnd = rnd
-        if rnd and md_matches:
-            deepest = [m for m in md_matches if m.get("round", "").upper() == rnd.upper()]
-            if deepest:
-                score = deepest[0].get("score", "")
-                ps, os_ = 0, 0
-                import re as _re
-                for part in score.split():
-                    mx = _re.match(r"^(\d+)-(\d+)", part)
-                    if mx:
-                        a, b = int(mx.group(1)), int(mx.group(2))
-                        if a > b: ps += 1
-                        elif b > a: os_ += 1
-                if ps > os_:
-                    pts_rnd = scraper._NEXT_ROUND.get(rnd, rnd)
-
-        md_pts      = scraper.calc_itf_points(cat, pts_rnd)
+        # roundReached already means "reached and lost this round" (ATP/ITF standard).
+        # No heuristic adjustment: points are read directly from the table.
+        md_pts      = scraper.calc_itf_points(cat, rnd)
         q_pts       = scraper.calc_qualifying_points(cat, q_matches, rnd)
         new_pts     = md_pts + q_pts
         old_pts     = entry.get("pointsEarned", 0)

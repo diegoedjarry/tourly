@@ -784,9 +784,6 @@ class TennisAbstractScraper:
     # Ordering used to track deepest round played (not wins)
     _ROUND_WINS = {"W": 6, "F": 5, "SF": 4, "QF": 3, "R16": 2, "R32": 1, "R64": 0, "R128": 0}
 
-    # When a player WINS round R, they advance to _NEXT_ROUND[R].
-    # Points are awarded for the round advanced TO, not the round won in.
-    _NEXT_ROUND = {"R64": "R32", "R32": "R16", "R16": "QF", "QF": "SF", "SF": "F", "F": "W"}
 
     def __init__(self):
         self._curr_rank_cache: Optional[dict] = None
@@ -1193,12 +1190,8 @@ class TennisAbstractScraper:
                     cur_best = t.get("roundReached", "")
                     if self._ROUND_WINS.get(rnd, 0) > self._ROUND_WINS.get(cur_best, -1):
                         t["roundReached"] = rnd
-                        # Points go to the round ADVANCED TO, not the round won in.
-                        # A win at R32 → player reached R16 → award R16 points.
-                        # A loss at R32 → player was eliminated at R32 → award R32 points.
-                        pts_rnd = self._NEXT_ROUND.get(rnd, rnd) if won else rnd
                         cat = self._infer_category(tourn)
-                        md_pts = self.calc_itf_points(cat, pts_rnd)
+                        md_pts = self.calc_itf_points(cat, rnd)
                         q_matches = [m for m in t["matches"] if m.get("qualifying")]
                         q_pts = self.calc_qualifying_points(cat, q_matches, rnd)
                         t["pointsEarned"] = md_pts + q_pts
