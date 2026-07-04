@@ -3215,7 +3215,10 @@ function RecentExpensesSection({ expenses, onOpen, onRequestDelete }: {
   return (
     <View style={{ marginBottom: 16 }}>
       <Text style={styles.sectionLabel}>{tr('expenses.recent')}</Text>
-      <GestureHandlerRootView>
+      {/* flexGrow:0 — see the drill-sheet comment below for why a bare
+          GestureHandlerRootView (default flex:1) collapses to zero height
+          inside a content-sized parent. */}
+      <GestureHandlerRootView style={{ flexGrow: 0 }}>
         <View style={rec.card}>
           {visible.map((e: any, i: number) => (
             <View key={e.id}>
@@ -4223,7 +4226,14 @@ export default function ExpensesScreen() {
                     </TouchableOpacity>
                   </View>
                 )}
-                <GestureHandlerRootView>
+                {/* GestureHandlerRootView defaults to flex:1 internally (needed so
+                    SwipeableRow's pan gesture attaches — Modal content sits in its
+                    own native tree, so the root-level wrapper in _layout.tsx doesn't
+                    cover it). flex:1 inside this content-sized sheet collapses to
+                    zero height ("take remaining space" = 0 when there is none), so
+                    the row list would render but be invisible. flexGrow:0 cancels
+                    that and lets it size to the ScrollView's own maxHeight instead. */}
+                <GestureHandlerRootView style={{ flexGrow: 0, flexShrink: 1 }}>
                 <ScrollView style={{ maxHeight: 400 }} showsVerticalScrollIndicator={false}>
                   {catExpenses.length === 0 ? (
                     <Text style={drillStyles.empty}>No expenses in this category.</Text>
