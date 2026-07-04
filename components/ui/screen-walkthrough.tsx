@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { Text } from '@/components/ui/text';
 import { useLanguage } from '@/hooks/useLanguage';
+import { T } from '@/constants/theme';
 
 export interface WalkthroughStep {
   icon: string;
@@ -84,21 +85,21 @@ const s = StyleSheet.create({
     padding: 24,
   },
   card: {
-    backgroundColor: '#1A1A2E',
+    backgroundColor: T.card,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#5B5BD6',
+    borderColor: T.accent,
     paddingHorizontal: 24,
     paddingVertical: 28,
     alignItems: 'center',
     width: '100%',
   },
   icon: { fontSize: 40, marginBottom: 14 },
-  title: { fontSize: 18, fontWeight: '700', color: '#FAFAFA', textAlign: 'center', marginBottom: 8 },
-  body: { fontSize: 14, color: '#999', lineHeight: 21, textAlign: 'center', marginBottom: 20 },
+  title: { fontSize: 18, fontWeight: '700', color: T.textPrimary, textAlign: 'center', marginBottom: 8 },
+  body: { fontSize: 14, color: T.textTertiary, lineHeight: 21, textAlign: 'center', marginBottom: 20 },
   dotsRow: { flexDirection: 'row', gap: 6, marginBottom: 20 },
-  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#2A2A4A' },
-  dotActive: { backgroundColor: '#5B5BD6', width: 20 },
+  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: T.cardBorder },
+  dotActive: { backgroundColor: T.accent, width: 20 },
   btnRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -106,12 +107,12 @@ const s = StyleSheet.create({
     gap: 24,
     width: '100%',
   },
-  skipText: { fontSize: 14, color: '#666', fontWeight: '500' },
+  skipText: { fontSize: 14, color: T.textTertiary, fontWeight: '500' },
   nextBtn: {
-    backgroundColor: '#5B5BD6',
+    backgroundColor: T.accent,
     borderRadius: 50,
     paddingVertical: 11,
     paddingHorizontal: 28,
   },
-  nextText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
+  nextText: { color: T.textPrimary, fontSize: 14, fontWeight: '700' },
 });

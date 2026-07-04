@@ -125,7 +125,7 @@ const s = StyleSheet.create({
     width: 52,
     height: 52,
     borderRadius: 26,
-    backgroundColor: '#1A1A2E',
+    backgroundColor: T.card,
     borderWidth: 1.5,
     borderColor: T.accent,
     alignItems: 'center',
@@ -149,10 +149,10 @@ const s = StyleSheet.create({
     paddingBottom: 100,
   },
   panel: {
-    backgroundColor: '#1A1A2E',
+    backgroundColor: T.card,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#2A2A4A',
+    borderColor: T.cardBorder,
     overflow: 'hidden',
   },
 
@@ -162,20 +162,20 @@ const s = StyleSheet.create({
     gap: 10,
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#2A2A4A',
+    borderBottomColor: T.cardBorder,
   },
   iconWrap: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: 'rgba(91,91,214,0.18)',
+    backgroundColor: T.accentMuted,
     alignItems: 'center',
     justifyContent: 'center',
   },
   headerTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#FAFAFA',
+    color: T.textPrimary,
   },
   headerSub: {
     fontSize: 11,
@@ -233,7 +233,7 @@ const s = StyleSheet.create({
   },
   cardContent: {
     fontSize: 14,
-    color: '#FAFAFA',
+    color: T.textPrimary,
     lineHeight: 22,
   },
 

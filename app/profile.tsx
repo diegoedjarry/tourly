@@ -8,6 +8,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useAppQuery } from '@/hooks/useAppQuery';
 import { DEMO_MODE } from '@/config/demo';
 import { useLanguage } from '@/hooks/useLanguage';
+import { T } from '@/constants/theme';
 
 const FLAG: Record<string, string> = {
   AR:'🇦🇷',AU:'🇦🇺',BR:'🇧🇷',CL:'🇨🇱',CO:'🇨🇴',DE:'🇩🇪',EC:'🇪🇨',ES:'🇪🇸',
@@ -133,7 +134,7 @@ export default function ProfileScreen() {
             </Text>
           </View>
           <TouchableOpacity style={s.infoRow} onPress={() => router.push('/settings' as any)} activeOpacity={0.7}>
-            <Text style={[s.infoLabel, { color: '#00D4AA' }]}>{t('profile.editSettings')}</Text>
+            <Text style={[s.infoLabel, { color: T.teal }]}>{t('profile.editSettings')}</Text>
             <Text style={s.infoArrow}>›</Text>
           </TouchableOpacity>
         </View>
@@ -145,33 +146,33 @@ export default function ProfileScreen() {
 }
 
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#0D0D12' },
+  safe: { flex: 1, backgroundColor: T.bg },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 14 },
   backBtn: { width: 60 },
-  backText: { fontSize: 15, color: '#00D4AA', fontWeight: '600' },
-  headerTitle: { fontSize: 17, fontWeight: '700', color: '#FFFFFF' },
+  backText: { fontSize: 15, color: T.teal, fontWeight: '600' },
+  headerTitle: { fontSize: 17, fontWeight: '700', color: T.textPrimary },
   scrollContent: { paddingHorizontal: 20 },
 
   avatarSection: { alignItems: 'center', paddingTop: 10, paddingBottom: 28 },
-  avatarRing: { width: 96, height: 96, borderRadius: 48, borderWidth: 2.5, borderColor: '#00D4AA', alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
-  avatarCircle: { width: 84, height: 84, borderRadius: 42, backgroundColor: '#1A1A24', alignItems: 'center', justifyContent: 'center' },
-  avatarText: { fontSize: 30, fontWeight: '800', color: '#00D4AA' },
-  name: { fontSize: 24, fontWeight: '800', color: '#FFFFFF', marginBottom: 4 },
-  subtitle: { fontSize: 14, color: '#9A9AB0', marginBottom: 10 },
-  rankBadge: { backgroundColor: 'rgba(0,212,170,0.15)', paddingHorizontal: 14, paddingVertical: 5, borderRadius: 14, marginTop: 4 },
-  rankText: { fontSize: 13, fontWeight: '700', color: '#00D4AA' },
+  avatarRing: { width: 96, height: 96, borderRadius: 48, borderWidth: 2.5, borderColor: T.teal, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+  avatarCircle: { width: 84, height: 84, borderRadius: 42, backgroundColor: T.card, alignItems: 'center', justifyContent: 'center' },
+  avatarText: { fontSize: 30, fontWeight: '800', color: T.teal },
+  name: { fontSize: 24, fontWeight: '800', color: T.textPrimary, marginBottom: 4 },
+  subtitle: { fontSize: 14, color: T.textSecondary, marginBottom: 10 },
+  rankBadge: { backgroundColor: T.tealMuted, paddingHorizontal: 14, paddingVertical: 5, borderRadius: 14, marginTop: 4 },
+  rankText: { fontSize: 13, fontWeight: '700', color: T.teal },
 
   statsRow: { flexDirection: 'row', gap: 8, marginBottom: 20 },
-  statCard: { flex: 1, backgroundColor: '#1A1A24', borderRadius: 14, paddingVertical: 16, alignItems: 'center', borderWidth: 1, borderColor: '#2A2A38' },
-  statValue: { fontSize: 16, fontWeight: '800', color: '#FFFFFF', marginBottom: 4 },
-  statLabel: { fontSize: 11, fontWeight: '500', color: '#5A5A70' },
-  statPos: { color: '#44CF6C' },
-  statNeg: { color: '#EF4444' },
+  statCard: { flex: 1, backgroundColor: T.card, borderRadius: 14, paddingVertical: 16, alignItems: 'center', borderWidth: 1, borderColor: T.cardBorder },
+  statValue: { fontSize: 16, fontWeight: '800', color: T.textPrimary, marginBottom: 4 },
+  statLabel: { fontSize: 11, fontWeight: '500', color: T.textTertiary },
+  statPos: { color: T.green },
+  statNeg: { color: T.red },
 
-  infoCard: { backgroundColor: '#1A1A24', borderRadius: 14, borderWidth: 1, borderColor: '#2A2A38', marginBottom: 16, overflow: 'hidden' },
+  infoCard: { backgroundColor: T.card, borderRadius: 14, borderWidth: 1, borderColor: T.cardBorder, marginBottom: 16, overflow: 'hidden' },
   infoRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 14 },
-  infoRowBorder: { borderBottomWidth: 1, borderBottomColor: '#2A2A38' },
-  infoLabel: { fontSize: 14, color: '#9A9AB0', fontWeight: '500' },
-  infoValue: { fontSize: 14, color: '#FFFFFF', fontWeight: '600', maxWidth: '60%', textAlign: 'right' },
-  infoArrow: { fontSize: 20, color: '#00D4AA', fontWeight: '300' },
+  infoRowBorder: { borderBottomWidth: 1, borderBottomColor: T.cardBorder },
+  infoLabel: { fontSize: 14, color: T.textSecondary, fontWeight: '500' },
+  infoValue: { fontSize: 14, color: T.textPrimary, fontWeight: '600', maxWidth: '60%', textAlign: 'right' },
+  infoArrow: { fontSize: 20, color: T.teal, fontWeight: '300' },
 });

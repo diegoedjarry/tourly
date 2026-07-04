@@ -399,7 +399,7 @@ export default function SettingsScreen() {
             )}
           </View>
         </View>}
-        {openSection === 'ipin' && <View style={{ backgroundColor: '#1A1A2E', borderRadius: 10, padding: 12, marginTop: 4 }}>
+        {openSection === 'ipin' && <View style={{ backgroundColor: T.card, borderRadius: 10, padding: 12, marginTop: 4 }}>
           <Text style={{ fontSize: 12, color: T.textTertiary, lineHeight: 17 }}>
             {t('settings.ipinInfoCard')}
           </Text>

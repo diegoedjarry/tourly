@@ -16,6 +16,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useAppAlert } from '@/components/ui/app-alert';
 import { TourlyLogo } from '@/components/ui/tourly-logo';
 import { useLanguage } from '@/hooks/useLanguage';
+import { T } from '@/constants/theme';
 
 export default function AuthScreen() {
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
@@ -83,7 +84,7 @@ export default function AuthScreen() {
             <TextInput
               style={s.input}
               placeholder="Email"
-              placeholderTextColor="#6060A0"
+              placeholderTextColor={T.textMuted}
               autoCapitalize="none"
               keyboardType="email-address"
               returnKeyType="next"
@@ -94,7 +95,7 @@ export default function AuthScreen() {
               <TextInput
                 style={s.passwordInput}
                 placeholder="Password"
-                placeholderTextColor="#6060A0"
+                placeholderTextColor={T.textMuted}
                 secureTextEntry={!showPassword}
                 returnKeyType="done"
                 onSubmitEditing={handleSubmit}
@@ -111,8 +112,8 @@ export default function AuthScreen() {
                 <Switch
                   value={stayLoggedIn}
                   onValueChange={setStayLoggedIn}
-                  trackColor={{ false: '#252540', true: '#5B5BD6' }}
-                  thumbColor="#FFFFFF"
+                  trackColor={{ false: T.cardElevated, true: T.accent }}
+                  thumbColor={T.textPrimary}
                   style={{ transform: [{ scale: 0.8 }] }}
                 />
                 <Text style={s.stayText}>{t('auth.stayLoggedIn')}</Text>
@@ -171,33 +172,33 @@ export default function AuthScreen() {
 }
 
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#0F0F1A' },
+  safe: { flex: 1, backgroundColor: T.bg },
   flex: { flex: 1 },
   scrollContent: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 24, paddingVertical: 40 },
   logo: { alignSelf: 'center', marginBottom: 32 },
   card: {
-    backgroundColor: '#1A1A2E',
+    backgroundColor: T.card,
     borderRadius: 28,
     paddingHorizontal: 24,
     paddingVertical: 32,
     borderWidth: 1,
-    borderColor: '#2A2A4A',
+    borderColor: T.cardBorder,
   },
-  title: { fontSize: 24, fontWeight: '700', color: '#FAFAFA', marginBottom: 4 },
-  subtitle: { fontSize: 14, color: '#A0A0C8', marginBottom: 24 },
+  title: { fontSize: 24, fontWeight: '700', color: T.textPrimary, marginBottom: 4 },
+  subtitle: { fontSize: 14, color: T.textSecondary, marginBottom: 24 },
   input: {
-    backgroundColor: '#252540',
+    backgroundColor: T.cardElevated,
     borderRadius: 50,
     paddingHorizontal: 20,
     paddingVertical: Platform.OS === 'ios' ? 16 : 14,
     fontSize: 15,
-    color: '#FAFAFA',
+    color: T.textPrimary,
     marginBottom: 12,
   },
   passwordRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#252540',
+    backgroundColor: T.cardElevated,
     borderRadius: 50,
     marginBottom: 12,
   },
@@ -206,7 +207,7 @@ const s = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: Platform.OS === 'ios' ? 16 : 14,
     fontSize: 15,
-    color: '#FAFAFA',
+    color: T.textPrimary,
   },
   eyeBtn: {
     paddingHorizontal: 16,
@@ -219,36 +220,36 @@ const s = StyleSheet.create({
     gap: 8,
     marginBottom: 8,
   },
-  stayText: { fontSize: 14, color: '#A0A0C8', fontWeight: '500' },
+  stayText: { fontSize: 14, color: T.textSecondary, fontWeight: '500' },
   btn: {
-    backgroundColor: '#5B5BD6',
+    backgroundColor: T.accent,
     borderRadius: 50,
     paddingVertical: 16,
     alignItems: 'center',
     marginTop: 4,
   },
-  btnText: { color: '#FAFAFA', fontSize: 16, fontWeight: '700' },
+  btnText: { color: T.textPrimary, fontSize: 16, fontWeight: '700' },
   dividerRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 20 },
-  dividerLine: { flex: 1, height: 1, backgroundColor: '#2A2A4A' },
-  dividerText: { marginHorizontal: 14, fontSize: 13, color: '#A0A0C8', fontWeight: '500' },
+  dividerLine: { flex: 1, height: 1, backgroundColor: T.cardBorder },
+  dividerText: { marginHorizontal: 14, fontSize: 13, color: T.textSecondary, fontWeight: '500' },
   oauthBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#1E1E38',
+    backgroundColor: T.cardElevated,
     borderRadius: 50,
     paddingVertical: 14,
     borderWidth: 1.5,
-    borderColor: '#2A2A4A',
+    borderColor: T.cardBorder,
     marginBottom: 10,
     gap: 10,
   },
   appleBtn: { backgroundColor: '#000000', borderColor: '#000000' },
   oauthIcon: { fontSize: 18, fontWeight: '700', color: '#4285F4' },
-  appleIcon: { color: '#FFFFFF', fontSize: 20 },
-  oauthText: { fontSize: 15, fontWeight: '600', color: '#FAFAFA' },
-  appleText: { color: '#FFFFFF' },
+  appleIcon: { color: T.textPrimary, fontSize: 20 },
+  oauthText: { fontSize: 15, fontWeight: '600', color: T.textPrimary },
+  appleText: { color: T.textPrimary },
   switchRow: { alignItems: 'center', marginTop: 20 },
-  switchText: { fontSize: 14, color: '#A0A0C8' },
-  switchLink: { color: '#5B5BD6', fontWeight: '700' },
+  switchText: { fontSize: 14, color: T.textSecondary },
+  switchLink: { color: T.accent, fontWeight: '700' },
 });

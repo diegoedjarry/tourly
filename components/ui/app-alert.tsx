@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
 import { Modal, View, TouchableOpacity, StyleSheet } from 'react-native';
 import { Text } from '@/components/ui/text';
+import { T } from '@/constants/theme';
 
 interface AlertButton {
   text: string;
@@ -84,14 +85,14 @@ const s = StyleSheet.create({
     padding: 32,
   },
   card: {
-    backgroundColor: '#1A1A2E',
+    backgroundColor: T.card,
     borderRadius: 20,
     padding: 24,
     width: '100%',
     maxWidth: 360,
     borderWidth: 1,
-    borderColor: '#2A2A4A',
-    shadowColor: '#5B5BD6',
+    borderColor: T.cardBorder,
+    shadowColor: T.accent,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.2,
     shadowRadius: 20,
@@ -100,13 +101,13 @@ const s = StyleSheet.create({
   title: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#FAFAFA',
+    color: T.textPrimary,
     marginBottom: 10,
     textAlign: 'center',
   },
   message: {
     fontSize: 14,
-    color: '#A0A0C8',
+    color: T.textSecondary,
     lineHeight: 21,
     textAlign: 'center',
     marginBottom: 20,
@@ -123,28 +124,28 @@ const s = StyleSheet.create({
     alignItems: 'center',
   },
   btnPrimary: {
-    backgroundColor: '#5B5BD6',
+    backgroundColor: T.accent,
   },
   btnCancel: {
-    backgroundColor: '#252540',
+    backgroundColor: T.cardElevated,
     borderWidth: 1,
-    borderColor: '#2A2A4A',
+    borderColor: T.cardBorder,
   },
   btnDestructive: {
     backgroundColor: '#2D0F0F',
     borderWidth: 1,
-    borderColor: '#E24B4A',
+    borderColor: T.red,
   },
   btnText: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#FAFAFA',
+    color: T.textPrimary,
   },
   btnTextCancel: {
-    color: '#A0A0C8',
+    color: T.textSecondary,
     fontWeight: '600',
   },
   btnTextDestructive: {
-    color: '#E24B4A',
+    color: T.red,
   },
 });

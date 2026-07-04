@@ -16,6 +16,7 @@ const COLLAPSED_HEIGHT = SCREEN_HEIGHT * 0.45;
 const EXPANDED_HEIGHT = SCREEN_HEIGHT * 0.92;
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { CITY_COORDS, COUNTRY_CENTERS } from './map-data';
+import { T } from '@/constants/theme';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -106,7 +107,7 @@ function fmtDateRange(start: string, end?: string): string {
 // ─── Dark map style ─────────────────────────────────────────────────────────
 
 const DARK_MAP_STYLE = [
-  { elementType: 'geometry', stylers: [{ color: '#1A1A2E' }] },
+  { elementType: 'geometry', stylers: [{ color: T.card }] },
   { elementType: 'labels', stylers: [{ visibility: 'off' }] },
   // Re-enable city/town name labels (overrides the global labels:off above)
   {
@@ -117,7 +118,7 @@ const DARK_MAP_STYLE = [
   {
     featureType: 'administrative.locality',
     elementType: 'labels.text.stroke',
-    stylers: [{ color: '#0F0F1A' }, { visibility: 'on' }, { weight: 2 }],
+    stylers: [{ color: T.bg }, { visibility: 'on' }, { weight: 2 }],
   },
   // Country borders
   {
@@ -129,12 +130,12 @@ const DARK_MAP_STYLE = [
   {
     featureType: 'administrative.country',
     elementType: 'labels.text.fill',
-    stylers: [{ color: '#8888AA' }, { visibility: 'on' }],
+    stylers: [{ color: T.textSecondary }, { visibility: 'on' }],
   },
   {
     featureType: 'administrative.country',
     elementType: 'labels.text.stroke',
-    stylers: [{ color: '#0F0F1A' }, { visibility: 'on' }, { weight: 2 }],
+    stylers: [{ color: T.bg }, { visibility: 'on' }, { weight: 2 }],
   },
   // Province / state borders — visible but dimmer than country borders
   {
@@ -147,7 +148,7 @@ const DARK_MAP_STYLE = [
     elementType: 'labels.text.fill',
     stylers: [{ color: '#7A7AAA' }, { visibility: 'on' }],
   },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0F0F1A' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: T.bg }] },
   { featureType: 'road', stylers: [{ visibility: 'off' }] },
   { featureType: 'poi', stylers: [{ visibility: 'off' }] },
   { featureType: 'transit', stylers: [{ visibility: 'off' }] },
@@ -488,7 +489,7 @@ export default TournamentMap;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0F0F1A',
+    backgroundColor: T.bg,
   },
   map: {
     flex: 1,
@@ -498,7 +499,7 @@ const styles = StyleSheet.create({
     width: 30,
     height: 30,
     borderRadius: 15,
-    backgroundColor: 'rgba(91,91,214,0.22)',
+    backgroundColor: T.accentMuted,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -506,7 +507,7 @@ const styles = StyleSheet.create({
     width: 12,
     height: 12,
     borderRadius: 6,
-    backgroundColor: '#5B5BD6',
+    backgroundColor: T.accent,
   },
   // Reset button
   resetBtn: {
@@ -516,15 +517,15 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#1A1A2E',
+    backgroundColor: T.card,
     borderWidth: 1,
-    borderColor: '#2A2A4A',
+    borderColor: T.cardBorder,
     alignItems: 'center',
     justifyContent: 'center',
   },
   resetIcon: {
     fontSize: 20,
-    color: '#FAFAFA',
+    color: T.textPrimary,
     lineHeight: 22,
   },
   // Close button
@@ -535,15 +536,15 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#1A1A2E',
+    backgroundColor: T.card,
     borderWidth: 1,
-    borderColor: '#2A2A4A',
+    borderColor: T.cardBorder,
     alignItems: 'center',
     justifyContent: 'center',
   },
   closeBtnText: {
     fontSize: 16,
-    color: '#FAFAFA',
+    color: T.textPrimary,
     fontWeight: '500',
   },
   // Empty state

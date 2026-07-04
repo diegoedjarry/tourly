@@ -330,7 +330,7 @@ function CostByCountry({ tournaments, expenses }: { tournaments: any[]; expenses
           onPress={() => setExpandedCountry(prev => prev === d.country ? null : d.country)}
         >
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <View style={[ds.surfaceIconBox, { backgroundColor: '#1A1A2E', marginBottom: 0 }]}>
+            <View style={[ds.surfaceIconBox, { backgroundColor: T.card, marginBottom: 0 }]}>
               <Text style={{ fontSize: 28 }}>{countryFlag(d.country)}</Text>
             </View>
             <View style={{ flex: 1, marginLeft: 12 }}>

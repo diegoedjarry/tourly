@@ -54,7 +54,7 @@ const SURFACE: Record<string, { bg: string; text: string; border: string }> = {
   clay:    { bg: '#3D2A00', text: '#E8964A', border: '#C8860A' },
   hard:    { bg: '#0A1E3D', text: '#5AABEE', border: '#2E6098' },
   grass:   { bg: '#0A2A0A', text: '#68B83A', border: '#2E7A2E' },
-  default: { bg: '#1E1E38', text: '#A0A0C8', border: '#5B5BD6' },
+  default: { bg: T.cardElevated, text: T.textSecondary, border: T.accent },
 };
 
 const flag = (code: string | undefined) => countryFlag(code ?? '');
@@ -671,8 +671,8 @@ const s = StyleSheet.create({
   banner: {
     marginHorizontal: 8, marginBottom: 4,
     borderRadius: 8, paddingHorizontal: 8, paddingVertical: 8,
-    backgroundColor: '#1E1E38',
-    borderLeftWidth: 3, borderLeftColor: '#5B5BD6',
+    backgroundColor: T.cardElevated,
+    borderLeftWidth: 3, borderLeftColor: T.accent,
   },
   bannerRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   bannerText: { fontSize: 11, fontWeight: '600', color: T.textSecondary, flex: 1 },

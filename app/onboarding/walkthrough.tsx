@@ -10,15 +10,16 @@ import { Text } from '@/components/ui/text';
 import { TourlyLogo } from '@/components/ui/tourly-logo';
 import { supabase } from '@/lib/supabase'; // used for sign-out in handleBackToLogin
 import { triggerScraperOnce } from '@/hooks/useScraperTrigger';
+import { T } from '@/constants/theme';
 
 // Set by ProfileSetupScreen so finishOnboarding can fire the scraper
 let _pendingPlayerName = '';
 
 const { width: W } = Dimensions.get('window');
-const ACCENT = '#5B5BD6';
-const BG = '#0F0F1A';
-const CARD = '#1A1A2E';
-const MINT = '#00E5A0';
+const ACCENT = T.accent;
+const BG = T.bg;
+const CARD = T.card;
+const MINT = T.teal;
 
 // ─── Progress dots ───────────────────────────────────────────────────────────
 
@@ -28,7 +29,7 @@ function Dots({ total, current }: { total: number; current: number }) {
       {Array.from({ length: total }, (_, i) => (
         <View key={i} style={{
           width: i === current ? 20 : 8, height: 8, borderRadius: 4,
-          backgroundColor: i === current ? ACCENT : '#2A2A4A',
+          backgroundColor: i === current ? ACCENT : T.cardBorder,
         }} />
       ))}
     </View>
@@ -39,7 +40,7 @@ function Dots({ total, current }: { total: number; current: number }) {
 
 function WelcomeScreen({ onNext, onBack }: { onNext: () => void; onBack: () => void }) {
   return (
-    <SafeAreaView style={[s.safe, { backgroundColor: '#2D2B55' }]}>
+    <SafeAreaView style={[s.safe, { backgroundColor: T.cardElevated }]}>
       <View style={s.centered}>
         <TourlyLogo width={240} height={64} />
         <View style={{ marginTop: 40, alignItems: 'center', gap: 8 }}>
@@ -161,10 +162,10 @@ function FeatureMockupExpenses({ items }: { items: { label: string; pct: number 
 function FeatureMockupInsight({ text }: { text: string }) {
   return (
     <View style={[mock.alertBox, { borderLeftWidth: 3, borderLeftColor: ACCENT }]}>
-      <Text style={{ fontSize: 10, color: '#666', letterSpacing: 0.8, marginBottom: 8 }}>FINANCIAL COACH</Text>
+      <Text style={{ fontSize: 10, color: T.textTertiary, letterSpacing: 0.8, marginBottom: 8 }}>FINANCIAL COACH</Text>
       <View style={{ flexDirection: 'row', gap: 8 }}>
         <Text style={{ color: ACCENT, fontSize: 14 }}>✦</Text>
-        <Text style={{ fontSize: 13, color: '#FAFAFA', lineHeight: 19, flex: 1 }}>{text}</Text>
+        <Text style={{ fontSize: 13, color: T.textPrimary, lineHeight: 19, flex: 1 }}>{text}</Text>
       </View>
     </View>
   );
@@ -173,9 +174,9 @@ function FeatureMockupInsight({ text }: { text: string }) {
 function FeatureMockupMap() {
   return (
     <View style={[mock.alertBox, { alignItems: 'center', justifyContent: 'center', height: 120 }]}>
-      <Text style={{ fontSize: 11, color: '#555', marginBottom: 12 }}>· · · · · · · · · · · · · · · · · ·</Text>
+      <Text style={{ fontSize: 11, color: T.textTertiary, marginBottom: 12 }}>· · · · · · · · · · · · · · · · · ·</Text>
       {['🌟 Buenos Aires', '🌟 Bogotá', '🌟 Lima'].map((city, i) => (
-        <Text key={i} style={{ fontSize: 13, color: '#FAFAFA', marginBottom: 4 }}>{city}</Text>
+        <Text key={i} style={{ fontSize: 13, color: T.textPrimary, marginBottom: 4 }}>{city}</Text>
       ))}
     </View>
   );
@@ -482,10 +483,10 @@ const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: BG },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   backBtn: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 4 },
-  backText: { fontSize: 16, color: '#888', fontWeight: '500' },
+  backText: { fontSize: 16, color: T.textTertiary, fontWeight: '500' },
 
-  tagline1: { fontSize: 16, color: '#FAFAFA', fontStyle: 'italic', textAlign: 'center' },
-  tagline2: { fontSize: 20, color: '#FAFAFA', fontWeight: '700', textAlign: 'center' },
+  tagline1: { fontSize: 16, color: T.textPrimary, fontStyle: 'italic', textAlign: 'center' },
+  tagline2: { fontSize: 20, color: T.textPrimary, fontWeight: '700', textAlign: 'center' },
 
   welcomeBottom: { paddingHorizontal: 24, paddingBottom: 40 },
 
@@ -493,19 +494,19 @@ const s = StyleSheet.create({
     backgroundColor: ACCENT, borderRadius: 14,
     paddingVertical: 17, alignItems: 'center',
   },
-  primaryBtnText: { color: '#FFFFFF', fontSize: 17, fontWeight: '700' },
-  linkText: { fontSize: 14, color: '#888', textAlign: 'center' },
+  primaryBtnText: { color: T.textPrimary, fontSize: 17, fontWeight: '700' },
+  linkText: { fontSize: 14, color: T.textTertiary, textAlign: 'center' },
 
   bigStat: {
-    fontSize: 56, fontWeight: '800', color: '#FAFAFA',
+    fontSize: 56, fontWeight: '800', color: T.textPrimary,
     textAlign: 'center', marginBottom: 20,
   },
   problemMain: {
-    fontSize: 16, color: '#FAFAFA', textAlign: 'center',
+    fontSize: 16, color: T.textPrimary, textAlign: 'center',
     lineHeight: 24, marginBottom: 16,
   },
   problemSub: {
-    fontSize: 14, color: '#888', textAlign: 'center', lineHeight: 22,
+    fontSize: 14, color: T.textTertiary, textAlign: 'center', lineHeight: 22,
   },
 
   bottomRow: { paddingHorizontal: 24, paddingBottom: 32, alignItems: 'flex-end' },
@@ -513,42 +514,42 @@ const s = StyleSheet.create({
     backgroundColor: ACCENT, borderRadius: 50,
     paddingVertical: 12, paddingHorizontal: 28, marginTop: 16,
   },
-  nextBtnText: { color: '#FFF', fontSize: 15, fontWeight: '700' },
+  nextBtnText: { color: T.textPrimary, fontSize: 15, fontWeight: '700' },
 
-  featureTitle: { fontSize: 22, fontWeight: '700', color: '#FAFAFA', marginBottom: 12 },
-  featureDesc: { fontSize: 14, color: '#888', lineHeight: 22 },
+  featureTitle: { fontSize: 22, fontWeight: '700', color: T.textPrimary, marginBottom: 12 },
+  featureDesc: { fontSize: 14, color: T.textTertiary, lineHeight: 22 },
 
   profileCard: {
     backgroundColor: CARD, borderRadius: 20,
     padding: 24, marginBottom: 8,
   },
-  profileTitle: { fontSize: 22, fontWeight: '700', color: '#FAFAFA', marginBottom: 6 },
-  profileSub: { fontSize: 14, color: '#888', marginBottom: 20 },
-  fieldLabel: { fontSize: 12, color: '#888', fontWeight: '600', letterSpacing: 0.4, marginBottom: 6, marginTop: 12 },
+  profileTitle: { fontSize: 22, fontWeight: '700', color: T.textPrimary, marginBottom: 6 },
+  profileSub: { fontSize: 14, color: T.textTertiary, marginBottom: 20 },
+  fieldLabel: { fontSize: 12, color: T.textTertiary, fontWeight: '600', letterSpacing: 0.4, marginBottom: 6, marginTop: 12 },
   input: {
-    backgroundColor: '#0F0F1A', borderWidth: 1, borderColor: '#2A2A4A',
+    backgroundColor: T.bg, borderWidth: 1, borderColor: T.cardBorder,
     borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12,
-    fontSize: 15, color: '#FAFAFA',
+    fontSize: 15, color: T.textPrimary,
   },
   pill: {
-    borderWidth: 1, borderColor: '#2A2A4A', borderRadius: 20,
+    borderWidth: 1, borderColor: T.cardBorder, borderRadius: 20,
     paddingVertical: 8, paddingHorizontal: 16,
   },
   pillActive: { backgroundColor: ACCENT, borderColor: ACCENT },
-  pillText: { fontSize: 14, color: '#888', fontWeight: '500' },
-  pillTextActive: { color: '#FFF', fontWeight: '700' },
+  pillText: { fontSize: 14, color: T.textTertiary, fontWeight: '500' },
+  pillTextActive: { color: T.textPrimary, fontWeight: '700' },
 });
 
 const mock = StyleSheet.create({
   alertBox: {
     backgroundColor: CARD, borderRadius: 14, padding: 16,
-    borderWidth: 1, borderColor: '#2A2A4A',
+    borderWidth: 1, borderColor: T.cardBorder,
   },
   alertRow: {
     flexDirection: 'row', justifyContent: 'space-between',
     alignItems: 'center', marginBottom: 12,
   },
-  alertLabel: { fontSize: 13, color: '#FAFAFA' },
+  alertLabel: { fontSize: 13, color: T.textPrimary },
   alertPill: { borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 },
-  alertPillText: { fontSize: 11, color: '#FFF', fontWeight: '700' },
+  alertPillText: { fontSize: 11, color: T.textPrimary, fontWeight: '700' },
 });

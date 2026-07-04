@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
+import { T } from '@/constants/theme';
 import { TourlyLogo } from './tourly-logo';
 
 // Shows nothing for the first 300ms (avoids flicker on fast loads).
@@ -34,7 +35,7 @@ export function LoadingLogo({ style }: { style?: object }) {
   return (
     <Animated.View style={[styles.container, style, { opacity: containerOpacity }]}>
       <Animated.View style={{ opacity: pulse }}>
-        <TourlyLogo width={180} height={47} color="#FFFFFF" />
+        <TourlyLogo width={180} height={47} color={T.textPrimary} />
       </Animated.View>
     </Animated.View>
   );
@@ -76,7 +77,7 @@ export function LoadingFade({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0F0F1A',
+    backgroundColor: T.bg,
     alignItems: 'center',
     justifyContent: 'center',
   },

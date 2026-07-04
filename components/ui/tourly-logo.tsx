@@ -1,5 +1,6 @@
 import React from 'react';
 import Svg, { Circle, Path, G, Line } from 'react-native-svg';
+import { T } from '@/constants/theme';
 
 interface TourlyLogoProps {
   width?: number;
@@ -7,7 +8,7 @@ interface TourlyLogoProps {
   color?: string;
 }
 
-export function TourlyLogo({ width = 200, height = 52, color = '#FFFFFF' }: TourlyLogoProps) {
+export function TourlyLogo({ width = 200, height = 52, color = T.textPrimary }: TourlyLogoProps) {
   const vw = 380;
   const vh = 90;
   const sw = 2.8;
@@ -28,7 +29,7 @@ export function TourlyLogo({ width = 200, height = 52, color = '#FFFFFF' }: Tour
         <Path d={`M 79.5,${mid + 16} Q 79.5,${mid + 3} 92,${mid + 3} Q 104.5,${mid + 3} 104.5,${mid + 16}`}
           fill={color} />
         <Path d={`M 89,${mid + 8} L 92,${mid + 15} L 95,${mid + 8}`}
-          fill="none" stroke="#0F0F1A" strokeWidth={1.4} strokeLinejoin="round" />
+          fill="none" stroke={T.bg} strokeWidth={1.4} strokeLinejoin="round" />
       </G>
 
       {/* U */}

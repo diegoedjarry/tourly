@@ -17,6 +17,7 @@ import { supabase } from '@/lib/supabase';
 import { foldDiacritics, playerNameFilter } from '@/utils/text';
 import { LoadingLogo } from '@/components/ui/LoadingLogo';
 import { RankingChart } from '@/components/ui/RankingChart';
+import { T } from '@/constants/theme';
 
 const SURFACES: Array<{ key: 'clay' | 'hard'; label: string; color: string }> = [
   { key: 'clay', label: 'Clay', color: '#D4915A' },
@@ -299,7 +300,7 @@ export default function MyPerformanceScreen() {
                   style={{ marginTop: 4, paddingHorizontal: 20, paddingVertical: 8, borderRadius: 20, backgroundColor: '#1A1A2E', borderWidth: 1, borderColor: '#2A2A4A' }}
                   activeOpacity={0.7}
                 >
-                  <Text style={{ fontSize: 14, fontWeight: '700', color: '#6060A0' }}>{selectedYear === currentYear ? currentYear - 1 : currentYear}</Text>
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: T.textMuted }}>{selectedYear === currentYear ? currentYear - 1 : currentYear}</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -308,10 +309,10 @@ export default function MyPerformanceScreen() {
             {!atpProfile && (
               <View style={[s.section, { marginTop: 24 }]}>
                 <View style={[s.card, { alignItems: 'center', paddingVertical: 32 }]}>
-                  <Text style={{ fontSize: 14, color: '#A0A0C8', textAlign: 'center', lineHeight: 22 }}>
+                  <Text style={{ fontSize: 14, color: T.textSecondary, textAlign: 'center', lineHeight: 22 }}>
                     No performance data yet.
                   </Text>
-                  <Text style={{ fontSize: 12, color: '#6060A0', marginTop: 8, textAlign: 'center', lineHeight: 20 }}>
+                  <Text style={{ fontSize: 12, color: T.textMuted, marginTop: 8, textAlign: 'center', lineHeight: 20 }}>
                     Add your ATP player name in Settings, then sync your profile to see stats here.
                   </Text>
                 </View>
@@ -323,16 +324,16 @@ export default function MyPerformanceScreen() {
           <View style={s.section}>
             <Text style={s.sectionLabel}>ATP RANKING</Text>
             <View style={[s.card, { flexDirection: 'row', alignItems: 'center', gap: 16 }]}>
-              <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#5B5BD6', alignItems: 'center', justifyContent: 'center' }}>
-                <Text adjustsFontSizeToFit numberOfLines={1} style={{ fontSize: 22, fontWeight: '800', color: '#FAFAFA', paddingHorizontal: 4 }}>
+              <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: T.accent, alignItems: 'center', justifyContent: 'center' }}>
+                <Text adjustsFontSizeToFit numberOfLines={1} style={{ fontSize: 22, fontWeight: '800', color: T.textPrimary, paddingHorizontal: 4 }}>
                   #{atpProfile.current_ranking ?? '—'}
                 </Text>
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 16, fontWeight: '700', color: '#FAFAFA' }}>{atpProfile.player_name}</Text>
-                <Text style={{ fontSize: 12, color: '#A0A0C8', marginTop: 2 }}>ATP Singles Ranking</Text>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: T.textPrimary }}>{atpProfile.player_name}</Text>
+                <Text style={{ fontSize: 12, color: T.textSecondary, marginTop: 2 }}>ATP Singles Ranking</Text>
                 {atpProfile.last_updated && (
-                  <Text style={{ fontSize: 11, color: '#6060A0', marginTop: 4 }}>
+                  <Text style={{ fontSize: 11, color: T.textMuted, marginTop: 4 }}>
                     Updated {abbrevDate(atpProfile.last_updated.slice(0, 10))}
                   </Text>
                 )}
@@ -345,10 +346,10 @@ export default function MyPerformanceScreen() {
         {atpProfile && atpMatchHistory.length === 0 && (
           <View style={s.section}>
             <View style={[s.card, { alignItems: 'center', paddingVertical: 20 }]}>
-              <Text style={{ fontSize: 14, color: '#A0A0C8', textAlign: 'center', lineHeight: 22 }}>
+              <Text style={{ fontSize: 14, color: T.textSecondary, textAlign: 'center', lineHeight: 22 }}>
                 Match history will appear after your profile syncs.
               </Text>
-              <Text style={{ fontSize: 12, color: '#6060A0', marginTop: 6, textAlign: 'center' }}>
+              <Text style={{ fontSize: 12, color: T.textMuted, marginTop: 6, textAlign: 'center' }}>
                 Go to Settings → Sync Profile to fetch your data.
               </Text>
             </View>
@@ -374,18 +375,18 @@ export default function MyPerformanceScreen() {
                 {/* Overall row */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
                   <TouchableOpacity style={{ flex: 1, alignItems: 'center' }} onPress={() => setMatchModal({ type: 'wins', surface: null })} activeOpacity={0.7}>
-                    <Text style={{ fontSize: 28, fontWeight: '800', color: '#2D9E6B' }}>{totalW}</Text>
-                    <Text style={{ fontSize: 11, color: '#A0A0C8', marginTop: 2 }}>Wins</Text>
+                    <Text style={{ fontSize: 28, fontWeight: '800', color: T.green }}>{totalW}</Text>
+                    <Text style={{ fontSize: 11, color: T.textSecondary, marginTop: 2 }}>Wins</Text>
                   </TouchableOpacity>
                   {pct !== null && (
                     <View style={{ alignItems: 'center', paddingHorizontal: 16 }}>
-                      <Text style={{ fontSize: 22, fontWeight: '800', color: '#5B5BD6' }}>{pct}%</Text>
-                      <Text style={{ fontSize: 11, color: '#A0A0C8', marginTop: 2 }}>Win rate</Text>
+                      <Text style={{ fontSize: 22, fontWeight: '800', color: T.accent }}>{pct}%</Text>
+                      <Text style={{ fontSize: 11, color: T.textSecondary, marginTop: 2 }}>Win rate</Text>
                     </View>
                   )}
                   <TouchableOpacity style={{ flex: 1, alignItems: 'center' }} onPress={() => setMatchModal({ type: 'losses', surface: null })} activeOpacity={0.7}>
-                    <Text style={{ fontSize: 28, fontWeight: '800', color: '#E24B4A' }}>{totalL}</Text>
-                    <Text style={{ fontSize: 11, color: '#A0A0C8', marginTop: 2 }}>Losses</Text>
+                    <Text style={{ fontSize: 28, fontWeight: '800', color: T.red }}>{totalL}</Text>
+                    <Text style={{ fontSize: 11, color: T.textSecondary, marginTop: 2 }}>Losses</Text>
                   </TouchableOpacity>
                 </View>
                 {/* Surface breakdown */}
@@ -398,13 +399,13 @@ export default function MyPerformanceScreen() {
                       key={key}
                       onPress={() => setMatchModal({ type: 'all', surface: key })}
                       activeOpacity={0.7}
-                      style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, borderTopWidth: 1, borderTopColor: '#2A2A4A' }}
+                      style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, borderTopWidth: 1, borderTopColor: T.cardBorder }}
                     >
                       <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color, marginRight: 8 }} />
-                      <Text style={{ fontSize: 13, color: '#A0A0C8', width: 44 }}>{label}</Text>
-                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#FAFAFA' }}>{s2.wins}W – {s2.losses}L</Text>
+                      <Text style={{ fontSize: 13, color: T.textSecondary, width: 44 }}>{label}</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: T.textPrimary }}>{s2.wins}W – {s2.losses}L</Text>
                       <View style={{ flex: 1 }} />
-                      <Text style={{ fontSize: 12, color: '#5B5BD6', fontWeight: '600' }}>{sp}%</Text>
+                      <Text style={{ fontSize: 12, color: T.accent, fontWeight: '600' }}>{sp}%</Text>
                     </TouchableOpacity>
                   );
                 })}
@@ -449,16 +450,16 @@ export default function MyPerformanceScreen() {
                 return (
                   <View key={bucket} style={{ flex: 1 }}>
                     <TouchableOpacity
-                      style={[s.card, { alignItems: 'center', paddingVertical: 16, borderColor: isOpen ? '#5B5BD6' : '#2A2A4A' }]}
+                      style={[s.card, { alignItems: 'center', paddingVertical: 16, borderColor: isOpen ? T.accent : T.cardBorder }]}
                       onPress={() => setExpandedCategory(v => v === bucket ? null : bucket)}
                       activeOpacity={0.7}
                     >
-                      <Text style={{ fontSize: 22, fontWeight: '800', color: '#5B5BD6' }}>{stats.count}</Text>
-                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#FAFAFA', marginTop: 4 }}>{bucket}</Text>
-                      <Text style={{ fontSize: 10, color: '#6060A0', marginTop: 2 }}>
+                      <Text style={{ fontSize: 22, fontWeight: '800', color: T.accent }}>{stats.count}</Text>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: T.textPrimary, marginTop: 4 }}>{bucket}</Text>
+                      <Text style={{ fontSize: 10, color: T.textMuted, marginTop: 2 }}>
                         {stats.count === 1 ? 'tournament' : 'tournaments'}
                       </Text>
-                      <Ionicons name={isOpen ? 'chevron-up' : 'chevron-down'} size={13} color="#6060A0" style={{ marginTop: 6 }} />
+                      <Ionicons name={isOpen ? 'chevron-up' : 'chevron-down'} size={13} color={T.textMuted} style={{ marginTop: 6 }} />
                     </TouchableOpacity>
                   </View>
                 );
@@ -480,7 +481,7 @@ export default function MyPerformanceScreen() {
                             {t.roundReached ? ` · ${t.roundReached}` : ''}
                           </Text>
                         </View>
-                        <Ionicons name="chevron-forward" size={14} color="#6060A0" />
+                        <Ionicons name="chevron-forward" size={14} color={T.textMuted} />
                       </TouchableOpacity>
                     ))}
                 </View>
@@ -499,7 +500,7 @@ export default function MyPerformanceScreen() {
                 return (
                   <View key={t.id} style={s.miniCard}>
                     <View style={s.miniCardTop}>
-                      <View style={[s.miniDot, { backgroundColor: surf?.color ?? '#6060A0' }]} />
+                      <View style={[s.miniDot, { backgroundColor: surf?.color ?? T.textMuted }]} />
                       <Text style={s.miniDate}>{abbrevDate(t.startDate)}</Text>
                     </View>
                     <Text style={s.miniCity} numberOfLines={1}>{cleanTournName(t.name)}</Text>
@@ -522,15 +523,15 @@ export default function MyPerformanceScreen() {
             <View style={s.card}>
               {atpMatchHistory.map((m: any, i: number) => (
                 <TouchableOpacity key={i} onPress={() => setDetailMatch(m)} activeOpacity={0.7}
-                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: i < atpMatchHistory.length - 1 ? 1 : 0, borderBottomColor: '#2A2A4A' }}>
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: i < atpMatchHistory.length - 1 ? 1 : 0, borderBottomColor: T.cardBorder }}>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#FAFAFA' }} numberOfLines={1}>{cleanTournName(m.tournamentName)}</Text>
-                    <Text style={{ fontSize: 11, color: '#A0A0C8', marginTop: 2 }}>{abbrevDate(m.date)} · {m.surface}</Text>
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: T.textPrimary }} numberOfLines={1}>{cleanTournName(m.tournamentName)}</Text>
+                    <Text style={{ fontSize: 11, color: T.textSecondary, marginTop: 2 }}>{abbrevDate(m.date)} · {m.surface}</Text>
                   </View>
                   <View style={{ alignItems: 'flex-end', marginLeft: 12 }}>
-                    <Text style={{ fontSize: 13, fontWeight: '700', color: '#5B5BD6' }}>{m.roundReached}</Text>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: T.accent }}>{m.roundReached}</Text>
                   </View>
-                  <Ionicons name="chevron-forward" size={14} color="#6060A0" style={{ marginLeft: 6 }} />
+                  <Ionicons name="chevron-forward" size={14} color={T.textMuted} style={{ marginLeft: 6 }} />
                 </TouchableOpacity>
               ))}
             </View>
@@ -634,20 +635,20 @@ export default function MyPerformanceScreen() {
                 {allChartYears.length > 1 && (
                   <View style={{ alignItems: 'flex-end' }}>
                     <TouchableOpacity
-                      style={{ paddingHorizontal: 14, paddingVertical: 5, borderRadius: 16, backgroundColor: '#5B5BD6',
+                      style={{ paddingHorizontal: 14, paddingVertical: 5, borderRadius: 16, backgroundColor: T.accent,
                         flexDirection: 'row', alignItems: 'center', gap: 4 }}
                       onPress={() => setChartYearOpen(o => !o)} activeOpacity={0.7}>
-                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#FAFAFA' }}>{chartYear}</Text>
-                      <Text style={{ fontSize: 9, color: '#FAFAFA' }}>{chartYearOpen ? '▲' : '▼'}</Text>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: T.textPrimary }}>{chartYear}</Text>
+                      <Text style={{ fontSize: 9, color: T.textPrimary }}>{chartYearOpen ? '▲' : '▼'}</Text>
                     </TouchableOpacity>
                     {chartYearOpen && (
                       <View style={{ marginTop: 4, gap: 3 }}>
                         {allChartYears.filter(y => y !== chartYear).map(y => (
                           <TouchableOpacity key={y}
                             style={{ paddingHorizontal: 14, paddingVertical: 5, borderRadius: 16,
-                              backgroundColor: '#1A1A3A', borderWidth: 1, borderColor: '#5B5BD640' }}
+                              backgroundColor: '#1A1A3A', borderWidth: 1, borderColor: T.accentMuted }}
                             onPress={() => { setChartYear(y); setChartYearOpen(false); }} activeOpacity={0.7}>
-                            <Text style={{ fontSize: 12, fontWeight: '600', color: '#A0A0C8', textAlign: 'center' }}>{y}</Text>
+                            <Text style={{ fontSize: 12, fontWeight: '600', color: T.textSecondary, textAlign: 'center' }}>{y}</Text>
                           </TouchableOpacity>
                         ))}
                       </View>
@@ -658,18 +659,18 @@ export default function MyPerformanceScreen() {
               <View style={s.card}>
                 {chartPoints.length >= 2 ? (
                   <>
-                    <Text style={{ fontSize: 11, color: '#6060A0', marginBottom: 4 }}>
+                    <Text style={{ fontSize: 11, color: T.textMuted, marginBottom: 4 }}>
                       {rankingEvolution.filter((r: any) => (r.date ?? '').startsWith(String(chartYear))).length >= 2
                         ? 'Weekly ATP ranking data' : 'Based on ranking at each tournament'}
                     </Text>
                     <RankingChart points={chartPoints} />
                   </>
                 ) : chartPoints.length === 1 ? (
-                  <Text style={{ fontSize: 12, color: '#A0A0C8', padding: 8 }}>
+                  <Text style={{ fontSize: 12, color: T.textSecondary, padding: 8 }}>
                     Ranking at last tournament: #{chartPoints[0].ranking}. Play another tournament to see the evolution chart.
                   </Text>
                 ) : (
-                  <Text style={{ fontSize: 12, color: '#A0A0C8', padding: 8 }}>
+                  <Text style={{ fontSize: 12, color: T.textSecondary, padding: 8 }}>
                     No ranking data for {chartYear}. Run the scraper to fetch your ATP ranking history.
                   </Text>
                 )}
@@ -690,21 +691,21 @@ export default function MyPerformanceScreen() {
                 {cleanTournName(detailMatch?.tournamentName ?? detailMatch?.name ?? '')}
               </Text>
               <TouchableOpacity onPress={() => setDetailMatch(null)} style={s.modalClose} activeOpacity={0.7}>
-                <Ionicons name="close" size={20} color="#FAFAFA" />
+                <Ionicons name="close" size={20} color={T.textPrimary} />
               </TouchableOpacity>
             </View>
             {/* Meta row */}
             <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
-              {(detailMatch?.date) && <Text style={{ fontSize: 12, color: '#A0A0C8' }}>{abbrevDate(detailMatch.date)}</Text>}
-              {(detailMatch?.surface) && <Text style={{ fontSize: 12, color: '#A0A0C8', textTransform: 'capitalize' }}>{detailMatch.surface}</Text>}
+              {(detailMatch?.date) && <Text style={{ fontSize: 12, color: T.textSecondary }}>{abbrevDate(detailMatch.date)}</Text>}
+              {(detailMatch?.surface) && <Text style={{ fontSize: 12, color: T.textSecondary, textTransform: 'capitalize' }}>{detailMatch.surface}</Text>}
               {(detailMatch?.roundReached) && (
-                <Text style={{ fontSize: 12, fontWeight: '700', color: '#5B5BD6' }}>{detailMatch.roundReached}</Text>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: T.accent }}>{detailMatch.roundReached}</Text>
               )}
               {((detailMatch?.pointsEarned ?? 0) > 0) && (
-                <Text style={{ fontSize: 12, color: '#A0A0C8' }}>{detailMatch.pointsEarned} pts</Text>
+                <Text style={{ fontSize: 12, color: T.textSecondary }}>{detailMatch.pointsEarned} pts</Text>
               )}
               {detailMatch?.rankingThatWeek && (
-                <Text style={{ fontSize: 12, color: '#5B5BD6', fontWeight: '700' }}>Rank #{detailMatch.rankingThatWeek}</Text>
+                <Text style={{ fontSize: 12, color: T.accent, fontWeight: '700' }}>Rank #{detailMatch.rankingThatWeek}</Text>
               )}
             </View>
             <ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={false}>
@@ -717,19 +718,19 @@ export default function MyPerformanceScreen() {
                     <View key={i} style={[s.modalRow, { paddingVertical: 10 }]}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                         <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: isWin ? 'rgba(45,158,107,0.18)' : 'rgba(226,75,74,0.18)', alignItems: 'center', justifyContent: 'center' }}>
-                          <Text style={{ fontSize: 11, fontWeight: '800', color: isWin ? '#2D9E6B' : '#E24B4A' }}>{isWin ? 'W' : 'L'}</Text>
+                          <Text style={{ fontSize: 11, fontWeight: '800', color: isWin ? T.green : T.red }}>{isWin ? 'W' : 'L'}</Text>
                         </View>
                         <View style={{ flex: 1 }}>
-                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#6060A0' }}>{mx.round}</Text>
-                          <Text style={{ fontSize: 13, color: '#FAFAFA', marginTop: 1 }} numberOfLines={1}>{mx.opponent}</Text>
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: T.textMuted }}>{mx.round}</Text>
+                          <Text style={{ fontSize: 13, color: T.textPrimary, marginTop: 1 }} numberOfLines={1}>{mx.opponent}</Text>
                         </View>
-                        <Text style={{ fontSize: 14, fontWeight: '700', color: '#FAFAFA' }}>{mx.score}</Text>
+                        <Text style={{ fontSize: 14, fontWeight: '700', color: T.textPrimary }}>{mx.score}</Text>
                       </View>
                     </View>
                   );
                 })
               ) : (
-                <Text style={{ color: '#6060A0', textAlign: 'center', padding: 24, fontSize: 13 }}>
+                <Text style={{ color: T.textMuted, textAlign: 'center', padding: 24, fontSize: 13 }}>
                   No match details available yet.{'\n'}Re-run the scraper to fetch scores.
                 </Text>
               )}
@@ -749,7 +750,7 @@ export default function MyPerformanceScreen() {
                 {matchModal?.type === 'wins' ? 'Wins' : matchModal?.type === 'losses' ? 'Losses' : 'Match Record'}
               </Text>
               <TouchableOpacity onPress={() => setMatchModal(null)} style={s.modalClose} activeOpacity={0.7}>
-                <Ionicons name="close" size={20} color="#FAFAFA" />
+                <Ionicons name="close" size={20} color={T.textPrimary} />
               </TouchableOpacity>
             </View>
             <ScrollView style={{ maxHeight: 400 }} showsVerticalScrollIndicator={false}>
@@ -757,21 +758,21 @@ export default function MyPerformanceScreen() {
                 <View key={i} style={[s.modalRow, { paddingVertical: 10 }]}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                     <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: m.isWin ? 'rgba(45,158,107,0.18)' : 'rgba(226,75,74,0.18)', alignItems: 'center', justifyContent: 'center' }}>
-                      <Text style={{ fontSize: 11, fontWeight: '800', color: m.isWin ? '#2D9E6B' : '#E24B4A' }}>{m.isWin ? 'W' : 'L'}</Text>
+                      <Text style={{ fontSize: 11, fontWeight: '800', color: m.isWin ? T.green : T.red }}>{m.isWin ? 'W' : 'L'}</Text>
                     </View>
                     <View style={{ flex: 1 }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#6060A0', minWidth: 32 }}>{m.round}</Text>
-                        <Text style={{ fontSize: 13, color: '#FAFAFA', flex: 1 }} numberOfLines={1}>{m.opponent}</Text>
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: T.textMuted, minWidth: 32 }}>{m.round}</Text>
+                        <Text style={{ fontSize: 13, color: T.textPrimary, flex: 1 }} numberOfLines={1}>{m.opponent}</Text>
                       </View>
-                      <Text style={{ fontSize: 11, color: '#6060A0', marginTop: 2 }} numberOfLines={1}>{cleanTournName(m.tournamentName)} · {abbrevDate(m.date)}</Text>
+                      <Text style={{ fontSize: 11, color: T.textMuted, marginTop: 2 }} numberOfLines={1}>{cleanTournName(m.tournamentName)} · {abbrevDate(m.date)}</Text>
                     </View>
-                    <Text style={{ fontSize: 12, fontWeight: '600', color: '#A0A0C8', marginLeft: 4 }}>{m.score}</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: T.textSecondary, marginLeft: 4 }}>{m.score}</Text>
                   </View>
                 </View>
               ))}
               {matchModalEntries.length === 0 && (
-                <Text style={{ color: '#A0A0C8', textAlign: 'center', padding: 20 }}>No matches found.</Text>
+                <Text style={{ color: T.textSecondary, textAlign: 'center', padding: 20 }}>No matches found.</Text>
               )}
               <View style={{ height: 20 }} />
             </ScrollView>
@@ -783,7 +784,7 @@ export default function MyPerformanceScreen() {
 }
 
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#0F0F1A' },
+  safe: { flex: 1, backgroundColor: T.bg },
   scroll: { flex: 1 },
   scrollContent: { paddingBottom: 40 },
 
@@ -793,17 +794,17 @@ const s = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#2A2A4A',
+    borderBottomColor: T.cardBorder,
   },
   headerCenter: { flex: 1, alignItems: 'center' },
-  headerTitle: { fontSize: 20, fontWeight: '700', color: '#FAFAFA' },
+  headerTitle: { fontSize: 20, fontWeight: '700', color: T.textPrimary },
   closeBtn: {
     position: 'absolute',
     right: 16,
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#1A1A2E',
+    backgroundColor: T.card,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -812,46 +813,46 @@ const s = StyleSheet.create({
   sectionLabel: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#A0A0C8',
+    color: T.textSecondary,
     letterSpacing: 1,
     textTransform: 'uppercase',
     marginBottom: 8,
   },
 
   card: {
-    backgroundColor: '#1A1A2E',
+    backgroundColor: T.card,
     borderRadius: 12,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#2A2A4A',
+    borderColor: T.cardBorder,
   },
 
   rowCards: { flexDirection: 'row', gap: 10 },
   condCard: {
-    backgroundColor: '#1A1A2E',
+    backgroundColor: T.card,
     borderRadius: 12,
     padding: 14,
     borderWidth: 1,
-    borderColor: '#2A2A4A',
+    borderColor: T.cardBorder,
     alignItems: 'center',
   },
-  condCardLabel: { fontSize: 10, fontWeight: '600', color: '#A0A0C8', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 6 },
-  condCardValue: { fontSize: 16, fontWeight: '700', color: '#FAFAFA', marginBottom: 2 },
-  condCardCount: { fontSize: 11, color: '#6060A0' },
+  condCardLabel: { fontSize: 10, fontWeight: '600', color: T.textSecondary, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 6 },
+  condCardValue: { fontSize: 16, fontWeight: '700', color: T.textPrimary, marginBottom: 2 },
+  condCardCount: { fontSize: 11, color: T.textMuted },
 
   condExpand: {
-    backgroundColor: '#0F0F1A',
+    backgroundColor: T.bg,
     borderRadius: 10,
     marginTop: 10,
     padding: 12,
     borderWidth: 1,
-    borderColor: '#2A2A4A',
+    borderColor: T.cardBorder,
     gap: 6,
   },
   condExpandTitle: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#A0A0C8',
+    color: T.textSecondary,
     marginBottom: 6,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
@@ -859,23 +860,23 @@ const s = StyleSheet.create({
 
   surfaceRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
   surfaceDot: { width: 8, height: 8, borderRadius: 4, marginRight: 8 },
-  surfaceLabel: { fontSize: 13, fontWeight: '600', color: '#FAFAFA', width: 44 },
-  surfaceCount: { fontSize: 11, color: '#6060A0', marginRight: 10 },
+  surfaceLabel: { fontSize: 13, fontWeight: '600', color: T.textPrimary, width: 44 },
+  surfaceCount: { fontSize: 11, color: T.textMuted, marginRight: 10 },
   barTrack: {
     flex: 1,
     height: 6,
-    backgroundColor: '#252540',
+    backgroundColor: T.cardElevated,
     borderRadius: 3,
     overflow: 'hidden',
     marginRight: 8,
   },
   barFill: { height: '100%', borderRadius: 3 },
 
-  lockedText: { fontSize: 13, color: '#6060A0', textAlign: 'center', lineHeight: 22 },
-  lockedSmall: { fontSize: 11, color: '#6060A0' },
+  lockedText: { fontSize: 13, color: T.textMuted, textAlign: 'center', lineHeight: 22 },
+  lockedSmall: { fontSize: 11, color: T.textMuted },
 
   resultsPanel: {
-    backgroundColor: '#0F0F1A',
+    backgroundColor: T.bg,
     borderRadius: 8,
     marginTop: 4,
     marginBottom: 6,
@@ -889,59 +890,59 @@ const s = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#1E1E38',
   },
-  resultCity: { fontSize: 13, fontWeight: '600', color: '#FAFAFA' },
-  resultDate: { fontSize: 11, color: '#A0A0C8', marginTop: 1 },
-  resultPrize: { fontSize: 12, fontWeight: '700', color: '#5B5BD6' },
-  effValue: { fontSize: 13, fontWeight: '600', color: '#FAFAFA' },
+  resultCity: { fontSize: 13, fontWeight: '600', color: T.textPrimary },
+  resultDate: { fontSize: 11, color: T.textSecondary, marginTop: 1 },
+  resultPrize: { fontSize: 12, fontWeight: '700', color: T.accent },
+  effValue: { fontSize: 13, fontWeight: '600', color: T.textPrimary },
 
   catRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#2A2A4A',
+    borderBottomColor: T.cardBorder,
     gap: 8,
     flexWrap: 'wrap',
   },
-  catName: { fontSize: 14, fontWeight: '700', color: '#FAFAFA', minWidth: 90, flexShrink: 0 },
-  catCount: { fontSize: 12, color: '#A0A0C8', flex: 1 },
-  catPrize: { fontSize: 12, fontWeight: '600', color: '#5B5BD6' },
+  catName: { fontSize: 14, fontWeight: '700', color: T.textPrimary, minWidth: 90, flexShrink: 0 },
+  catCount: { fontSize: 12, color: T.textSecondary, flex: 1 },
+  catPrize: { fontSize: 12, fontWeight: '600', color: T.accent },
 
   timelineScroll: { paddingRight: 8, gap: 10 },
   miniCard: {
-    backgroundColor: '#1A1A2E',
+    backgroundColor: T.card,
     borderRadius: 10,
     padding: 12,
     borderWidth: 1,
-    borderColor: '#2A2A4A',
+    borderColor: T.cardBorder,
     width: 110,
   },
   miniCardTop: { flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 5 },
   miniDot: { width: 7, height: 7, borderRadius: 4 },
-  miniDate: { fontSize: 10, color: '#A0A0C8', fontWeight: '600' },
-  miniCity: { fontSize: 12, fontWeight: '700', color: '#FAFAFA', marginBottom: 4 },
-  miniPrize: { fontSize: 11, color: '#5B5BD6', fontWeight: '600' },
+  miniDate: { fontSize: 10, color: T.textSecondary, fontWeight: '600' },
+  miniCity: { fontSize: 12, fontWeight: '700', color: T.textPrimary, marginBottom: 4 },
+  miniPrize: { fontSize: 11, color: T.accent, fontWeight: '600' },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
-  modalContent: { backgroundColor: '#1A1A2E', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, paddingBottom: 16 },
+  modalContent: { backgroundColor: T.card, borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, paddingBottom: 16 },
   modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
-  modalTitle: { fontSize: 18, fontWeight: '700', color: '#FAFAFA' },
-  modalClose: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#2A2A4A', alignItems: 'center', justifyContent: 'center' },
-  modalRow: { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#2A2A4A' },
-  modalTournName: { fontSize: 14, fontWeight: '600', color: '#FAFAFA' },
-  modalTournDate: { fontSize: 12, color: '#A0A0C8', marginTop: 2 },
-  modalRound: { fontSize: 13, fontWeight: '700', color: '#5B5BD6' },
-  modalWL: { fontSize: 12, color: '#A0A0C8', marginTop: 2 },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: T.textPrimary },
+  modalClose: { width: 32, height: 32, borderRadius: 16, backgroundColor: T.cardBorder, alignItems: 'center', justifyContent: 'center' },
+  modalRow: { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: T.cardBorder },
+  modalTournName: { fontSize: 14, fontWeight: '600', color: T.textPrimary },
+  modalTournDate: { fontSize: 12, color: T.textSecondary, marginTop: 2 },
+  modalRound: { fontSize: 13, fontWeight: '700', color: T.accent },
+  modalWL: { fontSize: 12, color: T.textSecondary, marginTop: 2 },
 });
 
 const pt = StyleSheet.create({
-  groupLabel: { fontSize: 10, fontWeight: '700', color: '#6060A0', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 6 },
-  headerRow: { flexDirection: 'row', alignItems: 'center', paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: '#2A2A4A', marginBottom: 2 },
-  hCell: { fontSize: 10, fontWeight: '600', color: '#6060A0', textTransform: 'uppercase', letterSpacing: 0.4 },
+  groupLabel: { fontSize: 10, fontWeight: '700', color: T.textMuted, letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 6 },
+  headerRow: { flexDirection: 'row', alignItems: 'center', paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: T.cardBorder, marginBottom: 2 },
+  hCell: { fontSize: 10, fontWeight: '600', color: T.textMuted, textTransform: 'uppercase', letterSpacing: 0.4 },
   row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10 },
-  rowBorder: { borderBottomWidth: 1, borderBottomColor: '#2A2A4A' },
-  tournName: { fontSize: 13, fontWeight: '600', color: '#FAFAFA' },
-  playedDate: { fontSize: 10, color: '#6060A0', marginTop: 1 },
-  cell: { fontSize: 12, color: '#A0A0C8' },
-  pts: { fontSize: 14, fontWeight: '700', color: '#F5A623' },
+  rowBorder: { borderBottomWidth: 1, borderBottomColor: T.cardBorder },
+  tournName: { fontSize: 13, fontWeight: '600', color: T.textPrimary },
+  playedDate: { fontSize: 10, color: T.textMuted, marginTop: 1 },
+  cell: { fontSize: 12, color: T.textSecondary },
+  pts: { fontSize: 14, fontWeight: '700', color: T.amber },
 });
