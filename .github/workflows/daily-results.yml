@@ -1,0 +1,51 @@
+name: Daily Incremental Results Scraper
+
+on:
+  schedule:
+    # Every day at 06:00 UTC except Monday — the full weekly calendar sync
+    # (weekly-scraper.yml) already runs the player phase as part of its
+    # Monday 06:00 UTC run, so this workflow skips that weekday to avoid
+    # scraping the same player profiles twice back-to-back.
+    - cron: '0 6 * * 0,2,3,4,5,6'
+  workflow_dispatch:
+
+jobs:
+  scrape-profiles:
+    name: Scrape Player Profiles (incremental)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # No continue-on-error anywhere in this job: a nonzero exit from any step
+    # (in particular tourly_scraper.py, which exits nonzero if the player
+    # phase errors or trips its liveness gate — see scraper_runs status) must
+    # fail the job so GitHub Actions surfaces it as red, not swallowed.
+    continue-on-error: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        # `set -e` (bash default for multi-line `run:` blocks in Actions) already
+        # fails the step on the first nonzero command; kept explicit here for
+        # clarity/robustness in case the default shell is ever overridden.
+        shell: bash -e {0}
+        run: |
+          cd scraper
+          pip install -r requirements.txt
+          playwright install chromium --with-deps
+
+      - name: Run Tourly scraper (player profiles only)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        shell: bash -e {0}
+        # tourly_scraper.py exits 1 if the player phase raised or its liveness
+        # gate (rows_found below threshold) tripped — no `|| true` / `|| echo`
+        # here, so that nonzero exit propagates and fails this step (and the job).
+        run: |
+          cd scraper
+          python tourly_scraper.py --players-only

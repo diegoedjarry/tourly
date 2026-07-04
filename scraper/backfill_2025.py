@@ -193,14 +193,61 @@ async def fetch_itf_2025() -> list[dict]:
 
 # ── ATP Challenger Tour — 2025 (single Wikipedia season page) ────────────────
 #
-# Unlike the ITF calendar, the ATP Challenger Tour Wikipedia page lists the
-# whole season's events as wikitable rows (Tournament | Date | City, Country |
-# Surface | Category | ...) rather than a week-by-week grid, so this parser is
-# simpler than the ITF one: walk wikitable rows and pick out the columns we
-# need. The exact column layout varies by year/page revision, so parsing is
-# best-effort and skips rows it cannot confidently read (never guesses).
+# The 2025 ATP Challenger Tour Wikipedia page is structured as one wikitable
+# PER MONTH under "== Schedule ==" (=== January === ... === November ===),
+# NOT the Tournament/Date/City/Surface column layout used elsewhere. Each
+# table row block looks like (wikitext, one physical line per `|-valign=top`
+# row):
+#
+#   |rowspan=6|December 30||rowspan=2|[[2025 Canberra Tennis International|
+#   Canberra Tennis International]]<br/>[[Canberra]], Australia <br/>
+#   Hard – Challenger 125 – 32S/24Q/16D<br/>[[...Singles]] – [[...Doubles]]
+#   || {{champion}} || {{runner-up}} ||rowspan=2|{{semifinalists}}
+#   ||rowspan=2|{{quarterfinalists}}
+#   |-valign=top
+#   | {{champion pairing line 2 / score}} || {{runner-up line 2}}
+#
+# i.e. each tournament occupies a 2-physical-row block (the `rowspan=2` on
+# the tournament/semis/QF cells spans both), and the leading `rowspan=N`
+# "Week of" cell groups N/2 tournaments that share a start date. There is no
+# separate date/surface/category column — surface and category are embedded
+# in the tournament cell's second wikitext line as
+# "<Surface> – Challenger <tier> – <draw sizes>". No per-event prize figure
+# is published on this page (only a season-wide "$60,000 up to $250,000"
+# range in the lede), so prize_money_total is derived entirely from the tier.
+#
+# Wikipedia rowspan bookkeeping in raw wikitext is unreliable to replay
+# exactly, so instead of tracking rowspans we scan line-by-line and just
+# remember the *last seen* "Week of" date, applying it to every subsequent
+# tournament cell until a new date cell appears — this is equivalent to what
+# the rowspan grouping encodes, without needing to count remaining spans.
 
 _CH_CATEGORY_RE = re.compile(r"\bChallenger\s*(\d{2,3})\b", re.IGNORECASE)
+
+_CH_TIER_PRIZE = {50: 40000, 75: 60000, 100: 80000, 125: 120000, 175: 220000}
+
+_CH_MONTH_MAP = {
+    "january": 1, "february": 2, "march": 3, "april": 4,
+    "may": 5, "june": 6, "july": 7, "august": 8,
+    "september": 9, "october": 10, "november": 11, "december": 12,
+}
+
+# "Week of" cell, e.g. "|rowspan=6|December 30" or "|rowspan=10|February 3".
+_CH_WEEKOF_RE = re.compile(
+    r"^\|(?:rowspan=\d+\|)?(" + "|".join(_CH_MONTH_MAP) + r")\s+(\d{1,2})\s*(?:\|\||$)",
+    re.IGNORECASE,
+)
+
+# Tournament cell: [[Tournament]]<br/>[[City]], Country <br/> Surface – Challenger NNN – draw
+_CH_TOURN_RE = re.compile(
+    r"\[\[(?:[^\]|]+\|)?([^\]]+)\]\]\s*<br\s*/?>\s*"          # tournament name
+    r"\[\[(?:[^\]|]+\|)?([^\]]+)\]\],?\s*([^<]*?)\s*<br\s*/?>\s*"  # city, country
+    r"([A-Za-z]+(?:\s*\(i\))?)\s*[–-]\s*Challenger\s*(\d{2,3})",  # surface – Challenger NNN
+    re.IGNORECASE,
+)
+
+# A stray per-event prize figure, if ever present, e.g. "$45,000".
+_CH_PRIZE_RE = re.compile(r"\$([\d,]{4,})")
 
 
 async def fetch_atp_challenger_2025() -> list[dict]:
@@ -228,50 +275,57 @@ async def fetch_atp_challenger_2025() -> list[dict]:
             wikitext = d["parse"]["wikitext"]["*"]
             print(f"   Page len={len(wikitext)}: {page}")
 
-            # Wikitable rows look like:
-            #   |-
-            #   | [[City]], [[Country]] || Jan 6 || Hard || $45,000 || ...
-            # We scan cell-by-cell for a city/country wikilink pair, a date-like
-            # token, and a surface keyword within the same row block.
-            row_blocks = re.split(r"\n\|-", wikitext)
+            current_month: Optional[int] = None
+            current_day: Optional[int] = None
 
-            surface_re = re.compile(r"\b(clay|hard|grass|carpet)\b", re.IGNORECASE)
-            city_re = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\],?\s*\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
-            date_re = re.compile(
-                r"\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|"
-                r"Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{1,2})",
-                re.IGNORECASE,
-            )
-            month_abbrev = {
-                "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
-                "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
-            }
-
-            for block in row_blocks:
-                city_m = city_re.search(block)
-                date_m = date_re.search(block)
-                if not city_m or not date_m:
+            for raw_line in wikitext.splitlines():
+                line = raw_line.strip()
+                if not line.startswith("|"):
                     continue
 
-                city, country = city_m.group(1).strip(), city_m.group(2).strip()
-                month_key = date_m.group(1)[:3].lower()
-                month = month_abbrev.get(month_key)
-                day = int(date_m.group(2))
-                if not month:
+                wm = _CH_WEEKOF_RE.match(line)
+                if wm:
+                    month_name = wm.group(1).lower()
+                    current_month = _CH_MONTH_MAP[month_name]
+                    current_day = int(wm.group(2))
+                    # Fall through: the same physical line also contains the
+                    # first tournament cell, so don't `continue` here.
+
+                tm = _CH_TOURN_RE.search(line)
+                if not tm or current_month is None:
                     continue
+
+                name = re.sub(r"\s+", " ", tm.group(1)).strip()
+                city = re.sub(r"\s+", " ", tm.group(2)).strip()
+                country = re.sub(r"\[\[|\]\]", "", tm.group(3)).strip(", ").strip()
+                surface_raw = tm.group(4)
+                tier = int(tm.group(5))
+
+                surface = normalise_surface(surface_raw)
+                category = f"Challenger {tier}"
+
+                # "Week of" dates near year boundaries (e.g. "December 30")
+                # belong to the previous calendar year even though they're
+                # listed on the 2025 page as lead-in weeks.
+                year = SEASON
+                if current_month == 12:
+                    year = SEASON - 1
+
                 try:
-                    start_date = datetime(SEASON, month, day).strftime("%Y-%m-%d")
-                except ValueError:
+                    start_date = datetime(year, current_month, current_day).strftime("%Y-%m-%d")
+                except (ValueError, TypeError):
                     continue
 
-                surf_m = surface_re.search(block)
-                surface = normalise_surface(surf_m.group(1)) if surf_m else None
+                prize_money_total = _CH_TIER_PRIZE.get(tier)
+                pm = _CH_PRIZE_RE.search(line)
+                if pm and prize_money_total is not None:
+                    try:
+                        parsed_prize = int(pm.group(1).replace(",", ""))
+                        prize_money_total = min(prize_money_total, parsed_prize)
+                    except ValueError:
+                        pass
 
-                cat_m = _CH_CATEGORY_RE.search(block)
-                category = f"Challenger {cat_m.group(1)}" if cat_m else None
-
-                name = f"{city} CH"
-                tid = f"wiki_ch_{SEASON}_{name[:35].replace(' ', '_')}_{start_date}"
+                tid = f"wiki25_ch_{name[:40].replace(' ', '_')}_{start_date}"
                 if tid in seen:
                     continue
                 seen.add(tid)
@@ -285,7 +339,7 @@ async def fetch_atp_challenger_2025() -> list[dict]:
                     "category":          category,
                     "start_date":        start_date,
                     "end_date":          None,
-                    "prize_money_total": None,
+                    "prize_money_total": prize_money_total,
                     "season":            SEASON,
                     "is_auto_populated": True,
                 })

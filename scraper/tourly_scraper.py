@@ -27,6 +27,7 @@ from curl_cffi.requests import AsyncSession
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
+from pydantic import BaseModel, ConfigDict, ValidationError
 from supabase import create_client, Client
 
 load_dotenv()
@@ -113,6 +114,124 @@ def normalise_surface(raw: Optional[str]) -> str:
     return SURFACE_MAP.get(raw.strip().lower(), "hard")
 
 
+# ── External payload schemas (pydantic) ─────────────────────────────────────────
+#
+# These model the MINIMAL contract each source actually delivers, matching exactly
+# what the parsing code below reads (see field-by-field usage in each class).
+# Fields already treated as optional/absent-tolerant in the code stay Optional
+# here too — the goal is to catch a genuine shape change in the source (renamed
+# field, wrong type, list-vs-dict swap), not to reject cosmetically-different but
+# still-parseable payloads.
+
+class SofascoreItfItem(BaseModel):
+    """One item from the Sofascore ITF calendar API response's `items` array.
+    Only fields read by ITFTournamentScraper._fetch_itf_via_browser are modelled.
+    """
+    model_config = ConfigDict(extra="ignore")
+
+    tournamentKey: Optional[str] = None
+    id: Optional[object] = None  # fallback id — not consistently a fixed type
+    tournamentName: Optional[str] = None
+    name: Optional[str] = None
+    venue: Optional[str] = None
+    location: Optional[str] = None
+    hostNation: Optional[str] = None
+    surfaceDesc: Optional[str] = None
+    surfaceCode: Optional[str] = None
+    category: Optional[str] = None
+    startDate: Optional[str] = None
+    endDate: Optional[str] = None
+    prizeMoney: Optional[object] = None  # source sends this as string or number
+
+
+class AtpChallengerItem(BaseModel):
+    """One tournament item from the ATP Challenger calendar JSON API
+    (TournamentDates[].Tournaments[]). Only fields read by
+    ATPChallengerScraper.scrape_calendar are modelled.
+    """
+    model_config = ConfigDict(extra="ignore")
+
+    Id: Optional[object] = None
+    Name: Optional[str] = None
+    Location: Optional[str] = None
+    Surface: Optional[str] = None
+    Type: Optional[str] = None
+    TotalFinancialCommitment: Optional[object] = None
+    PrizeMoneyDetails: Optional[object] = None
+    FormattedDate: Optional[str] = None
+
+
+class TennisAbstractMatchRow(BaseModel):
+    """
+    The Tennis Abstract 'recent-results' table row shape consumed by
+    TennisAbstractScraper._build_match_history. Rows arrive as list[str] from
+    the HTML table parser; only cells actually read are modelled here
+    (indices 0-7: date, tournament, surface, round, player_rank, opp_rank,
+    score_desc, score — see _build_match_history's column-index comment).
+    Cells beyond index 7 are tolerated (ignored) since the parser never reads
+    them.
+    """
+    model_config = ConfigDict(extra="ignore")
+
+    date: str
+    tournament: str
+    surface: str
+    round: str
+    player_rank: Optional[str] = ""
+    opp_rank: Optional[str] = ""
+    score_desc: Optional[str] = ""
+    score: Optional[str] = ""
+
+    @classmethod
+    def from_row(cls, row: list) -> "TennisAbstractMatchRow":
+        """Build from the positional list[str] row format; missing trailing
+        cells (row shorter than 8) map to their Optional defaults."""
+        cells = list(row) + [None] * (8 - len(row))
+        return cls(
+            date=cells[0] or "",
+            tournament=cells[1] or "",
+            surface=cells[2] or "",
+            round=cells[3] or "",
+            player_rank=cells[4] or "",
+            opp_rank=cells[5] or "",
+            score_desc=cells[6] or "",
+            score=cells[7] or "",
+        )
+
+
+def validate_batch(raw_items: list, model: type[BaseModel], phase: str) -> tuple[list, int]:
+    """
+    Validate a batch of raw dict/list items against a pydantic model at the
+    ingestion boundary.
+
+    Returns (valid_raw_items, invalid_count) — valid_raw_items are the ORIGINAL
+    raw items (not the parsed model instances), so downstream code keeps
+    operating on the raw dict/list shape it already expects; validation here is
+    purely a shape-change tripwire, not a replacement for existing parsing.
+
+    Logs the first 3 validation failures per phase (then suppresses further
+    per-item logging to avoid flooding output on a systemic shape change).
+    """
+    valid: list = []
+    invalid_count = 0
+    logged = 0
+    for item in raw_items:
+        try:
+            if isinstance(item, list):
+                model.from_row(item)  # type: ignore[attr-defined]
+            else:
+                model.model_validate(item)
+            valid.append(item)
+        except ValidationError as e:
+            invalid_count += 1
+            if logged < 3:
+                print(f"⚠  [{phase}] schema validation failed for item: {e.errors()[0] if e.errors() else e}")
+                logged += 1
+    if invalid_count > 3:
+        print(f"⚠  [{phase}] ...and {invalid_count - 3} more validation failure(s) suppressed.")
+    return valid, invalid_count
+
+
 # ── Tournament Scraper (ITF via direct HTTP) ───────────────────────────────────
 
 class ITFTournamentScraper:
@@ -123,6 +242,13 @@ class ITFTournamentScraper:
     """
 
     ITF_KEYWORDS = ("itf", "challenger", "world tennis tour", "m15", "m25", "m60", "m80", "m100")
+
+    def __init__(self):
+        # Set by _fetch_itf_via_browser after schema validation so the caller
+        # (run_tournament_phase) can decide whether the phase should be treated
+        # as FAILED due to a source shape change (see validate_batch/>50% rule).
+        self.last_valid_count: int = 0
+        self.last_invalid_count: int = 0
 
     async def scrape_calendar(self) -> list[dict]:
         print("📡  Fetching ITF tournament calendar via browser (official ITF API)...")
@@ -220,10 +346,18 @@ class ITFTournamentScraper:
             await browser.close()
 
         print(f"   Raw items captured: {len(captured_items)}")
+
+        # Schema-validate each raw item at the ingestion boundary before parsing.
+        # Invalid items are counted and dropped; run_tournament_phase uses the
+        # invalid/total ratio to decide if the source's shape changed (>50% ⇒ FAILED).
+        valid_items, invalid_count = validate_batch(captured_items, SofascoreItfItem, "itf_calendar")
+        self.last_valid_count = len(valid_items)
+        self.last_invalid_count = invalid_count
+
         # Deduplicate by tournamentKey and normalise
         seen: set[str] = set()
         tournaments = []
-        for item in captured_items:
+        for item in valid_items:
             tid = item.get("tournamentKey") or item.get("id") or ""
             tid = str(tid)
             if not tid or tid in seen:
@@ -409,6 +543,13 @@ class ATPChallengerScraper:
     and store that instead. `category` continues to reflect the derived tier label.
     """
 
+    def __init__(self):
+        # Set by scrape_calendar after schema validation so the caller
+        # (run_challenger_phase) can decide whether the phase should be treated
+        # as FAILED due to a source shape change (see validate_batch/>50% rule).
+        self.last_valid_count: int = 0
+        self.last_invalid_count: int = 0
+
     _ATP_CH_API    = "https://www.atptour.com/en/-/tournaments/calendar/challenger"
     _ATP_WARMUP    = "https://www.atptour.com/en/tournaments"
 
@@ -523,11 +664,17 @@ class ATPChallengerScraper:
             raw_items = [t for dg in body.get("TournamentDates", []) for t in dg.get("Tournaments", [])]
             print(f"   Raw items from API: {len(raw_items)}")
 
+        # Filter to Challenger-type items first (non-CH items, e.g. ATP Tour main
+        # draw, are a different — legitimately-shaped — payload, not a validation
+        # failure), then schema-validate the CH items at the ingestion boundary.
+        ch_items = [t for t in raw_items if isinstance(t, dict) and t.get("Type") == "CH"]
+        valid_items, invalid_count = validate_batch(ch_items, AtpChallengerItem, "challenger_calendar")
+        self.last_valid_count = len(valid_items)
+        self.last_invalid_count = invalid_count
+
         seen: set[str] = set()
         tournaments = []
-        for item in raw_items:
-            if not isinstance(item, dict) or item.get("Type") != "CH":
-                continue
+        for item in valid_items:
             tid = str(item.get("Id") or "")
             if not tid:
                 continue
@@ -606,6 +753,11 @@ class TennisAbstractScraper:
 
     def __init__(self):
         self._curr_rank_cache: Optional[dict] = None
+        # Set by _build_match_history after schema validation so the caller
+        # (run_player_phase) can decide whether the phase should be treated as
+        # FAILED due to a Tennis Abstract table shape change (see >50% rule).
+        self.last_row_valid_count: int = 0
+        self.last_row_invalid_count: int = 0
 
     # ── public entry point ────────────────────────────────────────────────────
 
@@ -873,6 +1025,17 @@ class TennisAbstractScraper:
         """
         if not rows:
             return []
+
+        # Schema-validate each raw row at the ingestion boundary (observability only —
+        # does NOT filter `rows` or alter any parsing/points/win-loss logic below,
+        # which keeps its own tolerant length checks e.g. `len(row) < 7`). This exists
+        # purely to catch a genuine Tennis Abstract table shape change (column
+        # reordering/removal) via invalid_count, surfaced by the caller's >50% gate.
+        valid_rows, invalid_row_count = validate_batch(rows, TennisAbstractMatchRow, "player_match_rows")
+        if invalid_row_count:
+            print(f"⚠  [player_match_rows] {invalid_row_count}/{len(rows)} row(s) failed schema validation.")
+        self.last_row_valid_count = len(valid_rows)
+        self.last_row_invalid_count = invalid_row_count
 
         def parse_ta_date(s: str) -> Optional[str]:
             """'11-May-2026' → '2026-05-11'"""
@@ -1351,27 +1514,68 @@ class TourlyDataIntegrator:
         print(f"✓  Tournaments synced — {stats['found']} found, {stats['added']} added, {stats['updated']} updated.")
         return stats
 
-    def upsert_player_profile(self, data: dict):
+    @staticmethod
+    def _match_history_key(match_history: list) -> set:
+        """
+        Build a comparable, order-insensitive fingerprint of a match_history list:
+        one entry per (tournament, date) with its round/points/win-loss and the
+        set of individual matches — so a scrape that returns the same tournaments
+        and matches (possibly in a different order) is recognised as unchanged.
+        """
+        fingerprint = set()
+        for entry in match_history or []:
+            matches_fp = tuple(sorted(
+                (m.get("round"), m.get("opponent"), m.get("score"), m.get("playerWon"), m.get("qualifying"))
+                for m in (entry.get("matches") or [])
+            ))
+            fingerprint.add((
+                entry.get("tournamentName"),
+                entry.get("date"),
+                entry.get("roundReached"),
+                entry.get("wins"),
+                entry.get("losses"),
+                entry.get("pointsEarned"),
+                matches_fp,
+            ))
+        return fingerprint
+
+    def upsert_player_profile(self, data: dict) -> str:
+        """
+        Upsert a player profile. Returns one of:
+          "written"   — row was inserted/updated
+          "unchanged" — new match_history is identical to the stored one; write skipped
+          "error"     — upsert failed (see printed warning)
+        """
         try:
             player_name = data["player_name"]
             new_mh = data.get("match_history") or []
 
+            existing = self.sb.table("player_profiles") \
+                .select("match_history") \
+                .eq("player_name", player_name) \
+                .maybe_single() \
+                .execute()
+            existing_mh = (existing.data or {}).get("match_history") or []
+
             # Guard: if new scrape returned empty match_history, preserve existing data
             if not new_mh:
-                existing = self.sb.table("player_profiles") \
-                    .select("match_history") \
-                    .eq("player_name", player_name) \
-                    .maybe_single() \
-                    .execute()
-                existing_mh = (existing.data or {}).get("match_history") or []
                 if existing_mh:
                     print(f"⚠  Scrape returned empty match_history for '{player_name}' — preserving existing {len(existing_mh)} entries.")
                     data = {k: v for k, v in data.items() if k not in ("match_history", "points_defending", "win_loss_by_surface")}
 
+            # Incremental-aware: if the freshly scraped match_history is identical
+            # (same tournaments + matches) to what's already stored, skip the write
+            # entirely to avoid pointless updated_at churn on unchanged data.
+            elif existing_mh and self._match_history_key(new_mh) == self._match_history_key(existing_mh):
+                print(f"=  match_history unchanged for '{player_name}' ({len(new_mh)} tournaments) — skipping write.")
+                return "unchanged"
+
             self.sb.table("player_profiles").upsert(data, on_conflict="player_name").execute()
             print(f"✓  Player profile synced for '{player_name}'.")
+            return "written"
         except Exception as e:
             print(f"⚠  Could not save player profile: {e}")
+            return "error"
 
     # ── scraper_runs logging (liveness / observability) ──────────────────────
     #
@@ -1434,6 +1638,29 @@ class TourlyDataIntegrator:
 GATE_FULL_SEASON_MIN_ROWS  = 30
 GATE_INCREMENTAL_MIN_ROWS  = 8
 
+# Schema-validation "source changed shape" gate: if more than this fraction of a
+# phase's raw items fail pydantic validation, the source's payload shape has
+# likely changed (renamed/removed/retyped field) rather than just containing a
+# few malformed records — treat the phase as FAILED (status 'error', nonzero exit).
+SCHEMA_INVALID_RATIO_FAIL = 0.5
+
+
+def _schema_failure_reason(valid_count: int, invalid_count: int) -> Optional[str]:
+    """
+    Returns an error message if >50% of a phase's items failed schema validation
+    (the "source changed shape" signal), else None. <=50% invalid is tolerated —
+    the caller should still proceed with the valid items and may note
+    invalid_count informationally.
+    """
+    total = valid_count + invalid_count
+    if total == 0 or invalid_count == 0:
+        return None
+    ratio = invalid_count / total
+    if ratio > SCHEMA_INVALID_RATIO_FAIL:
+        return (f"schema validation failed for {invalid_count}/{total} "
+                f"({ratio:.0%}) items — source shape likely changed")
+    return None
+
 
 async def run_tournament_phase(integrator: TourlyDataIntegrator) -> bool:
     """Returns True if the phase's liveness gate passed (rows_found >= threshold)."""
@@ -1444,13 +1671,23 @@ async def run_tournament_phase(integrator: TourlyDataIntegrator) -> bool:
         stats       = integrator.sync_tournaments(tournaments)
         rows_found  = stats["found"]
         rows_upsert = stats["added"] + stats["updated"]
+
+        schema_error = _schema_failure_reason(scraper.last_valid_count, scraper.last_invalid_count)
+        if schema_error:
+            print(f"❌  SCHEMA FAILURE: ITF calendar — {schema_error}")
+            integrator.finish_run(run_id, status="error", rows_found=rows_found,
+                                   rows_upserted=rows_upsert, error=schema_error)
+            return False
+
         gate_ok     = rows_found >= GATE_FULL_SEASON_MIN_ROWS
         status      = "ok" if gate_ok else "low_rows"
+        error_note  = (f"invalid_count={scraper.last_invalid_count} (informational; "
+                        f"<={SCHEMA_INVALID_RATIO_FAIL:.0%} threshold)") if scraper.last_invalid_count else None
         if not gate_ok:
             print(f"⚠  LOW ROWS: ITF calendar returned {rows_found} "
                   f"(< {GATE_FULL_SEASON_MIN_ROWS} threshold)")
         integrator.finish_run(run_id, status=status, rows_found=rows_found,
-                               rows_upserted=rows_upsert)
+                               rows_upserted=rows_upsert, error=error_note)
         return gate_ok
     except Exception as e:
         integrator.finish_run(run_id, status="error", error=str(e))
@@ -1466,13 +1703,23 @@ async def run_challenger_phase(integrator: TourlyDataIntegrator) -> bool:
         stats       = integrator.sync_tournaments(tournaments)
         rows_found  = stats["found"]
         rows_upsert = stats["added"] + stats["updated"]
+
+        schema_error = _schema_failure_reason(scraper.last_valid_count, scraper.last_invalid_count)
+        if schema_error:
+            print(f"❌  SCHEMA FAILURE: Challenger calendar — {schema_error}")
+            integrator.finish_run(run_id, status="error", rows_found=rows_found,
+                                   rows_upserted=rows_upsert, error=schema_error)
+            return False
+
         gate_ok     = rows_found >= GATE_FULL_SEASON_MIN_ROWS
         status      = "ok" if gate_ok else "low_rows"
+        error_note  = (f"invalid_count={scraper.last_invalid_count} (informational; "
+                        f"<={SCHEMA_INVALID_RATIO_FAIL:.0%} threshold)") if scraper.last_invalid_count else None
         if not gate_ok:
             print(f"⚠  LOW ROWS: Challenger calendar returned {rows_found} "
                   f"(< {GATE_FULL_SEASON_MIN_ROWS} threshold)")
         integrator.finish_run(run_id, status=status, rows_found=rows_found,
-                               rows_upserted=rows_upsert)
+                               rows_upserted=rows_upsert, error=error_note)
         return gate_ok
     except Exception as e:
         integrator.finish_run(run_id, status="error", error=str(e))
@@ -1494,15 +1741,30 @@ async def run_player_phase(integrator: TourlyDataIntegrator, player_name: str) -
         await asyncio.sleep(6)  # polite rate limit between players
 
         if profile:
-            match_count = len(profile.get("match_history") or [])
-            integrator.upsert_player_profile(profile)
-            gate_ok = match_count > 0
-            status  = "ok" if gate_ok else "low_rows"
+            schema_error = _schema_failure_reason(scraper.last_row_valid_count, scraper.last_row_invalid_count)
+            if schema_error:
+                print(f"❌  SCHEMA FAILURE: '{player_name}' Tennis Abstract rows — {schema_error}")
+                integrator.finish_run(run_id, status="error",
+                                       rows_found=len(profile.get("match_history") or []),
+                                       rows_upserted=0, error=schema_error)
+                return False
+
+            match_count   = len(profile.get("match_history") or [])
+            write_status  = integrator.upsert_player_profile(profile)
+            gate_ok       = match_count > 0
+            # rows_upserted reflects what actually changed in storage: 0 when the
+            # scrape matched what's already stored (incremental no-op), otherwise
+            # the full match_count for a real write. A failed write still reports
+            # the liveness gate honestly but leaves rows_upserted at 0.
+            rows_upserted = match_count if write_status == "written" else 0
+            status        = "ok" if gate_ok else "low_rows"
+            error_note    = (f"invalid_count={scraper.last_row_invalid_count} (informational; "
+                              f"<={SCHEMA_INVALID_RATIO_FAIL:.0%} threshold)") if scraper.last_row_invalid_count else None
             if not gate_ok:
                 print(f"⚠  LOW ROWS: '{player_name}' scrape returned empty "
                       f"match_history — existing data preserved (see guard above).")
             integrator.finish_run(run_id, status=status, rows_found=match_count,
-                                   rows_upserted=match_count)
+                                   rows_upserted=rows_upserted, error=error_note)
             return gate_ok
         else:
             print(f"⚠  No data returned for '{player_name}' — profile not saved.")
@@ -1550,15 +1812,20 @@ async def fetch_players_to_scrape(supabase: Client) -> list[str]:
     return unique
 
 
-async def main() -> int:
+async def main(*, players_only: bool = False) -> int:
     """
     Runs all phases unconditionally (a gate failure or exception in one phase
     does not skip the others), then exits nonzero if ANY phase failed or tripped
     its liveness gate — so GitHub Actions goes red and the run is investigated,
     even though every phase that could still run, did.
+
+    players_only: skip both calendar phases (ITF + Challenger) and run only the
+    player profile phase. Used by the daily incremental-results workflow, which
+    runs more often than the full weekly calendar sync. Logging/gates for the
+    phases that do run are unchanged.
     """
     print("=" * 52)
-    print("  TOURLY SCRAPER — SYNC ENGINE")
+    print("  TOURLY SCRAPER — SYNC ENGINE" + ("  (--players-only)" if players_only else ""))
     print("=" * 52)
 
     try:
@@ -1569,21 +1836,24 @@ async def main() -> int:
 
     any_failure = False
 
-    print("\n> Phase 1: ITF Tournament Calendar (M15/M25)")
-    try:
-        ok = await run_tournament_phase(integrator)
-        any_failure = any_failure or not ok
-    except Exception as e:
-        print(f"✗  Tournament scraper: {e}")
-        any_failure = True
+    if players_only:
+        print("\nℹ  --players-only: skipping ITF and Challenger calendar phases.")
+    else:
+        print("\n> Phase 1: ITF Tournament Calendar (M15/M25)")
+        try:
+            ok = await run_tournament_phase(integrator)
+            any_failure = any_failure or not ok
+        except Exception as e:
+            print(f"✗  Tournament scraper: {e}")
+            any_failure = True
 
-    print("\n> Phase 1b: ATP Challenger Calendar")
-    try:
-        ok = await run_challenger_phase(integrator)
-        any_failure = any_failure or not ok
-    except Exception as e:
-        print(f"✗  Challenger scraper: {e}")
-        any_failure = True
+        print("\n> Phase 1b: ATP Challenger Calendar")
+        try:
+            ok = await run_challenger_phase(integrator)
+            any_failure = any_failure or not ok
+        except Exception as e:
+            print(f"✗  Challenger scraper: {e}")
+            any_failure = True
 
     player_name = os.getenv("PLAYER_NAME", "").strip()
 
@@ -1669,4 +1939,5 @@ if __name__ == "__main__":
         _integrator = TourlyDataIntegrator()
         fix_prizes(_integrator, dry_run=not apply_changes)
         sys.exit(0)
-    sys.exit(asyncio.run(main()))
+    _players_only = "--players-only" in sys.argv
+    sys.exit(asyncio.run(main(players_only=_players_only)))
