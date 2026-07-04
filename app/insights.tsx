@@ -64,7 +64,14 @@ function parseLocalDate(val: string | undefined): Date | null {
 }
 
 function getPrize(t: any): number {
-  return (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0);
+  // Only tournaments actually played (registered, started, not withdrawn)
+  // count toward prize money — an added-but-unregistered tournament's prize
+  // field must never read as money won.
+  const d = parseLocalDate(t.startDate);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  if (!t.isRegistered || t.isWithdrawn || !d || d > today) return 0;
+  const split = (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0);
+  return split > 0 ? split : (t.prizeMoney ?? 0);
 }
 
 // ─── Shared wrapper ──────────────────────────────────────────────────────────

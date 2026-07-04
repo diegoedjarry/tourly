@@ -217,11 +217,10 @@ function TournamentCard({ item, onPress, selected, selectMode, onLongPress, t }:
           {item.country ? countryFlag(item.country) + ' ' : ''}{item.name}
         </Text>
         {group === 'past' ? (
-          item.isRegistered
-            ? <View style={styles.playedBadge}><Text style={styles.playedText}>{t('tournaments.played')}</Text></View>
-            : item.isInMyList === false
-              ? <View style={styles.scrapedBadge}><Text style={styles.scrapedBadgeText}>{t('tournaments.history')}</Text></View>
-              : null
+          // Every past tournament reads "History" regardless of origin
+          // (user-registered vs scraper-materialized) — one consistent badge,
+          // not two visually different ones for the same past state.
+          <View style={styles.scrapedBadge}><Text style={styles.scrapedBadgeText}>{t('tournaments.history')}</Text></View>
         ) : (
           item.isRegistered
             ? <View style={styles.registeredBadge}><Text style={styles.registeredText}>{t('tournaments.registeredBadge')}</Text></View>
@@ -2435,6 +2434,41 @@ export default function TournamentsScreen() {
     return scrapedPast.filter(s => !existingKeys.has(`${s.name.toLowerCase()}|${s.startDate}`));
   }, [scrapedPast, data?.tournaments]);
 
+  // Single globally-sorted past list (most recent week first, undated last).
+  // Previously "own" tournaments and "scraped-only" tournaments were rendered
+  // as two independently-sorted stacks, so a March scraped entry could render
+  // below a June registered one — that's what read as "unorganized".
+  const pastWeeksMerged = useMemo(() => {
+    const noDateLabel = t('tournaments.noDate');
+    const ownWeeks = groupByWeek(pastGroup, noDateLabel).map(w => ({
+      ...w,
+      items: w.items.map((item: any) => ({ kind: 'own' as const, item })),
+    }));
+    const scrapedTagged = (scrapedPastEntries ?? []).map(e => ({ ...e, id: `scraped|${e.name}|${e.startDate}` }));
+    const scrapedWeeks = groupByWeek(scrapedTagged, noDateLabel).map(w => ({
+      ...w,
+      items: w.items.map((item: any) => ({ kind: 'scraped' as const, item })),
+    }));
+
+    const byKey = new Map<string, { weekLabel: string; weekKey: string; items: { kind: 'own' | 'scraped'; item: any }[] }>();
+    for (const w of [...ownWeeks, ...scrapedWeeks]) {
+      const existing = byKey.get(w.weekKey);
+      if (existing) existing.items.push(...w.items);
+      else byKey.set(w.weekKey, { weekLabel: w.weekLabel, weekKey: w.weekKey, items: [...w.items] });
+    }
+
+    return Array.from(byKey.values())
+      .sort((a, b) => {
+        if (a.weekKey === 'unknown') return 1;
+        if (b.weekKey === 'unknown') return -1;
+        return b.weekKey.localeCompare(a.weekKey); // descending — most recent week first
+      })
+      .map(w => ({
+        ...w,
+        items: [...w.items].sort((a, b) => (b.item.startDate ?? '').localeCompare(a.item.startDate ?? '')),
+      }));
+  }, [pastGroup, scrapedPastEntries, t]);
+
   async function materializeAndOpen(entry: { name: string; startDate: string; endDate: string; surface: string | null }) {
     if (DEMO_MODE) return;
     const key = `${entry.name}|${entry.startDate}`;
@@ -2591,48 +2625,36 @@ export default function TournamentsScreen() {
           </>
         )}
         {activeFilter !== 'withdrawn' && (activeFilter === 'all' || activeFilter === 'past') &&
-          (pastGroup.length > 0 || (scrapedPastEntries && scrapedPastEntries.length > 0)) && (
+          pastWeeksMerged.length > 0 && (
           <>
             <Text style={styles.sectionLabel}>{t('tournaments.past').toUpperCase()}</Text>
-            {groupByWeek(pastGroup, t('tournaments.noDate')).reverse().map(week => (
+            {pastWeeksMerged.map(week => (
               <View key={week.weekKey}>
                 <Text style={styles.weekLabel}>{week.weekLabel}</Text>
-                {week.items.map((item: any) => (
+                {week.items.map(({ kind, item }) => kind === 'own' ? (
                   <TournamentCard key={item.id} item={item} t={t}
                     selected={selectedTournaments.has(item.id)} selectMode={tournamentSelectMode}
                     onPress={() => tournamentSelectMode ? toggleTournamentSelect(item.id) : setExpenseDetailId(item.id)}
                     onLongPress={() => toggleTournamentSelect(item.id)} />
+                ) : (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={styles.card}
+                    activeOpacity={0.8}
+                    disabled={materializingId === `${item.name}|${item.startDate}`}
+                    onPress={() => materializeAndOpen(item)}
+                  >
+                    <View style={styles.cardTopRow}>
+                      {item.surface && <CourtIcon surface={item.surface} size="sm" />}
+                      <Text style={styles.cardTitle} numberOfLines={2}>{item.name}</Text>
+                      {materializingId === `${item.name}|${item.startDate}`
+                        ? <ActivityIndicator size="small" color={T.accent} />
+                        : <View style={styles.scrapedBadge}><Text style={styles.scrapedBadgeText}>{t('tournaments.history')}</Text></View>
+                      }
+                    </View>
+                    <Text style={styles.cardMeta}>{fmtDateRange(item.startDate, item.endDate)}{item.surface ? ` · ${item.surface}` : ''}</Text>
+                  </TouchableOpacity>
                 ))}
-              </View>
-            ))}
-            {scrapedPastEntries && scrapedPastEntries.length > 0 && groupByWeek(
-              scrapedPastEntries.map(e => ({ ...e, id: `scraped|${e.name}|${e.startDate}` })),
-              ''
-            ).reverse().map(week => (
-              <View key={`scraped-${week.weekKey}`}>
-                <Text style={styles.weekLabel}>{week.weekLabel}</Text>
-                {week.items.map((item: any) => {
-                  const mKey = `${item.name}|${item.startDate}`;
-                  return (
-                    <TouchableOpacity
-                      key={mKey}
-                      style={styles.card}
-                      activeOpacity={0.8}
-                      disabled={materializingId === mKey}
-                      onPress={() => materializeAndOpen(item)}
-                    >
-                      <View style={styles.cardTopRow}>
-                        {item.surface && <CourtIcon surface={item.surface} size="sm" />}
-                        <Text style={styles.cardTitle} numberOfLines={2}>{item.name}</Text>
-                        {materializingId === mKey
-                          ? <ActivityIndicator size="small" color={T.accent} />
-                          : <View style={styles.scrapedBadge}><Text style={styles.scrapedBadgeText}>{t('tournaments.history')}</Text></View>
-                        }
-                      </View>
-                      <Text style={styles.cardMeta}>{fmtDateRange(item.startDate, item.endDate)}{item.surface ? ` · ${item.surface}` : ''}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
               </View>
             ))}
           </>

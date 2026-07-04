@@ -171,7 +171,14 @@ export default function HomeScreen() {
     }).length;
     const played = scrapedPlayed > 0 ? scrapedPlayed : localPlayed;
     const totalSpent = expenses.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
+    // Only count prize money for tournaments actually played: registered,
+    // started, not withdrawn. Previously this summed EVERY tournament in the
+    // list — including ones merely added to consider and never entered —
+    // so an unregistered upcoming tournament's prize field inflated the total.
     const totalPrize = tournaments.reduce((s: number, t: any) => {
+      const d = parseLocalDate(t.startDate);
+      const wasPlayed = t.isRegistered && d && d <= today && !t.isWithdrawn;
+      if (!wasPlayed) return s;
       const split = (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0);
       // Fall back to legacy prizeMoney for records created before the singles/doubles split
       return s + (split > 0 ? split : (t.prizeMoney ?? 0));
@@ -373,17 +380,6 @@ export default function HomeScreen() {
                   <View style={st.cardLeft}>
                     <Text style={st.cardTitle}>{t('home.myPerformance')}</Text>
                     <Text style={st.cardSub}>{t('home.myPerformanceSub')}</Text>
-                  </View>
-                  <Text style={st.featureChevron}>›</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[st.deadlineCard, { borderLeftColor: T.accent }]}
-                  onPress={() => router.push('/compare-players' as any)}
-                  activeOpacity={0.8}
-                >
-                  <View style={st.cardLeft}>
-                    <Text style={st.cardTitle}>{t('home.comparePlayers')}</Text>
-                    <Text style={st.cardSub}>{t('home.comparePlayersSub')}</Text>
                   </View>
                   <Text style={st.featureChevron}>›</Text>
                 </TouchableOpacity>
