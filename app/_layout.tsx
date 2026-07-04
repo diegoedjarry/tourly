@@ -11,6 +11,7 @@ import * as SplashScreen from 'expo-splash-screen';
 
 import { useNotificationSetup } from '@/hooks/useNotificationSetup';
 import { AppAlertProvider } from '@/components/ui/app-alert';
+import { ScraperBanner } from '@/components/ui/ScraperBanner';
 import { DemoDataProvider } from '@/hooks/useDemoData';
 import { queryClient, persistCacheToMmkv } from '@/lib/queryClient';
 import { supabase } from '@/lib/supabase';
@@ -103,6 +104,7 @@ function AppLayout() {
   useNotificationSetup();
   return (
     <AuthGate>
+      <ScraperBanner />
       <Stack>
         <Stack.Screen name="(tabs)"      options={{ headerShown: false }} />
         <Stack.Screen name="auth"        options={{ headerShown: false }} />

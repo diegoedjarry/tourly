@@ -50,7 +50,7 @@ export default function ProfileScreen() {
   const totalPrize = tournaments.reduce((s: number, t: any) => {
     const singles = t.singlesPrizeMoney ?? 0;
     const doubles = t.doublesPrizeMoney ?? 0;
-    return s + (singles + doubles > 0 ? singles + doubles : (t.prizeMoney ?? 0));
+    return s + singles + doubles;
   }, 0);
 
   const infoRows = [

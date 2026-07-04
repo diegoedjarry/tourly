@@ -37,13 +37,13 @@ Mobile app for **professional tennis players** (ITF World Tennis Tour circuit) t
 
 ## Architecture
 
-### Data layer — `db.ts`
-Single InstantDB client (`@instantdb/react-native`) initialized with the full schema. Import `db` from here for all reads and writes. Do not create a second client. Writes use `db.transact(db.tx.<entity>[id].update({...}))`.
+### Data layer — Supabase + offline queue
+Runtime reads/writes go through Supabase via `lib/api.ts`, with an AsyncStorage-backed offline write queue (`lib/offline-queue.ts`) that enqueues mutations when offline and flushes on reconnect (NetInfo). Queued writes surface a "saved offline" notice. The legacy InstantDB client in `db.ts` is only used for the push-token device record (`db.devices['singleton-device']`) — do not build new features on it.
 
 ### Demo mode — `config/demo.ts`
-`DEMO_MODE = true` bypasses auth and injects static data into every screen. Toggle to `false` to use real InstantDB + require login.
+`DEMO_MODE` is env-driven (`EXPO_PUBLIC_DEMO_MODE=true` in `.env.local`); it bypasses auth and injects static data into every screen. Never set it in production builds.
 
-- `useAppQuery` hook (`hooks/useAppQuery.ts`) wraps `db.useQuery` — returns `DEMO_DATA` when `DEMO_MODE` is on, otherwise passes through to InstantDB. All tab screens must use `useAppQuery`, not `db.useQuery` directly.
+- `useAppQuery` hook (`hooks/useAppQuery.ts`) returns `DEMO_DATA` when `DEMO_MODE` is on, otherwise queries the real backend. All tab screens must use `useAppQuery`, not direct queries.
 - Auth gate is removed from `app/_layout.tsx` while in demo mode — the layout goes straight to `(tabs)`.
 
 ### Routing — Expo Router v6

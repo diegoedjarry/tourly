@@ -3,6 +3,15 @@ import { readAsStringAsync, EncodingType } from 'expo-file-system/legacy';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import { supabase } from '@/lib/supabase';
+import { expenseDupeKey } from '@/utils/categories';
+
+// Transliterate Arabic-Indic (٠-٩) and Extended Arabic-Indic (۰-۹) digits to
+// ASCII so amounts and dates written with those numerals parse correctly.
+function normalizeDigits(s: string): string {
+  return s
+    .replace(/[٠-٩]/g, c => String(c.charCodeAt(0) - 0x0660))
+    .replace(/[۰-۹]/g, c => String(c.charCodeAt(0) - 0x06f0));
+}
 
 export interface MappedExpense {
   category: string;
@@ -16,6 +25,8 @@ export interface ImportResult {
   mapped: MappedExpense[];
   unmapped: number;
   columns: string[];
+  /** Set to true when the parsed data looks like a previously imported file (same amount+date combos) */
+  likelyDuplicate?: boolean;
 }
 
 async function readFileContent(uri: string, name: string): Promise<string[][]> {
@@ -39,7 +50,11 @@ async function readFileContent(uri: string, name: string): Promise<string[][]> {
 
   try {
     const workbook = XLSX.read(base64, { type: 'base64' });
-    const sheetName = workbook.SheetNames[0];
+    // Prefer a per-row detail sheet (e.g. our own "Expenses" export sheet)
+    // over summary/pivot sheets so export → re-import round-trips cleanly.
+    const sheetName =
+      workbook.SheetNames.find(n => /expense|gasto|detail|individual/i.test(n) && !/summary|resumen/i.test(n)) ??
+      workbook.SheetNames[0];
     if (!sheetName) throw new Error('No sheets found in workbook');
     const sheet = workbook.Sheets[sheetName];
     const rows: string[][] = XLSX.utils.sheet_to_json(sheet, {
@@ -116,6 +131,19 @@ function guessYearFromRows(rows: string[][]): number {
   return cur;
 }
 
+// Year found in this specific row (multi-year files put a year per row/section);
+// null when the row has none — caller falls back to the file-level guess.
+function yearFromRow(row: string[]): number | null {
+  for (const cell of row) {
+    const str = String(cell);
+    // Ignore purely numeric cells — an amount like "2,026.00" is not a year.
+    if (/^[\s$€£]*[\d.,\s]+$/.test(str)) continue;
+    const m = str.match(/\b(20\d{2})\b/);
+    if (m) return parseInt(m[1]);
+  }
+  return null;
+}
+
 // ─── Format detection ─────────────────────────────────────────────────────────
 
 type FileFormat =
@@ -125,8 +153,13 @@ type FileFormat =
   | 'bank-statement'      // date, description, debit, credit
   | 'simple-list';        // amount + description only
 
+function normalizeHeader(h: string): string {
+  // NFD decomposes 'á' into 'a' + combining accent (U+0300..U+036F), then we strip the accents
+  return h.toLowerCase().trim().normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
 function detectFormat(headers: string[]): FileFormat {
-  const lower = headers.map(h => h.toLowerCase().trim());
+  const lower = headers.map(normalizeHeader);
 
   // Monthly pivot: 3+ columns are month names
   const monthCols = lower.filter(h => monthIndex(h) !== null).length;
@@ -168,6 +201,9 @@ function parseMonthlyPivot(headers: string[], rows: string[][], year: number): I
 
     const category = catColIdx >= 0 ? String(row[catColIdx] ?? '').trim() : 'Other';
     if (!category) { unmapped++; continue; }
+    // Skip total/subtotal rows — they duplicate the category rows above them.
+    if (/total/i.test(category)) continue;
+    const rowYear = yearFromRow(row) ?? year;
 
     let rowHadAny = false;
     for (let i = 0; i < headers.length; i++) {
@@ -181,7 +217,7 @@ function parseMonthlyPivot(headers: string[], rows: string[][], year: number): I
       mapped.push({
         category,
         amount,
-        date: `${year}-${mm}-01`,
+        date: `${rowYear}-${mm}-01`,
         note: null,
         tournament_name: null,
       });
@@ -209,6 +245,9 @@ function parseQuarterlyPivot(headers: string[], rows: string[][], year: number):
 
     const category = catColIdx >= 0 ? String(row[catColIdx] ?? '').trim() : 'Other';
     if (!category) { unmapped++; continue; }
+    // Skip total/subtotal rows — they duplicate the category rows above them.
+    if (/total/i.test(category)) continue;
+    const rowYear = yearFromRow(row) ?? year;
 
     let rowHadAny = false;
     for (let i = 0; i < headers.length; i++) {
@@ -224,7 +263,7 @@ function parseQuarterlyPivot(headers: string[], rows: string[][], year: number):
       mapped.push({
         category,
         amount,
-        date: `${year}-${mm}-01`,
+        date: `${rowYear}-${mm}-01`,
         note: `${headers[i].toUpperCase()} total`,
         tournament_name: null,
       });
@@ -299,7 +338,9 @@ function parseSimpleList(headers: string[], rows: string[][]): ImportResult {
     if (amount == null) { unmapped++; continue; }
 
     const desc = row.filter((_, i) => i !== amtColIdx).map(c => String(c).trim()).filter(Boolean).join(' — ');
-    const date = row.map(c => parseDate(c)).find(d => d !== null) ?? today;
+    // Never read a date out of the amount column — large amounts (e.g. 45000 XOF)
+    // would otherwise be misread as Excel serial dates.
+    const date = row.map((c, i) => (i === amtColIdx ? null : parseDate(c))).find(d => d !== null) ?? today;
 
     mapped.push({
       category: inferCategoryFromText(desc),
@@ -323,17 +364,53 @@ export function smartParse(headers: string[], rows: string[][]): ImportResult {
   const format = detectFormat(headers);
   const year = guessYearFromRows([headers, ...rows.slice(0, 3)]);
 
+  let result: ImportResult;
   switch (format) {
-    case 'monthly-pivot':   return parseMonthlyPivot(headers, rows, year);
-    case 'quarterly-pivot': return parseQuarterlyPivot(headers, rows, year);
-    case 'bank-statement':  return parseBankStatement(headers, rows);
-    case 'simple-list':     return parseSimpleList(headers, rows);
-    default:                break; // fall through to row-per-expense below
+    case 'monthly-pivot':   result = parseMonthlyPivot(headers, rows, year); break;
+    case 'quarterly-pivot': result = parseQuarterlyPivot(headers, rows, year); break;
+    case 'bank-statement':  result = parseBankStatement(headers, rows); break;
+    case 'simple-list':     result = parseSimpleList(headers, rows); break;
+    default: {
+      const mapping = mapColumnsLocal(headers);
+      result = applyMapping(rows, headers, mapping);
+    }
   }
 
-  // row-per-expense: use existing column-mapping logic
-  const mapping = mapColumnsLocal(headers);
-  return applyMapping(rows, headers, mapping);
+  return result;
+}
+
+/**
+ * Check whether mapped expenses likely duplicate existing ones.
+ * Returns true if ≥50% of the mapped amount+date pairs already exist in Supabase.
+ * Call this after smartParse, before showing the import confirmation UI.
+ */
+export async function checkDuplicates(mapped: MappedExpense[]): Promise<boolean> {
+  if (mapped.length === 0) return false;
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return false;
+
+    // Sample up to 10 rows to keep the check fast
+    const sample = mapped.slice(0, 10);
+    const dates = [...new Set(sample.map(e => e.date))];
+
+    const { data: existing } = await supabase
+      .from('expenses')
+      .select('amount, date, category')
+      .eq('user_id', user.id)
+      .in('date', dates);
+
+    if (!existing || existing.length === 0) return false;
+
+    // Normalized-category keys so export labels ("Meals") match stored categories ("food").
+    const existingSet = new Set(existing.map((e: any) => expenseDupeKey(e.date, e.amount, e.category ?? '')));
+    const matches = sample.filter(e => existingSet.has(expenseDupeKey(e.date, e.amount, e.category ?? ''))).length;
+    return matches >= Math.ceil(sample.length * 0.5);
+  } catch (err) {
+    // Non-fatal: worst case the duplicate warning is skipped.
+    console.warn('[import] duplicate check failed', err);
+    return false;
+  }
 }
 
 // ─── Original keyword map (kept for row-per-expense path) ────────────────────
@@ -389,7 +466,7 @@ export function mapColumnsLocal(headers: string[]): Record<string, string> {
 
     for (let i = 0; i < headers.length; i++) {
       if (used.has(i)) continue;
-      const h = headers[i].toLowerCase().trim();
+      const h = normalizeHeader(headers[i]);
       if (!h) continue;
 
       for (const kw of keywords) {
@@ -424,18 +501,24 @@ export function mapColumnsLocal(headers: string[]): Record<string, string> {
   return mapping;
 }
 
-function parseDate(val: any): string | null {
+// Format a local Date as "YYYY-MM-DD" without going through UTC —
+// toISOString() shifts the day in non-UTC timezones.
+function toLocalIso(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+export function parseDate(val: any): string | null {
   if (val == null) return null;
 
-  // Handle Excel serial date numbers
-  if (typeof val === 'number' || (typeof val === 'string' && /^\d+$/.test(val.trim()) && parseInt(val) > 30000 && parseInt(val) < 60000)) {
-    const num = typeof val === 'number' ? val : parseInt(val);
-    const excelEpoch = new Date(1899, 11, 30);
-    const date = new Date(excelEpoch.getTime() + num * 86400000);
-    if (!isNaN(date.getTime())) return date.toISOString().split('T')[0];
+  // Handle Excel serial date numbers. Only native numbers qualify — numeric
+  // strings like "45000" are far more likely to be amounts (XOF/INR/CLP).
+  if (typeof val === 'number' && val > 30000 && val < 60000) {
+    const date = new Date(1899, 11, 30);
+    date.setDate(date.getDate() + Math.floor(val));
+    if (!isNaN(date.getTime())) return toLocalIso(date);
   }
 
-  const str = String(val).trim();
+  const str = normalizeDigits(String(val).trim());
   if (!str) return null;
 
   // ISO format: YYYY-MM-DD
@@ -491,18 +574,24 @@ function parseDate(val: any): string | null {
   // Try native Date parse as last resort
   const d = new Date(str);
   if (!isNaN(d.getTime()) && d.getFullYear() > 2000) {
-    return d.toISOString().split('T')[0];
+    return toLocalIso(d);
   }
 
   return null;
 }
 
-function parseAmount(val: any): number | null {
+export function parseAmount(val: any): number | null {
   if (val == null) return null;
-  const str = String(val)
+  let str = normalizeDigits(String(val))
     .replace(/[$€£¥₡]/g, '')
     .replace(/\s/g, '')
     .trim();
+
+  // Detect negative amounts ("-350" or accounting-style "(350)") and strip the
+  // sign so the separator heuristics below still match.
+  let sign = 1;
+  if (/^\((.*)\)$/.test(str)) { sign = -1; str = str.slice(1, -1); }
+  if (str.startsWith('-')) { sign = -sign; str = str.slice(1); }
 
   // Handle thousand separators: "1.500,50" (European/SA) or "1,500.50" (US)
   let normalized = str;
@@ -517,8 +606,11 @@ function parseAmount(val: any): number | null {
     normalized = str.replace(',', '.');
   }
 
-  const num = parseFloat(normalized);
-  return isNaN(num) || num === 0 ? null : Math.abs(num);
+  const num = parseFloat(normalized) * sign;
+  // Keep negative values — they are refunds/credits and import as negative expenses.
+  // High cap: no-decimal currencies (XOF/CLP/etc) legitimately reach the millions.
+  if (isNaN(num) || num === 0 || Math.abs(num) >= 100000000) return null;
+  return num;
 }
 
 const EXPENSE_CATEGORIES: Record<string, string[]> = {
@@ -558,7 +650,7 @@ export function applyMapping(
   const colIndex: Record<string, number> = {};
   for (const [ourField, theirCol] of Object.entries(mapping)) {
     if (!theirCol) continue;
-    const idx = headers.findIndex(h => h.toLowerCase().trim() === theirCol.toLowerCase().trim());
+    const idx = headers.findIndex(h => normalizeHeader(h) === normalizeHeader(theirCol));
     if (idx !== -1) colIndex[ourField] = idx;
   }
 
@@ -624,21 +716,64 @@ export function applyMapping(
   return { mapped, unmapped, columns: headers };
 }
 
+export interface InsertExpenseOptions {
+  /** Tournaments (camelCase: startDate/endDate/isWithdrawn) used to auto-link rows by date. */
+  tournaments?: { id: string; startDate?: string; endDate?: string; isWithdrawn?: boolean }[];
+  /** Existing keys from expenseDupeKey() — matching rows are skipped as duplicates. */
+  existingKeys?: Set<string>;
+}
+
+// Find the tournament whose week contains the given "YYYY-MM-DD" date.
+// String comparison is safe — all dates are zero-padded ISO strings.
+function matchTournamentIdByDate(
+  date: string,
+  tournaments: NonNullable<InsertExpenseOptions['tournaments']>,
+): string | null {
+  for (const t of tournaments) {
+    if (t.isWithdrawn || !t.startDate) continue;
+    let end = t.endDate;
+    if (!end) {
+      const [y, m, d] = t.startDate.split('-').map(Number);
+      const e = new Date(y, m - 1, d + 6);
+      end = `${e.getFullYear()}-${String(e.getMonth() + 1).padStart(2, '0')}-${String(e.getDate()).padStart(2, '0')}`;
+    }
+    if (date >= t.startDate && date <= end) return t.id;
+  }
+  return null;
+}
+
 export async function insertExpenses(
   expenses: MappedExpense[],
   tournamentMap: Record<string, string>,
+  opts?: InsertExpenseOptions,
 ): Promise<number> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
 
-  const rows = expenses.map(e => ({
-    user_id: user.id,
-    category: e.category,
-    amount: e.amount,
-    date: e.date,
-    note: e.note,
-    tournament_id: e.tournament_name ? tournamentMap[e.tournament_name.toLowerCase()] ?? null : null,
-  }));
+  // Skip exact duplicates of already-stored expenses (same date + amount +
+  // normalized category). Category is part of the key so two genuine same-day,
+  // same-amount expenses in different categories are not silently dropped, and
+  // it is normalized so export labels ("Meals") match stored names ("food").
+  const existingKeys = opts?.existingKeys;
+  const toInsert = existingKeys
+    ? expenses.filter(e => !existingKeys.has(expenseDupeKey(e.date, e.amount, e.category ?? '')))
+    : expenses;
+
+  const rows = toInsert.map(e => {
+    // Prefer explicit tournament column; fall back to matching by date range.
+    let tournamentId = e.tournament_name ? tournamentMap[e.tournament_name.toLowerCase()] ?? null : null;
+    if (!tournamentId && opts?.tournaments && e.date) {
+      tournamentId = matchTournamentIdByDate(e.date, opts.tournaments);
+    }
+    return {
+      user_id: user.id,
+      category: e.category,
+      amount: e.amount,
+      date: e.date,
+      note: e.note,
+      tournament_id: tournamentId,
+    };
+  });
 
   const BATCH = 100;
   let inserted = 0;

@@ -121,6 +121,39 @@ function getDeadlineDefs(category: string | undefined): DeadlineDef[] {
   return ITF_DEADLINES;
 }
 
+// ─── Deadline instants ────────────────────────────────────────────────────────
+// ITF entry/withdrawal/freeze deadlines close at 14:00 GMT. ATP Challenger
+// advance deadlines are set in US Eastern time (12:00 PM ET, withdrawal/freeze
+// at 10:00 AM ET), so their UTC instant depends on US DST (EDT −4 / EST −5).
+
+function nthSundayOfMonth(year: number, month0: number, n: number): number {
+  const first = new Date(Date.UTC(year, month0, 1));
+  const firstSunday = 1 + ((7 - first.getUTCDay()) % 7);
+  return firstSunday + (n - 1) * 7;
+}
+
+// US DST runs from the 2nd Sunday of March to the 1st Sunday of November.
+function isUsEasternDst(y: number, m: number, d: number): boolean {
+  if (m > 3 && m < 11) return true;
+  if (m < 3 || m > 11) return false;
+  if (m === 3) return d >= nthSundayOfMonth(y, 2, 2);
+  return d < nthSundayOfMonth(y, 10, 1); // m === 11
+}
+
+export type StoredDeadlineKind = 'signUp' | 'withdrawal' | 'freeze';
+
+// The exact UTC instant a stored deadline closes. Date renders it in device-local time.
+export function deadlineInstant(dateStr: string, category?: string, kind: StoredDeadlineKind = 'signUp'): Date {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  if (getCircuit(category) === 'challenger') {
+    const etHour = kind === 'withdrawal' ? 10 : 12; // Withdrawal/Freeze closes 10:00 AM ET
+    const utcOffset = isUsEasternDst(y, m, d) ? 4 : 5;
+    return new Date(Date.UTC(y, m - 1, d, etHour + utcOffset, 0, 0));
+  }
+  // ITF (and default): 14:00 GMT
+  return new Date(Date.UTC(y, m - 1, d, 14, 0, 0));
+}
+
 export function calcDeadlines(startDateStr: string, category?: string): DeadlineSet {
   const circuit = getCircuit(category);
 

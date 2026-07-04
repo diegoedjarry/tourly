@@ -1,4 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { supabase } from '@/lib/supabase';
+import { LoadingLogo } from '@/components/ui/LoadingLogo';
 import {
   ScrollView,
   View,
@@ -13,6 +15,7 @@ import {
   Switch,
   useWindowDimensions,
   PanResponder,
+  Alert,
 } from 'react-native';
 import { Text } from '@/components/ui/text';
 import { PieChart } from 'react-native-gifted-charts';
@@ -21,7 +24,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useAppQuery } from '@/hooks/useAppQuery';
-import { apiAddExpense, apiUpdateExpense, apiDeleteExpense, apiPatchTournament } from '@/lib/api';
+import { apiAddExpense, apiUpdateExpense, apiDeleteExpense, apiPatchTournament, apiAddTournament } from '@/lib/api';
 import { DatePickerField } from '@/components/ui/date-picker-field';
 import { T } from '@/constants/theme';
 import { DEMO_MODE } from '@/config/demo';
@@ -52,13 +55,13 @@ type Surface = 'clay' | 'hard' | 'grass';
 const SURFACE_BG = { clay: '#2A1A08', hard: '#081828', grass: '#0A1E06' } as const;
 
 // English labels are stable identifiers stored in DB; translated labels are display-only
-const PERSONAL_CATS = ['Flight', 'Hotel', 'Meals', 'Transport', 'Strings & Grip', 'Stringing Fee', 'Physio', 'Academy', 'Trainer', 'Other'];
+const PERSONAL_CATS = ['Flights', 'Hotel', 'Meals', 'Transport', 'Strings & Grip', 'Stringing Fee', 'Physio', 'Academy', 'Trainer', 'Other'];
 const COACH_CATS    = ['Coach Fee', 'Coach Flight', 'Coach Hotel', 'Coach Meals'];
 const FIXED_CATS    = new Set(['academy', 'trainer', 'strings & grip', 'stringing fee']);
 
 // Extended categories available only in monthly fixed mode
 const MONTHLY_FIXED_CATS = [
-  'Flight', 'Hotel', 'Meals', 'Transport', 'Strings & Grip', 'Stringing Fee', 'Physio',
+  'Flights', 'Hotel', 'Meals', 'Transport', 'Strings & Grip', 'Stringing Fee', 'Physio',
   'Academy', 'Trainer', 'Physical Trainer', 'Physiotherapy', 'Gym', 'Nutritionist',
   'Psychologist', 'Agent Fee', 'Strings Budget', 'Equipment', 'Other',
 ];
@@ -160,6 +163,7 @@ const INSIGHTS: Record<string, Record<string, Array<(d: ID) => string>>> = {
 };
 
 import { countryFlag } from '@/utils/countryFlag';
+import { playerNameFilter } from '@/utils/text';
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -177,12 +181,21 @@ function parseLocalDate(val: string | undefined): Date | null {
   return new Date(y, m - 1, d);
 }
 
+// End of the tournament week: stored endDate, or Monday start + 6 days (Mon–Sun).
+function tournamentEnd(t: any): Date | null {
+  const e = parseLocalDate(t.endDate);
+  if (e) return e;
+  const s = parseLocalDate(t.startDate);
+  if (!s) return null;
+  return new Date(s.getFullYear(), s.getMonth(), s.getDate() + 6);
+}
+
 function findActiveTournament(tournaments: any[]): any | null {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   return tournaments.find((t) => {
     if (t.isWithdrawn) return false;
     const s = parseLocalDate(t.startDate);
-    const e = parseLocalDate(t.endDate);
+    const e = tournamentEnd(t);
     return s && e && s <= today && today <= e;
   }) ?? null;
 }
@@ -194,7 +207,7 @@ function matchTournamentByDate(dateStr: string | undefined, tournaments: any[]):
   for (const t of tournaments) {
     if (t.isWithdrawn) continue;
     const s = parseLocalDate(t.startDate);
-    const e = parseLocalDate(t.endDate);
+    const e = tournamentEnd(t);
     if (s && e && d >= s && d <= e) return t.id;
   }
   return undefined;
@@ -211,20 +224,14 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
   const coachCatLabels    = COACH_CAT_KEYS.map(k => t(k));
   const demoCtx = useDemoData();
   const generateInsight = useGenerateInsight();
-  const defaultTournament = useMemo(
-    () => {
-      if (defaultTournamentId) return tournaments.find((t) => t.id === defaultTournamentId) ?? null;
-      return findActiveTournament(tournaments) ?? tournaments[0] ?? null;
-    },
+  // Auto-match by date only — never default to an arbitrary tournament.
+  // When the date falls outside every tournament week, start unlinked.
+  const autoMatchedId = useMemo(
+    () => defaultTournamentId ? undefined : matchTournamentByDate(defaultDate ?? todayIso(), tournaments),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
-
-  const autoMatchedId = useMemo(
-    () => defaultTournamentId ? undefined : matchTournamentByDate(defaultDate ?? todayIso(), tournaments),
-    [tournaments]
-  );
-  const [tournamentId, setTournamentId]         = useState(defaultTournament?.id ?? autoMatchedId ?? '');
+  const [tournamentId, setTournamentId]         = useState(defaultTournamentId ?? autoMatchedId ?? '');
   const [manuallyPicked, setManuallyPicked]     = useState(!!defaultTournamentId);
   const [dropdownOpen, setDropdownOpen]          = useState(false);
   const [withCoach, setWithCoach]                = useState(false);
@@ -269,7 +276,8 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
   }
 
   async function handleSave() {
-    const amt = parseFloat(amount);
+    // Accept comma decimals — locale decimal-pad keyboards only offer ","
+    const amt = parseFloat(amount.replace(',', '.'));
     if (isNaN(amt) || amt <= 0) { setError(t('expense.validAmount')); return; }
     const finalCategory = customMode ? customText.trim() : category;
     if (!finalCategory) { setError(t('expense.selectCategory')); return; }
@@ -343,23 +351,6 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
               </View>
             )}
 
-            {/* ── Coach toggle (hidden in monthly fixed mode) ── */}
-            {!isMonthlyFixed && (
-              <View style={form.coachRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={form.coachLabel}>{t('expense.travelingWithCoach')}</Text>
-                </View>
-                <Switch
-                  value={withCoach}
-                  onValueChange={(v) => {
-                    setWithCoach(v);
-                    if (!v && COACH_CATS.includes(category)) setCategory('flight');
-                  }}
-                  trackColor={{ false: T.cardBorder, true: T.teal }}
-                  thumbColor={T.textPrimary}
-                />
-              </View>
-            )}
 
             {/* ── Tournament (hidden in monthly fixed mode) ── */}
             {!isMonthlyFixed && tournaments.length > 0 && (
@@ -445,9 +436,7 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
             <View style={form.section}>
               <Text style={form.sectionLabel}>{t('expense.category')}</Text>
 
-              {!isMonthlyFixed && withCoach && (
-                <Text style={form.subLabel}>{t('expense.personal')}</Text>
-              )}
+              {!isMonthlyFixed && <Text style={form.subLabel}>{t('expense.personal')}</Text>}
               <View style={form.chipRow}>
                 {(isMonthlyFixed ? MONTHLY_FIXED_CATS : PERSONAL_CATS).map((c, i) => (
                   <TouchableOpacity
@@ -462,7 +451,7 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
                 ))}
               </View>
 
-              {!isMonthlyFixed && withCoach && (
+              {!isMonthlyFixed && (
                 <>
                   <Text style={[form.subLabel, { marginTop: 12 }]}>{t('expense.coach')}</Text>
                   <View style={form.chipRow}>
@@ -520,6 +509,7 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
                   keyboardType="decimal-pad"
                 />
               </View>
+              <Text style={{ fontSize: 11, color: T.textSecondary, marginTop: 4 }}>{t('expense.usdNote')}</Text>
             </View>
 
             {/* ── Date (hidden in monthly fixed mode, date derived from month/year) ── */}
@@ -563,7 +553,7 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
             {!isMonthlyFixed ? (
               <TouchableOpacity
                 style={form.fixedSwitchLink}
-                onPress={() => { setIsMonthlyFixed(true); setCustomMode(false); setCategory('Flight'); }}
+                onPress={() => { setIsMonthlyFixed(true); setCustomMode(false); setCategory('Flights'); }}
                 activeOpacity={0.7}>
                 <Text style={form.fixedSwitchLinkText}>{t('expense.switchToMonthlyFixed')}</Text>
               </TouchableOpacity>
@@ -608,7 +598,8 @@ function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => v
   const [isMonthlyFixed, setIsMonthlyFixed] = useState(expIsFixed);
   const [fixedMonth,     setFixedMonth]     = useState(initMonth);
   const [fixedYear,      setFixedYear]      = useState(initYear);
-  const [category,   setCategory]   = useState(expense.category ?? 'Flight');
+  const [withCoach,  setWithCoach]  = useState(isCoach);
+  const [category,   setCategory]   = useState(expense.category ?? 'Flights');
   const [customMode, setCustomMode] = useState(!knownCat);
   const [customText, setCustomText] = useState(knownCat ? '' : expense.category ?? '');
   const [amount,     setAmount]     = useState(String(expense.amount ?? ''));
@@ -629,7 +620,8 @@ function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => v
   }
 
   async function handleSave() {
-    const amt = parseFloat(amount);
+    // Accept comma decimals — locale decimal-pad keyboards only offer ","
+    const amt = parseFloat(amount.replace(',', '.'));
     if (isNaN(amt) || amt <= 0) { setError(t('expense.validAmount')); return; }
     if (!isMonthlyFixed && !date) { setError(t('expense.selectDate')); return; }
     const finalCategory = customMode ? customText.trim() : category;
@@ -685,7 +677,7 @@ function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => v
             {/* ── Category ── */}
             <View style={form.section}>
               <Text style={form.sectionLabel}>{t('expense.category')}</Text>
-              {isCoach && !isMonthlyFixed && <Text style={form.subLabel}>{t('expense.personal')}</Text>}
+              {!isMonthlyFixed && <Text style={form.subLabel}>{t('expense.personal')}</Text>}
               <View style={form.chipRow}>
                 {(isMonthlyFixed ? MONTHLY_FIXED_CATS : PERSONAL_CATS).map((c, i) => (
                   <TouchableOpacity key={c}
@@ -697,7 +689,7 @@ function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => v
                   </TouchableOpacity>
                 ))}
               </View>
-              {isCoach && !isMonthlyFixed && (
+              {!isMonthlyFixed && (
                 <>
                   <Text style={[form.subLabel, { marginTop: 12 }]}>{t('expense.coach')}</Text>
                   <View style={form.chipRow}>
@@ -792,13 +784,13 @@ function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => v
             {/* ── Mode switch link ── */}
             {!isMonthlyFixed ? (
               <TouchableOpacity style={form.fixedSwitchLink}
-                onPress={() => { setIsMonthlyFixed(true); setCustomMode(false); setCategory('Flight'); }}
+                onPress={() => { setIsMonthlyFixed(true); setCustomMode(false); setCategory('Flights'); }}
                 activeOpacity={0.7}>
                 <Text style={form.fixedSwitchLinkText}>{t('expense.switchToMonthlyFixed')}</Text>
               </TouchableOpacity>
             ) : (
               <TouchableOpacity style={form.fixedSwitchLink}
-                onPress={() => { setIsMonthlyFixed(false); setCategory('Flight'); }}
+                onPress={() => { setIsMonthlyFixed(false); setCategory('Flights'); }}
                 activeOpacity={0.7}>
                 <Text style={form.fixedSwitchLinkText}>{t('expense.switchToNormal')}</Text>
               </TouchableOpacity>
@@ -814,11 +806,12 @@ function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => v
 
 // ─── Expense action sheet ─────────────────────────────────────────────────────
 
-function ExpenseActionSheet({ expense, onEdit, onDelete, onCancel }: {
-  expense: any; onEdit: () => void; onDelete: () => void; onCancel: () => void;
+function ExpenseActionSheet({ expense, onEdit, onDelete, onLink, onCancel }: {
+  expense: any; onEdit: () => void; onDelete: () => void; onLink: () => void; onCancel: () => void;
 }) {
   const { t } = useLanguage();
   const label = [expense.category, expense.note].filter(Boolean).join(' · ');
+  const isLinked = !!expense.tournamentId;
   return (
     <Modal transparent animationType="slide" onRequestClose={onCancel}>
       <Pressable style={sheet.backdrop} onPress={onCancel}>
@@ -835,6 +828,14 @@ function ExpenseActionSheet({ expense, onEdit, onDelete, onCancel }: {
 
           <View style={sheet.rowDivider} />
 
+          <TouchableOpacity style={sheet.row} onPress={onLink} activeOpacity={0.75}>
+            <Text style={sheet.rowIcon}>{isLinked ? '🔗' : '🏆'}</Text>
+            <Text style={sheet.rowLabel}>{isLinked ? 'Unlink from Tournament' : 'Link to Tournament'}</Text>
+            <Text style={[sheet.rowArrow, { color: T.accent }]}>›</Text>
+          </TouchableOpacity>
+
+          <View style={sheet.rowDivider} />
+
           <TouchableOpacity style={sheet.row} onPress={onDelete} activeOpacity={0.75}>
             <Text style={sheet.rowIcon}>🗑️</Text>
             <Text style={[sheet.rowLabel, { color: T.red }]}>{t('expense.deleteAction')}</Text>
@@ -843,6 +844,206 @@ function ExpenseActionSheet({ expense, onEdit, onDelete, onCancel }: {
 
           <TouchableOpacity style={sheet.cancelBtn} onPress={onCancel} activeOpacity={0.8}>
             <Text style={sheet.cancelText}>{t('common.cancel')}</Text>
+          </TouchableOpacity>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+// ─── Link to Tournament modal ─────────────────────────────────────────────────
+
+type TournamentOption = {
+  id?: string;
+  name: string;
+  startDate: string;
+  endDate?: string;
+  surface?: string;
+  country?: string | null;
+};
+
+// Accepts one OR many expenses — links all of them to the chosen tournament.
+function LinkTournamentModal({ expenses, tournaments, onClose }: {
+  expenses: any[]; tournaments: any[]; onClose: () => void;
+}) {
+  const demoCtx = useDemoData();
+  // null = still loading; [] = loaded with no scraped results
+  const [scrapedOptions, setScrapedOptions] = useState<TournamentOption[] | null>(
+    DEMO_MODE ? [] : null
+  );
+  const [linking, setLinking] = useState(false);
+  const currentYear = new Date().getFullYear();
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  // Fetch scraped match history from player_profiles — same source as My Performance.
+  // Start immediately on mount so data arrives as the slide animation completes.
+  useEffect(() => {
+    if (DEMO_MODE) return;
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) { setScrapedOptions([]); return; }
+      supabase.from('profiles').select('atp_player_name').eq('id', user.id).single()
+        .then(({ data: prof }) => {
+          if (!prof?.atp_player_name) { setScrapedOptions([]); return; }
+          const nameParts = prof.atp_player_name.trim().split(/\s+/).slice(0, 2).join(' ');
+          supabase.from('player_profiles').select('match_history')
+            .or(playerNameFilter(nameParts))
+            .order('last_updated', { ascending: false }).limit(1)
+            .then(({ data }) => {
+              if (!data?.[0]?.match_history) { setScrapedOptions([]); return; }
+              const history: any[] = data[0].match_history;
+              const seen = new Set<string>();
+              const opts: TournamentOption[] = [];
+              history.forEach((m: any) => {
+                const name = m.tournamentName ?? '';
+                const startDate = m.date ?? '';
+                if (!name || !startDate) return;
+                // Current year only; match_history entries are played matches so
+                // startDate < today is sufficient — no need for the +6-day end-of-week guard
+                // that was silently dropping tournaments stored with mid-week dates (e.g. Quito).
+                if (!startDate.startsWith(String(currentYear))) return;
+                if (startDate >= todayStr) return;
+                const key = `${name}|${startDate}`;
+                if (seen.has(key)) return;
+                seen.add(key);
+                opts.push({ name, startDate, surface: m.surface });
+              });
+              setScrapedOptions(opts);
+            }, () => setScrapedOptions([]));
+        }, () => setScrapedOptions([]));
+    }).catch((err) => {
+      console.warn('[expenses] scraped history fetch failed', err);
+      setScrapedOptions([]);
+    });
+  }, []);
+
+  const pastTournaments = useMemo(() => {
+    const now = new Date();
+    const existing: TournamentOption[] = tournaments
+      .filter((t: any) => {
+        if (!t.startDate || !t.startDate.startsWith(String(currentYear))) return false;
+        const endStr = t.endDate ?? (() => {
+          const d = new Date(t.startDate + 'T00:00:00');
+          d.setDate(d.getDate() + 6);
+          return d.toISOString().slice(0, 10);
+        })();
+        return new Date(endStr + 'T23:59:59') < now;
+      })
+      .map((t: any) => ({
+        id: t.id,
+        name: t.name ?? `${t.category ?? ''} ${t.city ?? ''}`.trim(),
+        startDate: t.startDate ?? '',
+        surface: t.surface,
+      }));
+
+    // Don't compute until scraped fetch is done (null = still loading)
+    if (scrapedOptions === null) return null;
+
+    // Deduplicate by name+date combined — same tournament name on different weeks = different event
+    const existingKeys = new Set(existing.map(t => `${t.name.toLowerCase()}|${t.startDate}`));
+    const scraped = scrapedOptions.filter(s => !existingKeys.has(`${s.name.toLowerCase()}|${s.startDate}`));
+
+    return [...existing, ...scraped].sort((a, b) => b.startDate.localeCompare(a.startDate));
+  }, [tournaments, scrapedOptions, currentYear]);
+
+  const isLoading = pastTournaments === null;
+
+  async function link(opt: TournamentOption | null) {
+    setLinking(true);
+    try {
+      if (!opt) {
+        // Unlink all
+        for (const exp of expenses) {
+          if (DEMO_MODE) { demoCtx?.patchExpense?.(exp.id, { tournamentId: null }); }
+          else { await apiUpdateExpense(exp.id, { tournamentId: null }); }
+        }
+        onClose();
+        return;
+      }
+      let tournamentId = opt.id;
+      if (!tournamentId && !DEMO_MODE) {
+        // Scraped tournament — auto-create a minimal record so the FK works.
+        // Derive endDate from startDate + 6 days (ITF/Challenger standard week) if not supplied.
+        const derivedEnd = opt.endDate ?? (() => {
+          if (!opt.startDate) return undefined;
+          const [y, m, d] = (opt.startDate as string).split('-').map(Number);
+          const end = new Date(y, m - 1, d + 6);
+          return `${end.getFullYear()}-${String(end.getMonth()+1).padStart(2,'0')}-${String(end.getDate()).padStart(2,'0')}`;
+        })();
+        const row = await apiAddTournament({
+          name: opt.name,
+          startDate: opt.startDate,
+          endDate: derivedEnd,
+          country: opt.country ?? null,
+          surface: opt.surface ?? null,
+          isRegistered: false,
+          isWithdrawn: false,
+          isInMyList: false,
+          prizeMoney: 0,
+          singlesPrizeMoney: 0,
+          doublesPrizeMoney: 0,
+        });
+        tournamentId = row?.id;
+      }
+      for (const exp of expenses) {
+        if (DEMO_MODE) {
+          // Only real ids — a tournament name is not a valid link target.
+          if (opt.id) demoCtx?.patchExpense?.(exp.id, { tournamentId: opt.id });
+        } else if (tournamentId) {
+          await apiUpdateExpense(exp.id, { tournamentId });
+        }
+      }
+      onClose();
+    } catch (e: any) {
+      Alert.alert('Could not link expenses', e?.message ?? 'Please try again.');
+    } finally {
+      setLinking(false);
+    }
+  }
+
+  const anyLinked = expenses.some(e => !!e.tournamentId);
+
+  return (
+    <Modal transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={sheet.backdrop} onPress={onClose}>
+        <Pressable style={[sheet.container, { maxHeight: '75%' }]} onPress={() => {}}>
+          <View style={sheet.handle} />
+          <Text style={[sheet.title, { marginBottom: 4 }]}>Link to Tournament</Text>
+          {expenses.length > 1 && (
+            <Text style={{ fontSize: 12, color: '#6060A0', marginBottom: 8, textAlign: 'center' }}>
+              {expenses.length} expenses will be linked
+            </Text>
+          )}
+          {anyLinked && !isLoading && (
+            <TouchableOpacity style={sheet.row} onPress={() => link(null)} activeOpacity={0.75} disabled={linking}>
+              <Text style={sheet.rowIcon}>🔗</Text>
+              <Text style={[sheet.rowLabel, { color: T.red }]}>Remove tournament link</Text>
+              <Text style={[sheet.rowArrow, { color: T.red }]}>›</Text>
+            </TouchableOpacity>
+          )}
+          {isLoading ? (
+            <View style={{ paddingVertical: 32, alignItems: 'center' }}>
+              <ActivityIndicator color={T.accent} />
+            </View>
+          ) : pastTournaments!.length === 0 ? (
+            <Text style={{ color: '#6060A0', textAlign: 'center', marginVertical: 24 }}>
+              No past tournaments found for {currentYear}
+            </Text>
+          ) : (
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {pastTournaments!.map((t) => (
+                <TouchableOpacity key={t.id ?? `${t.name}|${t.startDate}`} style={sheet.row} onPress={() => link(t)} activeOpacity={0.75} disabled={linking}>
+                  <Text style={sheet.rowIcon}>🏆</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={sheet.rowLabel} numberOfLines={1}>{t.name}</Text>
+                    <Text style={{ fontSize: 11, color: '#6060A0' }}>{t.startDate}</Text>
+                  </View>
+                  {linking ? <ActivityIndicator size="small" color={T.accent} /> : <Text style={[sheet.rowArrow, { color: T.accent }]}>›</Text>}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          )}
+          <TouchableOpacity style={sheet.cancelBtn} onPress={onClose} activeOpacity={0.8} disabled={linking}>
+            <Text style={sheet.cancelText}>Cancel</Text>
           </TouchableOpacity>
         </Pressable>
       </Pressable>
@@ -892,7 +1093,7 @@ function PrizeRow({ label, icon, amount, onSave }: {
 
   async function handleSave() {
     if (saving) return; // guard against double-fire from onBlur + onPress
-    const val = parseFloat(input);
+    const val = parseFloat(input.replace(',', '.'));
     setEditing(false);
     if (!isNaN(val) && val >= 0) {
       setDisplayAmount(val); // optimistic — show immediately
@@ -968,6 +1169,7 @@ export function TournamentExpenseDetail({ tournament, onClose, allTournaments }:
   const [actionExpense,   setActionExpense]   = useState<any | null>(null);
   const [editExpense,     setEditExpense]     = useState<any | null>(null);
   const [deleteExpense,   setDeleteExpense]   = useState<any | null>(null);
+  const [linkExpenses,    setLinkExpenses]    = useState<any[]>([]);
   const [deleting,        setDeleting]        = useState(false);
 
   async function confirmDelete(expense: any) {
@@ -978,6 +1180,8 @@ export function TournamentExpenseDetail({ tournament, onClose, allTournaments }:
       } else {
         await apiDeleteExpense(expense.id);
       }
+    } catch (e: any) {
+      Alert.alert('Could not delete', e?.message ?? 'Please try again.');
     } finally { setDeleting(false); setDeleteExpense(null); }
   }
 
@@ -988,7 +1192,10 @@ export function TournamentExpenseDetail({ tournament, onClose, allTournaments }:
   // Read prize money from live record only; default 0 until data loads
   const singlesPrize = (liveT?.singlesPrizeMoney ?? tournament.singlesPrizeMoney) ?? 0;
   const doublesPrize = (liveT?.doublesPrizeMoney ?? tournament.doublesPrizeMoney) ?? 0;
-  const totalPrize   = singlesPrize + doublesPrize;
+  // Legacy records only have prizeMoney — fall back for the total
+  const totalPrize   = (singlesPrize + doublesPrize) > 0
+    ? singlesPrize + doublesPrize
+    : ((liveT?.prizeMoney ?? tournament.prizeMoney) ?? 0);
   const net          = totalPrize - totalSpent;
 
   const surfaceBg   = SURFACE_BG[(t.surface as Surface)] ?? '#FAEEDA';
@@ -1023,7 +1230,8 @@ export function TournamentExpenseDetail({ tournament, onClose, allTournaments }:
           </TouchableOpacity>
         </View>
 
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 48 }}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 48 }} keyboardShouldPersistTaps="handled">
 
           {/* Surface-colored header */}
           <View style={[det.headerBand, { backgroundColor: surfaceBg }]}>
@@ -1089,6 +1297,7 @@ export function TournamentExpenseDetail({ tournament, onClose, allTournaments }:
 
           </View>
         </ScrollView>
+        </KeyboardAvoidingView>
       </SafeAreaView>
 
       {showAddExpense && (
@@ -1104,7 +1313,16 @@ export function TournamentExpenseDetail({ tournament, onClose, allTournaments }:
           expense={actionExpense}
           onEdit={() => { setEditExpense(actionExpense); setActionExpense(null); }}
           onDelete={() => { setDeleteExpense(actionExpense); setActionExpense(null); }}
+          onLink={() => { setLinkExpenses([actionExpense]); setActionExpense(null); }}
           onCancel={() => setActionExpense(null)}
+        />
+      )}
+
+      {linkExpenses.length > 0 && (
+        <LinkTournamentModal
+          expenses={linkExpenses}
+          tournaments={allTournaments}
+          onClose={() => setLinkExpenses([])}
         />
       )}
 
@@ -1135,8 +1353,6 @@ function PasteFromNotesModal({ tournaments, onClose }: {
   const { t } = useLanguage();
   const demoCtx = useDemoData();
   const generateInsight = useGenerateInsight();
-
-  const defaultTournament = useMemo(() => findActiveTournament(tournaments) ?? tournaments[0] ?? null, []);
 
   const [rawText,      setRawText]      = useState('');
   const [parsed,       setParsed]       = useState<PasteItem[]>([]);
@@ -1369,22 +1585,39 @@ function PasteFromNotesModal({ tournaments, onClose }: {
 
 // ─── Chart helpers ────────────────────────────────────────────────────────────
 
+// All coach-related DB category values that must be unified under "Travel Coach"
+const COACH_CAT_VALUES = new Set(
+  ['coach fee', 'coach flight', 'coach hotel', 'coach meals', 'travel coach']
+);
+
+// Normalise raw DB category to its canonical display/group name.
+// "Flight" (legacy) → "Flights"; all coach variants → "Travel Coach".
+function groupCategory(raw: string): string {
+  const lower = raw.toLowerCase();
+  if (lower === 'flight') return 'Flights';
+  if (COACH_CAT_VALUES.has(lower)) return 'Travel Coach';
+  return raw;
+}
+
 const CAT_PIE_COLORS: Record<string, string> = {
-  flight: T.accent, 'coach fee': '#9333EA', hotel: T.teal, meals: T.clayText,
+  flight: T.accent, flights: T.accent, hotel: T.teal, meals: T.clayText,
   transport: T.amber, 'strings & grip': T.green, 'stringing fee': T.green,
   physio: T.hardText, academy: T.grassText, trainer: '#9333EA',
-  'coach flight': '#9333EA', 'coach hotel': '#C084FC', 'coach meals': '#A855F7',
+  'travel coach': '#9333EA',
   other: T.textTertiary,
 };
 const PIE_FALLBACK = [T.teal, T.accent, T.clayText, T.hardText, T.red, T.green, T.amber, '#9333EA', T.grassText, '#C084FC', '#A855F7', '#F472B6'];
 
 function tPrize(t: any): number {
-  const s = t.singlesPrizeMoney ?? 0, d = t.doublesPrizeMoney ?? 0;
-  return s + d > 0 ? s + d : (t.prizeMoney ?? 0);
+  const split = (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0);
+  // Fall back to legacy prizeMoney for records created before the singles/doubles split
+  return split > 0 ? split : (t.prizeMoney ?? 0);
 }
 
 function buildChartData(expenses: any[], tournaments: any[], period: 'week' | 'month' | 'year', monthOffset = 0, yearOffset = 0, monthAbbr = getMonthAbbr('en')) {
   const now = new Date(); now.setHours(0, 0, 0, 0);
+  // Withdrawn tournaments never contribute prize money — consistent across all periods
+  const activeTournaments = tournaments.filter((t: any) => !t.isWithdrawn);
 
   if (period === 'week') {
     const dow = now.getDay();
@@ -1392,12 +1625,22 @@ function buildChartData(expenses: any[], tournaments: any[], period: 'week' | 'm
     mon.setDate(now.getDate() - (dow === 0 ? 6 : dow - 1));
     const daysToShow = dow === 0 ? 7 : dow;
     const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    // Single pass: bucket spent/earned by exact ISO date
+    const spentByDate: Record<string, number> = {};
+    for (const e of expenses) {
+      if (!e.date) continue;
+      spentByDate[e.date] = (spentByDate[e.date] ?? 0) + (e.amount ?? 0);
+    }
+    const earnedByDate: Record<string, number> = {};
+    for (const t of activeTournaments) {
+      const iso = t.endDate ?? t.startDate;
+      if (!iso) continue;
+      earnedByDate[iso] = (earnedByDate[iso] ?? 0) + tPrize(t);
+    }
     return Array.from({ length: daysToShow }, (_, i) => {
       const d = new Date(mon); d.setDate(mon.getDate() + i);
       const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      const spent  = expenses.filter((e: any) => e.date === iso).reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
-      const earned = tournaments.filter((t: any) => (t.endDate ?? t.startDate) === iso).reduce((s: number, t: any) => s + tPrize(t), 0);
-      return { value: spent - earned, label: labels[i] };
+      return { value: (spentByDate[iso] ?? 0) - (earnedByDate[iso] ?? 0), label: labels[i] };
     });
   }
 
@@ -1407,40 +1650,52 @@ function buildChartData(expenses: any[], tournaments: any[], period: 'week' | 'm
     const daysInMonth = new Date(y, m + 1, 0).getDate();
     const isPast = monthOffset < 0;
     const todayD = isPast ? daysInMonth : now.getDate();
-    const weeks: { value: number; label: string }[] = [];
-    for (let start = 1; start <= daysInMonth; start += 7) {
-      if (start > todayD) break;
-      const end = Math.min(start + 6, daysInMonth, todayD);
-      const spent = expenses.filter((e: any) => {
-        if (!e.date) return false;
-        const eY = +e.date.slice(0, 4), eM = +e.date.slice(5, 7) - 1, eD = +e.date.slice(8, 10);
-        return eY === y && eM === m && eD >= start && eD <= end;
-      }).reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
-      const earned = tournaments.filter((t: any) => {
-        const iso = t.endDate ?? t.startDate; if (!iso) return false;
-        const eY = +iso.slice(0, 4), eM = +iso.slice(5, 7) - 1, eD = +iso.slice(8, 10);
-        return eY === y && eM === m && eD >= start && eD <= end;
-      }).reduce((s: number, t: any) => s + tPrize(t), 0);
-      weeks.push({ value: spent - earned, label: `${monthAbbr[m]} ${start}` });
+    const prefix = `${y}-${String(m + 1).padStart(2, '0')}-`;
+    // Single pass: bucket by week-of-month index (day 1–7 → 0, 8–14 → 1, …)
+    const weekCount = Math.ceil(Math.min(daysInMonth, todayD) / 7);
+    const spentByWeek = new Array(weekCount).fill(0);
+    const earnedByWeek = new Array(weekCount).fill(0);
+    const bucketOf = (iso: string): number | null => {
+      if (!iso.startsWith(prefix)) return null;
+      const day = +iso.slice(8, 10);
+      if (day > todayD) return null;
+      const idx = Math.floor((day - 1) / 7);
+      return idx < weekCount ? idx : null;
+    };
+    for (const e of expenses) {
+      if (!e.date) continue;
+      const idx = bucketOf(e.date);
+      if (idx !== null) spentByWeek[idx] += e.amount ?? 0;
     }
-    return weeks;
+    for (const t of activeTournaments) {
+      const iso = t.endDate ?? t.startDate;
+      if (!iso) continue;
+      const idx = bucketOf(iso);
+      if (idx !== null) earnedByWeek[idx] += tPrize(t);
+    }
+    return spentByWeek.map((spent, i) => ({
+      value: spent - earnedByWeek[i],
+      label: `${monthAbbr[m]} ${i * 7 + 1}`,
+    }));
   }
 
-  // year — one bucket per calendar month
+  // year — one bucket per calendar month, single pass
   const y = now.getFullYear() + yearOffset;
   const monthCount = yearOffset < 0 ? 12 : now.getMonth() + 1;
-  return Array.from({ length: monthCount }, (_, mi) => {
-    const spent = expenses.filter((e: any) => {
-      if (!e.date) return false;
-      return +e.date.slice(0, 4) === y && +e.date.slice(5, 7) - 1 === mi;
-    }).reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
-    const earned = tournaments.filter((t: any) => {
-      const iso = t.endDate ?? t.startDate;
-      if (!iso) return false;
-      return +iso.slice(0, 4) === y && +iso.slice(5, 7) - 1 === mi && !t.isWithdrawn;
-    }).reduce((s: number, t: any) => s + tPrize(t), 0);
-    return { value: spent - earned, label: monthAbbr[mi] };
-  });
+  const spentByMonth = new Array(monthCount).fill(0);
+  const earnedByMonth = new Array(monthCount).fill(0);
+  for (const e of expenses) {
+    if (!e.date || +e.date.slice(0, 4) !== y) continue;
+    const mi = +e.date.slice(5, 7) - 1;
+    if (mi >= 0 && mi < monthCount) spentByMonth[mi] += e.amount ?? 0;
+  }
+  for (const t of activeTournaments) {
+    const iso = t.endDate ?? t.startDate;
+    if (!iso || +iso.slice(0, 4) !== y) continue;
+    const mi = +iso.slice(5, 7) - 1;
+    if (mi >= 0 && mi < monthCount) earnedByMonth[mi] += tPrize(t);
+  }
+  return spentByMonth.map((spent, mi) => ({ value: spent - earnedByMonth[mi], label: monthAbbr[mi] }));
 }
 
 function catmullRomPath(pts: { x: number; y: number }[]): string {
@@ -1677,36 +1932,40 @@ interface HgBar { label: string; value: number; color?: string; sub?: string }
 function buildHgTimeline(expenses: any[], period: 'month' | 'year', monthOffset: number, yearOffset: number, monthAbbr = getMonthAbbr('en')): HgBar[] {
   const now = new Date(); now.setHours(0, 0, 0, 0);
   if (period === 'month') {
+    // Single pass: bucket by week-of-month index
     const target = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
     const y = target.getFullYear(), m = target.getMonth();
     const daysInMonth = new Date(y, m + 1, 0).getDate();
-    const bars: HgBar[] = [];
-    for (let start = 1; start <= daysInMonth; start += 7) {
-      const end = Math.min(start + 6, daysInMonth);
-      const spent = expenses.filter((e: any) => {
-        if (!e.date) return false;
-        const eY = +e.date.slice(0, 4), eM = +e.date.slice(5, 7) - 1, eD = +e.date.slice(8, 10);
-        return eY === y && eM === m && eD >= start && eD <= end;
-      }).reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
-      bars.push({ label: `${start}–${end}`, value: spent });
+    const prefix = `${y}-${String(m + 1).padStart(2, '0')}-`;
+    const weekCount = Math.ceil(daysInMonth / 7);
+    const totals = new Array(weekCount).fill(0);
+    for (const e of expenses) {
+      if (!e.date || !e.date.startsWith(prefix)) continue;
+      const idx = Math.floor((+e.date.slice(8, 10) - 1) / 7);
+      if (idx >= 0 && idx < weekCount) totals[idx] += e.amount ?? 0;
     }
-    return bars;
+    return totals.map((value, i) => ({
+      label: `${i * 7 + 1}–${Math.min(i * 7 + 7, daysInMonth)}`,
+      value,
+    }));
   }
+  // Single pass: bucket by calendar month
   const y = now.getFullYear() + yearOffset;
   const monthCount = yearOffset < 0 ? 12 : now.getMonth() + 1;
-  return Array.from({ length: monthCount }, (_, mi) => {
-    const spent = expenses.filter((e: any) => {
-      if (!e.date) return false;
-      return +e.date.slice(0, 4) === y && +e.date.slice(5, 7) - 1 === mi;
-    }).reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
-    return { label: monthAbbr[mi], value: spent };
-  });
+  const totals = new Array(monthCount).fill(0);
+  for (const e of expenses) {
+    if (!e.date || +e.date.slice(0, 4) !== y) continue;
+    const mi = +e.date.slice(5, 7) - 1;
+    if (mi >= 0 && mi < monthCount) totals[mi] += e.amount ?? 0;
+  }
+  return totals.map((value, mi) => ({ label: monthAbbr[mi], value }));
 }
 
 function buildHgByCategory(expenses: any[]): HgBar[] {
   const grouped: Record<string, number> = {};
   for (const e of expenses) {
-    const cat = (e.category ?? 'Other').trim().toLowerCase().replace(/\b\w/g, (c: string) => c.toUpperCase());
+    const raw = (e.category ?? 'Other').trim().toLowerCase().replace(/\b\w/g, (c: string) => c.toUpperCase());
+    const cat = groupCategory(raw);
     grouped[cat] = (grouped[cat] ?? 0) + (e.amount ?? 0);
   }
   return Object.entries(grouped)
@@ -1962,7 +2221,7 @@ function normalizeCat(raw: string): string {
 function buildPieData(expenses: any[]) {
   const grouped: Record<string, number> = {};
   for (const e of expenses) {
-    const cat = normalizeCat(e.category ?? 'Other');
+    const cat = groupCategory(normalizeCat(e.category ?? 'Other'));
     grouped[cat] = (grouped[cat] ?? 0) + (e.amount ?? 0);
   }
   const sorted = Object.entries(grouped).sort((a, b) => b[1] - a[1]);
@@ -2132,7 +2391,9 @@ const drillStyles = StyleSheet.create({
     paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: T.cardBorder,
   },
   rowNote: { fontSize: 14, fontWeight: '500', color: T.textPrimary },
+  rowSubcat: { fontSize: 11, color: '#9333EA', marginTop: 1, fontWeight: '600' },
   rowDate: { fontSize: 12, color: T.textTertiary, marginTop: 2 },
+  rowTournament: { fontSize: 11, color: '#6060A0', marginTop: 2 },
   rowAmt: { fontSize: 15, fontWeight: '700', color: T.textPrimary, flexShrink: 0 },
   rowSelected: { backgroundColor: T.accentMuted },
   selectBar: {
@@ -2154,10 +2415,15 @@ const drillStyles = StyleSheet.create({
   },
   closeBtnText: { fontSize: 15, fontWeight: '600', color: T.textSecondary },
   deleteBtn: {
-    marginTop: 16, backgroundColor: T.red, borderRadius: 12,
+    backgroundColor: T.red, borderRadius: 12,
     paddingVertical: 14, alignItems: 'center',
   },
   deleteBtnText: { fontSize: 15, fontWeight: '700', color: T.textPrimary },
+  linkBtn: {
+    backgroundColor: '#5B5BD6', borderRadius: 12,
+    paddingVertical: 14, paddingHorizontal: 18, alignItems: 'center',
+  },
+  linkBtnText: { fontSize: 15, fontWeight: '700', color: '#FAFAFA' },
 });
 
 // ─── Prize Money Modal ────────────────────────────────────────────────────────
@@ -2180,8 +2446,8 @@ function PrizeMoneyModal({ tournaments, onClose }: { tournaments: any[]; onClose
   const selectedTournament = eligibleTournaments.find((t: any) => t.id === tournamentId);
 
   async function handleSave() {
-    const singles = parseFloat(singlesAmount) || 0;
-    const doubles = parseFloat(doublesAmount) || 0;
+    const singles = parseFloat(singlesAmount.replace(',', '.')) || 0;
+    const doubles = parseFloat(doublesAmount.replace(',', '.')) || 0;
     if (singles === 0 && doubles === 0) { setError('Enter at least one amount.'); return; }
     setSaving(true); setError('');
     try {
@@ -2209,6 +2475,7 @@ function PrizeMoneyModal({ tournaments, onClose }: { tournaments: any[]; onClose
           <Text style={form.headerTitle}>Prize Money</Text>
           <View style={form.backBtn} />
         </View>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
         <ScrollView style={form.scroll} contentContainerStyle={form.scrollContent} keyboardShouldPersistTaps="handled">
           <Text style={form.sectionLabel}>TOURNAMENT</Text>
           <TouchableOpacity style={form.dropdown} onPress={() => setDropdownOpen(!dropdownOpen)} activeOpacity={0.7}>
@@ -2267,6 +2534,7 @@ function PrizeMoneyModal({ tournaments, onClose }: { tournaments: any[]; onClose
             {saving ? <ActivityIndicator color={T.textPrimary} /> : <Text style={form.saveBtnText}>Save Prize Money</Text>}
           </TouchableOpacity>
         </ScrollView>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </Modal>
   );
@@ -2379,7 +2647,7 @@ const mf = StyleSheet.create({
 
 export default function ExpensesScreen() {
   const { lang, t } = useLanguage();
-  const { data, isLoading } = useAppQuery({ tournaments: {}, expenses: {}, monthlyExpenses: {} });
+  const { data, isLoading } = useAppQuery({ tournaments: {}, expenses: {} });
   const { data: _prof } = useProfile();
   const [showAddForm, setShowAddForm] = useState(false);
   const [showAddChoice, setShowAddChoice] = useState(false);
@@ -2394,7 +2662,8 @@ export default function ExpensesScreen() {
   const { openTournament } = useLocalSearchParams<{ openTournament?: string }>();
   const autoOpenedRef = useRef<string | undefined>(undefined);
 
-  const [period, setPeriod] = useState<'week' | 'month' | 'year'>('month');
+  const [period, setPeriod] = useState<'week' | 'month' | 'year'>('year');
+  const [periodDropOpen, setPeriodDropOpen] = useState(false);
   const { isFirstVisit, markVisited } = useFirstVisit('expenses');
   const swipeHandlers = useTabSwipe();
   const router = useRouter();
@@ -2403,9 +2672,29 @@ export default function ExpensesScreen() {
   const [actionExpense, setActionExpense] = useState<any | null>(null);
   const [editExpense, setEditExpense] = useState<any | null>(null);
   const [deleteExpense, setDeleteExpense] = useState<any | null>(null);
+  const [linkExpenses, setLinkExpenses] = useState<any[]>([]);
   const [deleting, setDeleting] = useState(false);
   const demoCtx = useDemoData();
   const [drillCategory, setDrillCategory] = useState<{ cat: string; color: string } | null>(null);
+  const [atpMatchHistory, setAtpMatchHistory] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (DEMO_MODE) return;
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) return;
+      supabase.from('profiles').select('atp_player_name').eq('id', user.id).single()
+        .then(({ data: prof }) => {
+          if (!prof?.atp_player_name) return;
+          const nameParts = prof.atp_player_name.trim().split(/\s+/).slice(0, 2).join(' ');
+          supabase.from('player_profiles').select('match_history')
+            .or(playerNameFilter(nameParts))
+            .order('last_updated', { ascending: false }).limit(1)
+            .then(({ data: rows }) => {
+              if (rows?.[0]?.match_history) setAtpMatchHistory(rows[0].match_history);
+            });
+        });
+    });
+  }, []);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const selectMode = selectedIds.size > 0;
 
@@ -2424,6 +2713,8 @@ export default function ExpensesScreen() {
         if (DEMO_MODE) { demoCtx?.deleteExpense(id); }
         else { await apiDeleteExpense(id); }
       }
+    } catch (e: any) {
+      Alert.alert('Could not delete', e?.message ?? 'Please try again.');
     } finally {
       setDeleting(false);
       setSelectedIds(new Set());
@@ -2438,6 +2729,8 @@ export default function ExpensesScreen() {
       } else {
         await apiDeleteExpense(expense.id);
       }
+    } catch (e: any) {
+      Alert.alert('Could not delete', e?.message ?? 'Please try again.');
     } finally { setDeleting(false); setDeleteExpense(null); }
   }
 
@@ -2478,14 +2771,36 @@ export default function ExpensesScreen() {
       const spent = tExpenses.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
       const singles = t.singlesPrizeMoney ?? 0;
       const doubles = t.doublesPrizeMoney ?? 0;
-      const prize = singles + doubles > 0 ? singles + doubles : (t.prizeMoney ?? 0);
+      const prize = singles + doubles;
       setDetailTournament({ ...t, spent, prize });
     }
   }, [openTournament, isLoading]);
 
   const tournaments = (data?.tournaments ?? []).filter((t: any) => !t.isWithdrawn);
   const expenses = data?.expenses ?? [];
-  const monthlyExpenses = data?.monthlyExpenses ?? [];
+
+  // id → display name map — must live AFTER tournaments is declared
+  const tournamentMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const t of tournaments) {
+      if (t?.id) map[t.id] = t.name ?? `${t.category ?? ''} ${t.city ?? ''}`.trim();
+    }
+    return map;
+  }, [tournaments]);
+
+  // Single-pass index of expenses per tournament — reused by the insight cards
+  // and detail handlers instead of re-filtering the full list per tournament.
+  const expensesByTournament = useMemo(() => {
+    const map = new Map<string, { list: any[]; total: number }>();
+    for (const e of expenses) {
+      if (!e.tournamentId) continue;
+      let entry = map.get(e.tournamentId);
+      if (!entry) { entry = { list: [], total: 0 }; map.set(e.tournamentId, entry); }
+      entry.list.push(e);
+      entry.total += e.amount ?? 0;
+    }
+    return map;
+  }, [expenses]);
 
   const [pStart, pEnd] = useMemo(() => periodRange(period, monthOffset, yearOffset), [period, monthOffset, yearOffset]);
 
@@ -2499,46 +2814,13 @@ export default function ExpensesScreen() {
     return `${t(MONTH_KEYS[target.getMonth()])} ${target.getFullYear()}`;
   }, [monthOffset, lang]);
 
-  // Compute per-tournament totals, filtered to the selected period
-  const tournamentTotals = tournaments.map((t: any) => {
-    const tExpenses = expenses.filter((e: any) => e.tournamentId === t.id);
-    const spent = tExpenses.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
-    const singles = t.singlesPrizeMoney ?? 0;
-    const doubles = t.doublesPrizeMoney ?? 0;
-    // Prefer new split fields; fall back to legacy prizeMoney for old records
-    const prize = singles + doubles > 0 ? singles + doubles : (t.prizeMoney ?? 0);
-    return { ...t, spent, prize };
-  }).filter((t: any) => t.spent > 0 && t.startDate && t.startDate >= pStart && t.startDate <= pEnd);
-
-  const totalTournamentSpent = tournamentTotals.reduce((s: number, t: any) => s + t.spent, 0);
-  const totalMonthly = monthlyExpenses.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
   const periodExpenses = expenses.filter((e: any) => e.date && e.date >= pStart && e.date <= pEnd);
   const periodSpent = periodExpenses.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
   const periodPrizeMoney = tournaments.reduce((s: number, t: any) => {
     if (!t.startDate || t.startDate < pStart || t.startDate > pEnd) return s;
-    const singles = t.singlesPrizeMoney ?? 0;
-    const doubles = t.doublesPrizeMoney ?? 0;
-    return s + (singles + doubles > 0 ? singles + doubles : (t.prizeMoney ?? 0));
+    return s + tPrize(t);
   }, 0);
   const periodNet = periodPrizeMoney - periodSpent;
-
-  const totalPrizeMoney = tournaments.reduce((s: number, t: any) => {
-    const singles = t.singlesPrizeMoney ?? 0;
-    const doubles = t.doublesPrizeMoney ?? 0;
-    return s + (singles + doubles > 0 ? singles + doubles : (t.prizeMoney ?? 0));
-  }, 0);
-  const totalSpent = totalTournamentSpent + totalMonthly;
-  const totalNet   = totalPrizeMoney - totalSpent;
-
-  // Group monthly expenses by month/year
-  const monthlyGroups = monthlyExpenses.reduce((acc: any, e: any) => {
-    const key = `${e.year}-${String(e.month).padStart(2, '0')}`;
-    if (!acc[key]) acc[key] = { month: e.month, year: e.year, total: 0, categories: new Set<string>() };
-    acc[key].total += e.amount ?? 0;
-    acc[key].categories.add(e.category);
-    return acc;
-  }, {});
-  const monthlyRows = Object.values(monthlyGroups) as any[];
 
   // ── Compute summary card data for FINANCIAL INSIGHTS grid ──
   const insightCards = useMemo(() => {
@@ -2560,13 +2842,42 @@ export default function ExpensesScreen() {
     for (const surf of ['clay', 'hard', 'grass']) {
       const ts = pastT.filter((t: any) => t.surface === surf);
       if (ts.length === 0) continue;
-      const avg = ts.reduce((sum: number, t: any) => sum + expenses.filter((e: any) => e.tournamentId === t.id).reduce((s2: number, e: any) => s2 + (e.amount ?? 0), 0), 0) / ts.length;
+      const avg = ts.reduce((sum: number, t: any) => sum + (expensesByTournament.get(t.id)?.total ?? 0), 0) / ts.length;
       surfaceAvgs.push({ s: surf.charAt(0).toUpperCase() + surf.slice(1), avg });
     }
     const cheapest = surfaceAvgs.sort((a, b) => a.avg - b.avg)[0];
 
+    // 2b. Cost by country — most expensive country
+    const countryAvgs: { c: string; avg: number; perDay: number }[] = [];
+    const byCountry: Record<string, number[]> = {};
+    for (const t of pastT) {
+      if (!t.country) continue;
+      const key = (t.country as string).toUpperCase();
+      const tSpent = expensesByTournament.get(t.id)?.total ?? 0;
+      if (!byCountry[key]) byCountry[key] = [];
+      byCountry[key].push(tSpent);
+    }
+    // Also track days per country for $/day metric
+    const byCountryDays: Record<string, number> = {};
+    for (const t of pastT) {
+      if (!t.country) continue;
+      const key = (t.country as string).toUpperCase();
+      const start = t.startDate ? (() => { const [y,m,d] = (t.startDate as string).split('-').map(Number); return new Date(y,m-1,d); })() : null;
+      const end = t.endDate ? (() => { const [y,m,d] = (t.endDate as string).split('-').map(Number); return new Date(y,m-1,d); })() : null;
+      const days = (start && end) ? Math.max(1, Math.round((end.getTime()-start.getTime())/86400000)+1) : 7;
+      byCountryDays[key] = (byCountryDays[key] ?? 0) + days;
+    }
+    for (const [c, spends] of Object.entries(byCountry)) {
+      if (spends.length === 0) continue;
+      const total = spends.reduce((s, v) => s + v, 0);
+      const days = byCountryDays[c] ?? spends.length * 7;
+      countryAvgs.push({ c, avg: total / spends.length, perDay: days > 0 ? total / days : 0 });
+    }
+    countryAvgs.sort((a, b) => b.perDay - a.perDay);
+    const mostExpensiveCountry = countryAvgs[0];
+
     // 3. Tournament costs — count
-    const trackedCount = tournaments.filter((t: any) => !t.isWithdrawn && expenses.some((e: any) => e.tournamentId === t.id)).length;
+    const trackedCount = tournaments.filter((t: any) => !t.isWithdrawn && expensesByTournament.has(t.id)).length;
 
     // 4. Season heatmap — this week's spend level
     const weekStart = new Date(today); weekStart.setDate(today.getDate() - today.getDay() + 1);
@@ -2578,62 +2889,47 @@ export default function ExpensesScreen() {
     // 5. Coach impact
     let withCoachTotal = 0, withCoachCount = 0, soloTotal = 0, soloCount = 0;
     for (const t of pastT) {
-      const tExp = expenses.filter((e: any) => e.tournamentId === t.id);
-      if (tExp.length === 0) continue;
-      const total = tExp.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
-      if (tExp.some((e: any) => e.isCoachExpense)) { withCoachTotal += total; withCoachCount++; }
-      else { soloTotal += total; soloCount++; }
+      const entry = expensesByTournament.get(t.id);
+      if (!entry || entry.list.length === 0) continue;
+      if (entry.list.some((e: any) => e.isCoachExpense)) { withCoachTotal += entry.total; withCoachCount++; }
+      else { soloTotal += entry.total; soloCount++; }
     }
     const coachDiff = withCoachCount > 0 && soloCount > 0 ? (withCoachTotal / withCoachCount) - (soloTotal / soloCount) : 0;
-
-    // 6. Biggest expense
-    const biggest = [...expenses].sort((a: any, b: any) => (b.amount ?? 0) - (a.amount ?? 0))[0];
 
     // 7. Tracking streak
     const sortedPast = [...pastT].sort((a: any, b: any) => (b.startDate ?? '').localeCompare(a.startDate ?? ''));
     let streak = 0;
     for (const t of sortedPast) {
-      if (expenses.some((e: any) => e.tournamentId === t.id)) streak++;
+      if (expensesByTournament.has(t.id)) streak++;
       else break;
     }
 
-    // 8-12. Points-based (require match results)
-    const totalPoints = pastT.reduce((s: number, t: any) => s + (t.pointsEarned ?? 0), 0);
+    // 8-12. Points-based — read from scraped atpMatchHistory, not InstantDB tournaments
+    const totalPoints = atpMatchHistory.reduce((s: number, m: any) => s + (m.pointsEarned ?? 0), 0);
     const hasPoints = totalPoints > 0;
-    const totalInvested = pastT.reduce((s: number, t: any) => s + expenses.filter((e: any) => e.tournamentId === t.id).reduce((s2: number, e: any) => s2 + (e.amount ?? 0), 0), 0);
-    const costPP = hasPoints ? totalInvested / totalPoints : 0;
+    const totalInvested = expenses.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
+    const costPP = hasPoints && totalInvested > 0 ? totalInvested / totalPoints : 0;
 
     // Best surface for points
     let bestSurf = '';
     let bestAvg = 0;
     for (const surf of ['clay', 'hard', 'grass']) {
-      const ts = pastT.filter((t: any) => t.surface === surf && (t.pointsEarned ?? 0) > 0);
-      if (ts.length === 0) continue;
-      const avg = ts.reduce((s: number, t: any) => s + (t.pointsEarned ?? 0), 0) / ts.length;
+      const ms = atpMatchHistory.filter((m: any) => m.surface === surf && (m.pointsEarned ?? 0) > 0);
+      if (ms.length === 0) continue;
+      const avg = ms.reduce((s: number, m: any) => s + (m.pointsEarned ?? 0), 0) / ms.length;
       if (avg > bestAvg) { bestAvg = avg; bestSurf = surf.charAt(0).toUpperCase() + surf.slice(1); }
     }
-
-    // Most efficient tournament
-    const effT = pastT.filter((t: any) => (t.pointsEarned ?? 0) > 0).map((t: any) => {
-      const spent = expenses.filter((e: any) => e.tournamentId === t.id).reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
-      return { name: `${t.category ?? ''} ${t.city ?? t.name}`.trim(), eff: spent > 0 ? (t.pointsEarned ?? 0) / (spent / 1000) : 0 };
-    }).sort((a: any, b: any) => b.eff - a.eff)[0];
 
     return [
       { type: 'where-money-goes', label: t('expenses.whereMoneyGoes'), value: topCat ? `${topCat[0]} · ${topCatPct}%` : t('expenses.needMoreData') },
       { type: 'cost-by-surface', label: t('expenses.costBySurface'), value: cheapest ? `${cheapest.s} · $${Math.round(cheapest.avg)} avg` : t('expenses.needMoreData') },
+      { type: 'cost-by-country', label: t('expenses.costByCountry'), value: mostExpensiveCountry ? `${mostExpensiveCountry.c} · $${Math.round(mostExpensiveCountry.perDay)}/day` : t('expenses.needMoreData') },
       { type: 'tournament-costs', label: t('expenses.tournamentCosts'), value: `${trackedCount} tournament${trackedCount !== 1 ? 's' : ''}` },
-      { type: 'season-heatmap', label: t('expenses.activeWeeks'), value: `${weekLevel}` },
       { type: 'coach-impact', label: t('expenses.coachImpact'), value: coachDiff !== 0 ? `${coachDiff > 0 ? '+' : ''}$${Math.abs(Math.round(coachDiff))}` : t('expenses.needMoreData') },
-      { type: 'biggest-expenses', label: t('expenses.tournamentCosts'), value: biggest ? `${biggest.category} · $${Math.round(biggest.amount)}` : t('expenses.needMoreData') },
-      { type: 'tracking-streak', label: t('expenses.activeWeeks'), value: `🔥 ${streak}` },
-      { type: 'cost-per-point', label: t('expenses.pointsVsInvestment'), value: hasPoints ? `$${Math.round(costPP)}` : t('expenses.logToUnlock') },
-      { type: 'points-by-surface', label: t('expenses.pointsBySurface'), value: bestSurf ? `${bestSurf} · ${bestAvg.toFixed(0)} pts` : t('expenses.logToUnlock') },
-      { type: 'ranking-efficiency', label: t('expenses.rankingEfficiency'), value: effT ? effT.name : t('expenses.logToUnlock') },
-      { type: 'points-vs-investment', label: t('expenses.pointsVsInvestment'), value: hasPoints ? (totalPoints > totalInvested / 100 ? '↑' : '↓') : t('expenses.logToUnlock') },
-      { type: 'cost-to-gain-10', label: t('expenses.costToGain10'), value: hasPoints && pastT.length >= 5 ? `Est. $${Math.round(costPP * Math.ceil(totalPoints / pastT.length) * 3).toLocaleString()}` : t('expenses.needMoreData') },
+      { type: 'cost-per-point', label: t('expenses.pointsVsInvestment'), value: hasPoints ? `$${Math.round(costPP)} / pt` : t('expenses.logToUnlock') },
+      { type: 'points-by-surface', label: t('expenses.pointsBySurface'), value: bestSurf ? `${bestSurf} · ${bestAvg.toFixed(0)} pts avg` : t('expenses.logToUnlock') },
     ];
-  }, [tournaments, expenses]);
+  }, [tournaments, expenses, expensesByTournament, atpMatchHistory]);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -2656,24 +2952,35 @@ export default function ExpensesScreen() {
           </View>
         </View>
 
-        {/* Period Selector Toggle */}
-        <View style={styles.periodRow}>
-          {(['month', 'year'] as const).map((p) => (
+        {/* Period Selector Toggle — single bubble, expands to options */}
+        <View style={{ alignItems: 'center', marginBottom: 8 }}>
+          <TouchableOpacity
+            style={[styles.periodChip, styles.periodChipActive, { flexDirection: 'row', alignItems: 'center', gap: 4 }]}
+            onPress={() => setPeriodDropOpen(o => !o)}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.periodChipTextActive}>
+              {period === 'month' ? t('expenses.monthly') : t('expenses.yearly')}
+            </Text>
+            <Text style={{ fontSize: 10, color: '#FAFAFA' }}>{periodDropOpen ? '▲' : '▼'}</Text>
+          </TouchableOpacity>
+          {periodDropOpen && (
             <TouchableOpacity
-              key={p}
-              style={[styles.periodChip, period === p && styles.periodChipActive]}
+              style={[styles.periodChip, { marginTop: 4 }]}
               onPress={() => {
-                setPeriod(p);
+                const next = period === 'year' ? 'month' : 'year';
+                setPeriod(next);
                 setMonthOffset(0);
                 setYearOffset(0);
+                setPeriodDropOpen(false);
               }}
               activeOpacity={0.7}
             >
-              <Text style={[styles.periodChipText, period === p && styles.periodChipTextActive]}>
-                {p === 'month' ? t('expenses.monthly') : t('expenses.yearly')}
+              <Text style={styles.periodChipText}>
+                {period === 'year' ? t('expenses.monthly') : t('expenses.yearly')}
               </Text>
             </TouchableOpacity>
-          ))}
+          )}
         </View>
 
         {/* ── WHOOP-style Time Navigation ── */}
@@ -2724,7 +3031,7 @@ export default function ExpensesScreen() {
         </View>
 
         {isLoading ? (
-          <ActivityIndicator color={T.teal} style={{ marginTop: 40 }} />
+          <LoadingLogo style={{ minHeight: 300 }} />
         ) : (
           <>
             {/* ── Season Summary Bar ── */}
@@ -2764,7 +3071,7 @@ export default function ExpensesScreen() {
               const spent = tExp.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
               const singles = t.singlesPrizeMoney ?? 0;
               const doubles = t.doublesPrizeMoney ?? 0;
-              const prize = singles + doubles > 0 ? singles + doubles : (t.prizeMoney ?? 0);
+              const prize = singles + doubles;
               setDetailTournament({ ...t, spent, prize });
             }} />
 
@@ -2914,9 +3221,30 @@ export default function ExpensesScreen() {
                     <TouchableOpacity
                       style={{ flex: 1, backgroundColor: '#3A1A1A', borderRadius: 10, paddingVertical: 13, alignItems: 'center', borderWidth: 1, borderColor: '#E24B4A' }}
                       activeOpacity={0.8}
-                      onPress={async () => {
-                        for (const id of selectedSpentIds) { await apiDeleteExpense(id); }
-                        setSelectedSpentIds(new Set());
+                      onPress={() => {
+                        const count = selectedSpentIds.size;
+                        Alert.alert(
+                          `Delete ${count} expense${count !== 1 ? 's' : ''}?`,
+                          'This cannot be undone.',
+                          [
+                            { text: 'Cancel', style: 'cancel' },
+                            {
+                              text: 'Delete',
+                              style: 'destructive',
+                              onPress: async () => {
+                                try {
+                                  for (const id of selectedSpentIds) {
+                                    if (DEMO_MODE) { demoCtx?.deleteExpense(id); }
+                                    else { await apiDeleteExpense(id); }
+                                  }
+                                  setSelectedSpentIds(new Set());
+                                } catch (e: any) {
+                                  Alert.alert('Could not delete', e?.message ?? 'Please try again.');
+                                }
+                              },
+                            },
+                          ],
+                        );
                       }}>
                       <Text style={{ color: '#E24B4A', fontWeight: '700', fontSize: 14 }}>
                         Delete{selectedSpentIds.size > 1 ? ` (${selectedSpentIds.size})` : ''}
@@ -2947,7 +3275,7 @@ export default function ExpensesScreen() {
                     .map((trn: any) => {
                       const singles = trn.singlesPrizeMoney ?? 0;
                       const doubles = trn.doublesPrizeMoney ?? 0;
-                      const prize = singles + doubles > 0 ? singles + doubles : (trn.prizeMoney ?? 0);
+                      const prize = singles + doubles;
                       return { trn, prize, singles, doubles };
                     })
                     .filter(({ prize }: any) => prize > 0)
@@ -3005,7 +3333,7 @@ export default function ExpensesScreen() {
                           const spent = tExp.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
                           const singles = trn.singlesPrizeMoney ?? 0;
                           const doubles = trn.doublesPrizeMoney ?? 0;
-                          const prize = singles + doubles > 0 ? singles + doubles : (trn.prizeMoney ?? 0);
+                          const prize = singles + doubles;
                           setShowPrizeBreakdown(false);
                           setSelectedPrizeIds(new Set());
                           setDetailTournament({ ...trn, spent, prize });
@@ -3018,11 +3346,31 @@ export default function ExpensesScreen() {
                   <TouchableOpacity
                     style={{ flex: 1, backgroundColor: '#3A1A1A', borderRadius: 10, paddingVertical: 13, alignItems: 'center', borderWidth: 1, borderColor: '#E24B4A' }}
                     activeOpacity={0.8}
-                    onPress={async () => {
-                      for (const id of selectedPrizeIds) {
-                        await apiPatchTournament(id, { singlesPrizeMoney: 0, doublesPrizeMoney: 0, prizeMoney: 0 });
-                      }
-                      setSelectedPrizeIds(new Set());
+                    onPress={() => {
+                      const count = selectedPrizeIds.size;
+                      Alert.alert(
+                        `Clear prize money for ${count} tournament${count !== 1 ? 's' : ''}?`,
+                        'Singles and doubles amounts will be reset to $0.',
+                        [
+                          { text: 'Cancel', style: 'cancel' },
+                          {
+                            text: 'Clear',
+                            style: 'destructive',
+                            onPress: async () => {
+                              try {
+                                for (const id of selectedPrizeIds) {
+                                  const updates = { singlesPrizeMoney: 0, doublesPrizeMoney: 0, prizeMoney: 0 };
+                                  if (DEMO_MODE) { demoCtx?.patchTournament(id, updates); }
+                                  else { await apiPatchTournament(id, updates); }
+                                }
+                                setSelectedPrizeIds(new Set());
+                              } catch (e: any) {
+                                Alert.alert('Could not clear prize money', e?.message ?? 'Please try again.');
+                              }
+                            },
+                          },
+                        ],
+                      );
                     }}
                   >
                     <Text style={{ color: '#E24B4A', fontWeight: '700', fontSize: 14 }}>
@@ -3105,7 +3453,16 @@ export default function ExpensesScreen() {
           expense={actionExpense}
           onEdit={() => { setEditExpense(actionExpense); setActionExpense(null); }}
           onDelete={() => { setDeleteExpense(actionExpense); setActionExpense(null); }}
+          onLink={() => { setLinkExpenses([actionExpense]); setActionExpense(null); }}
           onCancel={() => setActionExpense(null)}
+        />
+      )}
+
+      {linkExpenses.length > 0 && (
+        <LinkTournamentModal
+          expenses={linkExpenses}
+          tournaments={tournaments}
+          onClose={() => { setLinkExpenses([]); setSelectedIds(new Set()); }}
         />
       )}
 
@@ -3125,7 +3482,10 @@ export default function ExpensesScreen() {
 
       {drillCategory && (() => {
         const catExpenses = periodExpenses
-          .filter((e: any) => (e.category ?? 'Other') === drillCategory.cat)
+          .filter((e: any) => {
+            const grouped = groupCategory(normalizeCat(e.category ?? 'Other'));
+            return grouped === drillCategory.cat;
+          })
           .sort((a: any, b: any) => (b.date ?? '').localeCompare(a.date ?? ''));
         const catTotal = catExpenses.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
         const closeDrill = () => { setDrillCategory(null); setSelectedIds(new Set()); };
@@ -3165,7 +3525,16 @@ export default function ExpensesScreen() {
                         )}
                         <View style={{ flex: 1, marginRight: 12 }}>
                           <Text style={drillStyles.rowNote} numberOfLines={1}>{e.note || 'No description'}</Text>
+                          {/* Show specific sub-category when the drill group name differs (e.g. Travel Coach → Coach Flight) */}
+                          {e.category && normalizeCat(e.category) !== drillCategory.cat && (
+                            <Text style={drillStyles.rowSubcat} numberOfLines={1}>{e.category}</Text>
+                          )}
                           <Text style={drillStyles.rowDate}>{e.date}</Text>
+                          {e.tournamentId && tournamentMap[e.tournamentId] ? (
+                            <Text style={drillStyles.rowTournament} numberOfLines={1}>
+                              🏆 {tournamentMap[e.tournamentId]}
+                            </Text>
+                          ) : null}
                         </View>
                         <Text style={drillStyles.rowAmt}>{fmt(e.amount ?? 0)}</Text>
                         {!selectMode && <Text style={{ color: T.textTertiary, fontSize: 16, marginLeft: 8 }}>›</Text>}
@@ -3174,15 +3543,26 @@ export default function ExpensesScreen() {
                   })}
                 </ScrollView>
                 {selectMode ? (
-                  <TouchableOpacity
-                    style={[drillStyles.deleteBtn, deleting && { opacity: 0.5 }]}
-                    onPress={deleteSelected}
-                    disabled={deleting}
-                    activeOpacity={0.8}>
-                    {deleting
-                      ? <ActivityIndicator color={T.textPrimary} />
-                      : <Text style={drillStyles.deleteBtnText}>Delete {selectedIds.size} expense{selectedIds.size !== 1 ? 's' : ''}</Text>}
-                  </TouchableOpacity>
+                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 16 }}>
+                    <TouchableOpacity
+                      style={drillStyles.linkBtn}
+                      onPress={() => {
+                        const sel = catExpenses.filter((e: any) => selectedIds.has(e.id));
+                        setLinkExpenses(sel);
+                      }}
+                      activeOpacity={0.8}>
+                      <Text style={drillStyles.linkBtnText}>🏆 Link</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[drillStyles.deleteBtn, { flex: 1 }, deleting && { opacity: 0.5 }]}
+                      onPress={deleteSelected}
+                      disabled={deleting}
+                      activeOpacity={0.8}>
+                      {deleting
+                        ? <ActivityIndicator color={T.textPrimary} />
+                        : <Text style={drillStyles.deleteBtnText}>Delete {selectedIds.size}</Text>}
+                    </TouchableOpacity>
+                  </View>
                 ) : (
                   <TouchableOpacity style={drillStyles.closeBtn} onPress={closeDrill} activeOpacity={0.7}>
                     <Text style={drillStyles.closeBtnText}>Close</Text>
@@ -3329,7 +3709,7 @@ const det = StyleSheet.create({
     gap: 10,
   },
   prizeRowIcon: { fontSize: 16 },
-  prizeRowLabel: { fontSize: 14, fontWeight: '600', color: T.textPrimary, width: 62 },
+  prizeRowLabel: { fontSize: 14, fontWeight: '600', color: T.textPrimary, flexShrink: 0 },
   prizeRowRight: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6 },
   prizeEditingRight: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 },
   prizeEmpty: { flex: 1, textAlign: 'right', fontSize: 14, color: T.textMuted, fontWeight: '400' },
@@ -3435,6 +3815,13 @@ const form = StyleSheet.create({
     marginBottom: 24,
   },
   coachLabel: { fontSize: 14, fontWeight: '500', color: T.textPrimary },
+  coachToggleRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: T.card, borderRadius: 12,
+    paddingHorizontal: 14, paddingVertical: 10,
+    marginBottom: 12,
+  },
+  coachToggleLabel: { fontSize: 14, fontWeight: '500', color: T.textPrimary },
   // Sections
   section: { marginBottom: 24 },
   sectionLabel: { fontSize: 11, fontWeight: '700', color: T.textTertiary, letterSpacing: 0.8, marginBottom: 10 },

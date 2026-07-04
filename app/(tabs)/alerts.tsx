@@ -7,6 +7,7 @@ import {
   Modal,
   Pressable,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { Text } from '@/components/ui/text';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -15,7 +16,8 @@ import { DEMO_MODE } from '@/config/demo';
 import { apiPatchTournament } from '@/lib/api';
 import { useDemoData } from '@/hooks/useDemoData';
 import { CourtIcon } from '@/components/ui/court-icon';
-import { fmtDate, calcDeadlines, getOnsiteDeadlines, getCircuit } from '@/utils/deadlines';
+import { fmtDate, calcDeadlines, getOnsiteDeadlines, getCircuit, deadlineInstant } from '@/utils/deadlines';
+import type { StoredDeadlineKind } from '@/utils/deadlines';
 import { useFirstVisit } from '@/hooks/useFirstVisit';
 import { useTabSwipe } from '@/hooks/useTabSwipe';
 import { ScreenWalkthrough } from '@/components/ui/screen-walkthrough';
@@ -32,12 +34,15 @@ const ALERTS_WALKTHROUGH = [
 
 type Urgency = 'urgent' | 'week' | 'upcoming';
 
+type DeadlineKind = 'withdrawal' | 'signup' | 'freeze';
+
 interface AlertItem {
   id: string;
   flag: string;
   tournament: string;
   tournamentId: string;
-  deadlineType: string;
+  kind: DeadlineKind;
+  deadlineType: string; // localized display label
   surface: string;
   exactDate: string;
   urgency: Urgency;
@@ -65,23 +70,27 @@ function daysUntil(dateStr: string | undefined): number | null {
   return Math.round((target.getTime() - today.getTime()) / 86400000);
 }
 
-function hoursUntil(dateStr: string | undefined): number | null {
+function hoursUntil(dateStr: string | undefined, category?: string, kind: StoredDeadlineKind = 'signUp'): number | null {
   if (!dateStr) return null;
   const target = parseLocalDate(dateStr);
   if (!target) return null;
-  target.setHours(14, 0, 0, 0);
-  return Math.round((target.getTime() - Date.now()) / 3600000);
+  // Anchor the countdown to the deadline's real closing instant
+  // (ITF 14:00 GMT, Challenger US ET) — not 14:00 device-local time.
+  const iso = `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, '0')}-${String(target.getDate()).padStart(2, '0')}`;
+  return Math.round((deadlineInstant(iso, category, kind).getTime() - Date.now()) / 3600000);
 }
 
-function buildAlerts(tournaments: any[]): AlertItem[] {
+function buildAlerts(tournaments: any[], tr: (key: any) => string): AlertItem[] {
   const items: AlertItem[] = [];
   for (const t of tournaments) {
-    if (t.isWithdrawn) continue;
+    if (t.isWithdrawn || t.isInMyList === false) continue;
 
+    // Stored deadlines are authoritative (they may be user-overridden);
+    // the formula only fills in missing values.
     const calc = t.startDate ? calcDeadlines(t.startDate, t.category) : null;
-    const withdrawal = calc?.withdrawalDeadline ?? t.withdrawalDeadline;
-    const signUp = calc?.signUpDeadline ?? t.signUpDeadline;
-    const freeze = calc?.freezeDeadline ?? t.freezeDeadline;
+    const withdrawal = t.withdrawalDeadline || calc?.withdrawalDeadline;
+    const signUp = t.signUpDeadline || calc?.signUpDeadline;
+    const freeze = t.freezeDeadline || calc?.freezeDeadline;
 
     // For unregistered tournaments, suppress all alerts until sign-up is within 14 days
     if (!t.isRegistered && signUp) {
@@ -92,14 +101,15 @@ function buildAlerts(tournaments: any[]): AlertItem[] {
     if (withdrawal) {
       const days = daysUntil(withdrawal);
       if (days !== null && days >= -7 && days <= 30) {
-        const hours = hoursUntil(withdrawal);
+        const hours = hoursUntil(withdrawal, t.category, 'withdrawal');
         const urgency: Urgency = days < 0 ? 'urgent' : days === 0 ? 'urgent' : (hours !== null && hours < 48) ? 'urgent' : days <= 7 ? 'week' : 'upcoming';
         items.push({
           id: `${t.id}-withdrawal`,
           flag: t.country ? countryFlag(t.country) : '🌍',
           tournament: t.name,
           tournamentId: t.id,
-          deadlineType: 'Withdrawal',
+          kind: 'withdrawal',
+          deadlineType: tr('alerts.typeWithdrawal'),
           surface: t.surface ?? '',
           exactDate: withdrawal,
           urgency,
@@ -112,14 +122,15 @@ function buildAlerts(tournaments: any[]): AlertItem[] {
     if (!t.isRegistered && signUp) {
       const days = daysUntil(signUp);
       if (days !== null && days >= -7 && days <= 14) {
-        const hours = hoursUntil(signUp);
+        const hours = hoursUntil(signUp, t.category, 'signUp');
         const urgency: Urgency = days < 0 ? 'urgent' : days === 0 ? 'urgent' : (hours !== null && hours < 48) ? 'urgent' : days <= 7 ? 'week' : 'upcoming';
         items.push({
           id: `${t.id}-signup`,
           flag: t.country ? countryFlag(t.country) : '🌍',
           tournament: t.name,
           tournamentId: t.id,
-          deadlineType: 'Sign up',
+          kind: 'signup',
+          deadlineType: tr('alerts.typeSignup'),
           surface: t.surface ?? '',
           exactDate: signUp,
           urgency,
@@ -132,14 +143,15 @@ function buildAlerts(tournaments: any[]): AlertItem[] {
     if (freeze) {
       const days = daysUntil(freeze);
       if (days !== null && days >= -7 && days <= 14) {
-        const hours = hoursUntil(freeze);
+        const hours = hoursUntil(freeze, t.category, 'freeze');
         const urgency: Urgency = days < 0 ? 'urgent' : days === 0 ? 'urgent' : (hours !== null && hours < 48) ? 'urgent' : days <= 7 ? 'week' : 'upcoming';
         items.push({
           id: `${t.id}-freeze`,
           flag: t.country ? countryFlag(t.country) : '🌍',
           tournament: t.name,
           tournamentId: t.id,
-          deadlineType: 'Doubles entry',
+          kind: 'freeze',
+          deadlineType: tr('alerts.typeFreeze'),
           surface: t.surface ?? '',
           exactDate: freeze,
           urgency,
@@ -168,7 +180,7 @@ function buildOnsiteAlerts(tournaments: any[]): OnsiteAlertItem[] {
   const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
   const items: OnsiteAlertItem[] = [];
   for (const t of tournaments) {
-    if (t.isWithdrawn) continue;
+    if (t.isWithdrawn || t.isInMyList === false) continue;
     if (!['challenger', 'itf'].includes(getCircuit(t.category))) continue;
     if (!t.startDate) continue;
     const onsiteDeadlines = getOnsiteDeadlines(t.startDate, t.category);
@@ -311,7 +323,7 @@ function AlertDetail({ item, onDismiss, onWithdraw, onViewTournament }: {
             <Text style={s.viewTournamentText}>{t('alerts.viewTournament')}</Text>
             <Text style={s.viewTournamentArrow}>›</Text>
           </TouchableOpacity>
-          {item.deadlineType === 'Withdrawal' && onWithdraw && (
+          {item.kind === 'withdrawal' && onWithdraw && (
             <TouchableOpacity style={s.withdrawBtn} onPress={onWithdraw} activeOpacity={0.8}>
               <Text style={s.withdrawBtnText}>{t('alerts.withdrawAction')}</Text>
             </TouchableOpacity>
@@ -365,7 +377,7 @@ export default function AlertsScreen() {
 
   const tournaments = data?.tournaments ?? [];
   const onsiteAlerts = useMemo(() => buildOnsiteAlerts(tournaments), [tournaments]);
-  const alerts = useMemo(() => buildAlerts(tournaments), [tournaments]);
+  const alerts = useMemo(() => buildAlerts(tournaments, t), [tournaments, t]);
   const tournamentGroups = useMemo(() => buildTournamentGroups(alerts), [alerts]);
 
   const groupLabels = useMemo(() => getGroupLabels(t), [t]);
@@ -396,6 +408,8 @@ export default function AlertsScreen() {
         await apiPatchTournament(pendingWithdraw.tournamentId, { isWithdrawn: true });
       }
       setPendingWithdraw(null);
+    } catch (e: any) {
+      Alert.alert('Could not withdraw', e?.message ?? 'Please try again.');
     } finally {
       setWithdrawing(false);
     }
@@ -465,7 +479,7 @@ export default function AlertsScreen() {
         <AlertDetail
           item={selected}
           onDismiss={() => setSelected(null)}
-          onWithdraw={selected.deadlineType === 'Withdrawal' ? () => { setSelected(null); setPendingWithdraw(selected); } : undefined}
+          onWithdraw={selected.kind === 'withdrawal' ? () => { setSelected(null); setPendingWithdraw(selected); } : undefined}
           onViewTournament={() => { const id = selected.tournamentId; setSelected(null); setDetailId(id); }}
         />
       )}

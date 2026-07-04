@@ -72,8 +72,8 @@ export function useGenerateInsight() {
 
   return useMutation({
     mutationFn: async (params: {
-      tournaments: any[];
-      expenses: any[];
+      tournaments?: any[];
+      expenses?: any[];
       trigger?: string;
     }) => {
       if (DEMO_MODE) {
@@ -81,9 +81,14 @@ export function useGenerateInsight() {
         return null;
       }
 
-      console.log('[insights] checking data sufficiency:', params.tournaments.length, 'tournaments,', params.expenses.length, 'expenses');
+      // Callers that only pass a trigger (e.g. "expense_logged") fall back to
+      // the current react-query cache for the data-sufficiency check.
+      const tournaments = params.tournaments ?? qc.getQueryData<any[]>(['tournaments']) ?? [];
+      const expenses = params.expenses ?? qc.getQueryData<any[]>(['expenses']) ?? [];
 
-      if (!hasEnoughData(params.tournaments, params.expenses)) {
+      console.log('[insights] checking data sufficiency:', tournaments.length, 'tournaments,', expenses.length, 'expenses');
+
+      if (!hasEnoughData(tournaments, expenses)) {
         console.log('[insights] not enough data — need 2+ tournaments and 5+ expenses');
         return null;
       }
@@ -112,7 +117,7 @@ export function useGenerateInsight() {
       }));
 
       const forceMonday = params.trigger === 'monday';
-      const result = selectInsight(params.tournaments, params.expenses, recentMapped, forceMonday);
+      const result = selectInsight(tournaments, expenses, recentMapped, forceMonday);
 
       if (!result) {
         console.log('[insights] selectInsight returned null — all on cooldown or no data');

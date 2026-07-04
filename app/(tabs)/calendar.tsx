@@ -18,6 +18,7 @@ import { useAppQuery } from '@/hooks/useAppQuery';
 import { TournamentDetail, AddTournamentModal } from '@/app/(tabs)/tournaments';
 import { AddExpenseModal } from '@/app/(tabs)/expenses';
 import { CourtIcon } from '@/components/ui/court-icon';
+import { countryFlag } from '@/utils/countryFlag';
 import { useFirstVisit } from '@/hooks/useFirstVisit';
 import { AgentIcon } from '@/components/ui/agent-icon';
 import { ScreenWalkthrough } from '@/components/ui/screen-walkthrough';
@@ -56,11 +57,7 @@ const SURFACE: Record<string, { bg: string; text: string; border: string }> = {
   default: { bg: '#1E1E38', text: '#A0A0C8', border: '#5B5BD6' },
 };
 
-function flag(code: string | undefined): string {
-  const upper = (code ?? '').toUpperCase();
-  if (upper.length !== 2) return '';
-  return String.fromCodePoint(...[...upper].map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
-}
+const flag = (code: string | undefined) => countryFlag(code ?? '');
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 
@@ -156,8 +153,6 @@ export default function CalendarScreen() {
   const [showAddBlock, setShowAddBlock]       = useState(false);
   const [showMap, setShowMap]                 = useState(false);
   const [selectedBlock, setSelectedBlock]     = useState<MappedBlock | null>(null);
-  const [calendarMode, setCalendarMode] = useState<'calendar' | 'points'>('calendar');
-  const [showModeSheet, setShowModeSheet] = useState(false);
   const { isFirstVisit, markVisited } = useFirstVisit('calendar');
   const router = useRouter();
 
@@ -230,15 +225,7 @@ export default function CalendarScreen() {
             <TouchableOpacity onPress={() => router.push('/settings' as any)} activeOpacity={0.75}>
               <AgentIcon size={70} />
             </TouchableOpacity>
-            <TouchableOpacity
-              style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
-              activeOpacity={0.7}
-              onPress={() => setShowModeSheet(true)}>
-              <Text style={s.monthTitle}>
-                {calendarMode === 'calendar' ? t('calendar.title') : t('calendar.pointsTitle')}
-              </Text>
-              <Text style={{ fontSize: 12, color: T.textTertiary }}>▼</Text>
-            </TouchableOpacity>
+            <Text style={s.monthTitle}>{t('calendar.title')}</Text>
           </View>
           {(year !== now.getFullYear() || month !== now.getMonth()) && (
             <TouchableOpacity
@@ -269,90 +256,6 @@ export default function CalendarScreen() {
         </View>
       </View>
 
-      {calendarMode === 'points' ? (
-        <ScrollView
-          style={s.scroll}
-          contentContainerStyle={s.content}
-          showsVerticalScrollIndicator={false}
-          {...panResponder.panHandlers}>
-
-          {/* IPIN placeholder — shown when no IPIN is configured */}
-          {!_prof?.ipin_number && (
-            <View style={ptStyles.ipinCard}>
-              <Text style={ptStyles.ipinIcon}>📡</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={ptStyles.ipinText}>
-                  {t('calendar.ipinPrompt')}
-                </Text>
-                <TouchableOpacity
-                  style={ptStyles.ipinBtn}
-                  activeOpacity={0.8}
-                  onPress={() => router.push('/settings')}>
-                  <Text style={ptStyles.ipinBtnText}>{t('calendar.goToSettings')}</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
-
-          {/* Points info banner */}
-          <View style={ptStyles.infoBanner}>
-            <Text style={ptStyles.infoIcon}>🏆</Text>
-            <Text style={ptStyles.infoText}>
-              {t('calendar.pointsInfo')}
-            </Text>
-          </View>
-
-          {/* Same calendar grid but with points banners */}
-          <View style={s.grid}>
-            {weeks.map((week, wi) => {
-              const weekTournaments = weekTournamentMap[wi];
-              return (
-                <View key={wi} style={s.weekBlock}>
-                  <View style={s.numberRow}>
-                    {week.map((day, di) => {
-                      const inMonth = day.getMonth() === month;
-                      const isToday = sameDay(day, now);
-                      return (
-                        <View key={di} style={s.dayCell}>
-                          <View style={[s.dayNum, isToday && s.todayCircle]}>
-                            <Text style={[
-                              s.dayText,
-                              !inMonth && s.fadedText,
-                              isToday && s.todayText,
-                            ]}>
-                              {day.getDate()}
-                            </Text>
-                          </View>
-                        </View>
-                      );
-                    })}
-                  </View>
-                  {weekTournaments.map((t: any) => {
-                    const label = [flag(t.country), t.name].filter(Boolean).join(' ');
-                    return (
-                      <TouchableOpacity key={t.id} style={ptStyles.pointsBanner}
-                        onPress={() => setDetailId(t.id)} activeOpacity={0.75}>
-                        <View style={ptStyles.pointsBannerRow}>
-                          <View style={ptStyles.pointsBadge}>
-                            <Text style={ptStyles.pointsBadgeText}>? pts</Text>
-                          </View>
-                          <Text style={ptStyles.pointsBannerText} numberOfLines={1}>{label}</Text>
-                          <CourtIcon surface={t.surface} size="sm" />
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
-                  {weekTournaments.length === 0 && (
-                    <View style={ptStyles.emptyWeek}>
-                      <Text style={ptStyles.emptyWeekText}>{t('calendar.noPointsDefend')}</Text>
-                    </View>
-                  )}
-                </View>
-              );
-            })}
-          </View>
-        </ScrollView>
-      ) : (
       <ScrollView
         style={s.scroll}
         contentContainerStyle={s.content}
@@ -442,7 +345,6 @@ export default function CalendarScreen() {
         </TouchableOpacity>
 
       </ScrollView>
-      )}
 
       {showMap && (
         <TournamentMap
@@ -534,7 +436,7 @@ export default function CalendarScreen() {
         const dateStr = `${tappedDate.getFullYear()}-${pad(tappedDate.getMonth() + 1)}-${pad(tappedDate.getDate())}`;
         return (
           <AddExpenseModal
-            tournaments={allTournaments}
+            tournaments={tournaments}
             defaultDate={dateStr}
             onClose={() => setShowAddExpense(false)}
           />
@@ -587,7 +489,9 @@ export default function CalendarScreen() {
                         try {
                           await deleteBlock.mutateAsync(selectedBlock.id);
                           setSelectedBlock(null);
-                        } catch {}
+                        } catch (e: any) {
+                          showAlert('Error', e?.message ?? 'Could not delete block.');
+                        }
                       },
                     },
                   ]);
@@ -596,43 +500,6 @@ export default function CalendarScreen() {
               </TouchableOpacity>
               <TouchableOpacity style={s.sheetCancelBtn} onPress={() => setSelectedBlock(null)} activeOpacity={0.7}>
                 <Text style={s.sheetCancelText}>{t('common.close')}</Text>
-              </TouchableOpacity>
-            </Pressable>
-          </Pressable>
-        </Modal>
-      )}
-
-      {/* Mode selection sheet */}
-      {showModeSheet && (
-        <Modal transparent animationType="slide" onRequestClose={() => setShowModeSheet(false)}>
-          <Pressable style={s.sheetBackdrop} onPress={() => setShowModeSheet(false)}>
-            <Pressable style={s.sheetContainer} onPress={() => {}}>
-              <View style={s.sheetHandle} />
-              <Text style={[s.sheetDate, { fontSize: 13, letterSpacing: 0.5 }]}>{t('calendar.switchView')}</Text>
-              <TouchableOpacity
-                style={[s.sheetCard, calendarMode === 'calendar' && { borderWidth: 1.5, borderColor: T.accent }]}
-                activeOpacity={0.8}
-                onPress={() => { setCalendarMode('calendar'); setShowModeSheet(false); }}>
-                <Text style={s.sheetCardIcon}>📅</Text>
-                <View style={s.sheetCardBody}>
-                  <Text style={s.sheetCardTitle}>{t('calendar.title')}</Text>
-                  <Text style={s.sheetCardSub}>{t('calendar.schedule')}</Text>
-                </View>
-                {calendarMode === 'calendar' && <Text style={{ fontSize: 16, color: T.accent }}>✓</Text>}
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[s.sheetCard, calendarMode === 'points' && { borderWidth: 1.5, borderColor: T.accent }]}
-                activeOpacity={0.8}
-                onPress={() => { setCalendarMode('points'); setShowModeSheet(false); }}>
-                <Text style={s.sheetCardIcon}>🏆</Text>
-                <View style={s.sheetCardBody}>
-                  <Text style={s.sheetCardTitle}>{t('calendar.pointsTitle')}</Text>
-                  <Text style={s.sheetCardSub}>{t('calendar.weekByWeek')}</Text>
-                </View>
-                {calendarMode === 'points' && <Text style={{ fontSize: 16, color: T.accent }}>✓</Text>}
-              </TouchableOpacity>
-              <TouchableOpacity style={s.sheetCancelBtn} onPress={() => setShowModeSheet(false)} activeOpacity={0.7}>
-                <Text style={s.sheetCancelText}>{t('calendar.cancel')}</Text>
               </TouchableOpacity>
             </Pressable>
           </Pressable>
@@ -908,40 +775,3 @@ const tb = StyleSheet.create({
   },
 });
 
-const ptStyles = StyleSheet.create({
-  infoBanner: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    backgroundColor: T.card, borderRadius: 12, padding: 12,
-    marginBottom: 12, borderWidth: 1, borderColor: T.cardBorder,
-  },
-  infoIcon: { fontSize: 20 },
-  infoText: { flex: 1, fontSize: 12, color: T.textSecondary, lineHeight: 16 },
-  pointsBanner: {
-    marginHorizontal: 8, marginBottom: 4,
-    borderRadius: 8, paddingHorizontal: 8, paddingVertical: 8,
-    backgroundColor: 'rgba(0, 212, 170, 0.08)',
-    borderLeftWidth: 3, borderLeftColor: T.accent,
-  },
-  pointsBannerRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  pointsBadge: {
-    backgroundColor: T.accent, borderRadius: 6,
-    paddingHorizontal: 6, paddingVertical: 2,
-  },
-  pointsBadgeText: { fontSize: 10, fontWeight: '700', color: T.bg },
-  pointsBannerText: { fontSize: 11, fontWeight: '600', color: T.textSecondary, flex: 1 },
-  emptyWeek: { paddingHorizontal: 12, paddingVertical: 4 },
-  emptyWeekText: { fontSize: 10, color: T.textMuted, fontStyle: 'italic' },
-  ipinCard: {
-    flexDirection: 'row', alignItems: 'flex-start', gap: 12,
-    backgroundColor: T.card, borderRadius: 14, padding: 16,
-    marginBottom: 12, borderWidth: 1, borderColor: T.cardBorder,
-  },
-  ipinIcon: { fontSize: 22, marginTop: 2 },
-  ipinText: { fontSize: 13, color: T.textSecondary, lineHeight: 18, marginBottom: 12 },
-  ipinBtn: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#5B5BD6', borderRadius: 10,
-    paddingHorizontal: 16, paddingVertical: 8,
-  },
-  ipinBtnText: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
-});

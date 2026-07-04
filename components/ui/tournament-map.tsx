@@ -23,19 +23,29 @@ function stripAccents(s: string): string {
   return s.normalize('NFD').replace(/[̀-ͯ]/g, '');
 }
 
-function matchCity(candidate: string): [number, number] | null {
+// Matches CITY_COORDS keys, including country-qualified keys like 'San Juan|AR'.
+// A qualified key wins when its ISO2 matches the tournament's country; when the
+// country is unknown/mismatched, the first qualified entry acts as fallback.
+function matchCity(candidate: string, countryCode?: string): [number, number] | null {
   const norm = stripAccents(candidate.trim().toLowerCase());
   if (!norm) return null;
+  let fallback: [number, number] | null = null;
   for (const [k, v] of Object.entries(CITY_COORDS)) {
-    if (stripAccents(k.toLowerCase()) === norm) return v;
+    const [cityKey, cc] = k.split('|');
+    if (stripAccents(cityKey.toLowerCase()) !== norm) continue;
+    if (!cc) return v;
+    if (countryCode && cc.toUpperCase() === countryCode.toUpperCase()) return v;
+    if (!fallback) fallback = v;
   }
-  return null;
+  return fallback;
 }
 
 function lookupCoords(city?: string, country?: string, name?: string): [number, number] | null {
+  const countryCode = country && country.trim().length === 2 ? country.trim() : undefined;
+
   // 1. Try explicit city field
   if (city) {
-    const hit = matchCity(city);
+    const hit = matchCity(city, countryCode);
     if (hit) return hit;
   }
 
@@ -47,7 +57,7 @@ function lookupCoords(city?: string, country?: string, name?: string): [number, 
     const words = name.trim().split(/[\s,\-–]+/).filter(Boolean);
     for (let len = Math.min(words.length, 3); len >= 1; len--) {
       for (let start = 0; start + len <= words.length; start++) {
-        const hit = matchCity(words.slice(start, start + len).join(' '));
+        const hit = matchCity(words.slice(start, start + len).join(' '), countryCode);
         if (hit) return hit;
       }
     }

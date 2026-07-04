@@ -1,15 +1,18 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   View, ScrollView, TouchableOpacity, StyleSheet, Dimensions,
-  TextInput, Platform, KeyboardAvoidingView, ActivityIndicator,
+  TextInput, Platform, KeyboardAvoidingView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useUpdateProfile } from '@/hooks/useProfile';
 import { Text } from '@/components/ui/text';
 import { TourlyLogo } from '@/components/ui/tourly-logo';
-import { DatePickerField } from '@/components/ui/date-picker-field';
-import { supabase } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase'; // used for sign-out in handleBackToLogin
+import { triggerScraperOnce } from '@/hooks/useScraperTrigger';
+
+// Set by ProfileSetupScreen so finishOnboarding can fire the scraper
+let _pendingPlayerName = '';
 
 const { width: W } = Dimensions.get('window');
 const ACCENT = '#5B5BD6';
@@ -34,7 +37,7 @@ function Dots({ total, current }: { total: number; current: number }) {
 
 // ─── Screen 1: Welcome ────────────────────────────────────────────────────────
 
-function WelcomeScreen({ onNext }: { onNext: () => void }) {
+function WelcomeScreen({ onNext, onBack }: { onNext: () => void; onBack: () => void }) {
   return (
     <SafeAreaView style={[s.safe, { backgroundColor: '#2D2B55' }]}>
       <View style={s.centered}>
@@ -47,6 +50,9 @@ function WelcomeScreen({ onNext }: { onNext: () => void }) {
       <View style={s.welcomeBottom}>
         <TouchableOpacity style={s.primaryBtn} onPress={onNext} activeOpacity={0.85}>
           <Text style={s.primaryBtnText}>Get Started</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={onBack} activeOpacity={0.7} style={{ alignItems: 'center', marginTop: 16 }}>
+          <Text style={s.linkText}>← Back to login</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -253,104 +259,26 @@ const COACH_OPTS = ['Always', 'Sometimes', 'Never'];
 const STRINGING_OPTS = ['Yes', 'No'];
 const ROLES = ['Player', 'Coach', 'Other'];
 
-const ALL_COUNTRIES: { code: string; name: string; flag: string }[] = [
-  {code:'AF',name:'Afghanistan',flag:'🇦🇫'},{code:'AL',name:'Albania',flag:'🇦🇱'},{code:'DZ',name:'Algeria',flag:'🇩🇿'},
-  {code:'AD',name:'Andorra',flag:'🇦🇩'},{code:'AO',name:'Angola',flag:'🇦🇴'},{code:'AR',name:'Argentina',flag:'🇦🇷'},
-  {code:'AM',name:'Armenia',flag:'🇦🇲'},{code:'AU',name:'Australia',flag:'🇦🇺'},{code:'AT',name:'Austria',flag:'🇦🇹'},
-  {code:'AZ',name:'Azerbaijan',flag:'🇦🇿'},{code:'BS',name:'Bahamas',flag:'🇧🇸'},{code:'BH',name:'Bahrain',flag:'🇧🇭'},
-  {code:'BD',name:'Bangladesh',flag:'🇧🇩'},{code:'BY',name:'Belarus',flag:'🇧🇾'},{code:'BE',name:'Belgium',flag:'🇧🇪'},
-  {code:'BZ',name:'Belize',flag:'🇧🇿'},{code:'BO',name:'Bolivia',flag:'🇧🇴'},{code:'BA',name:'Bosnia',flag:'🇧🇦'},
-  {code:'BR',name:'Brazil',flag:'🇧🇷'},{code:'BN',name:'Brunei',flag:'🇧🇳'},{code:'BG',name:'Bulgaria',flag:'🇧🇬'},
-  {code:'KH',name:'Cambodia',flag:'🇰🇭'},{code:'CM',name:'Cameroon',flag:'🇨🇲'},{code:'CA',name:'Canada',flag:'🇨🇦'},
-  {code:'CL',name:'Chile',flag:'🇨🇱'},{code:'CN',name:'China',flag:'🇨🇳'},{code:'CO',name:'Colombia',flag:'🇨🇴'},
-  {code:'CR',name:'Costa Rica',flag:'🇨🇷'},{code:'HR',name:'Croatia',flag:'🇭🇷'},{code:'CU',name:'Cuba',flag:'🇨🇺'},
-  {code:'CY',name:'Cyprus',flag:'🇨🇾'},{code:'CZ',name:'Czech Republic',flag:'🇨🇿'},{code:'DK',name:'Denmark',flag:'🇩🇰'},
-  {code:'DO',name:'Dominican Republic',flag:'🇩🇴'},{code:'EC',name:'Ecuador',flag:'🇪🇨'},{code:'EG',name:'Egypt',flag:'🇪🇬'},
-  {code:'SV',name:'El Salvador',flag:'🇸🇻'},{code:'EE',name:'Estonia',flag:'🇪🇪'},{code:'ET',name:'Ethiopia',flag:'🇪🇹'},
-  {code:'FI',name:'Finland',flag:'🇫🇮'},{code:'FR',name:'France',flag:'🇫🇷'},{code:'GE',name:'Georgia',flag:'🇬🇪'},
-  {code:'DE',name:'Germany',flag:'🇩🇪'},{code:'GH',name:'Ghana',flag:'🇬🇭'},{code:'GR',name:'Greece',flag:'🇬🇷'},
-  {code:'GT',name:'Guatemala',flag:'🇬🇹'},{code:'HN',name:'Honduras',flag:'🇭🇳'},{code:'HU',name:'Hungary',flag:'🇭🇺'},
-  {code:'IS',name:'Iceland',flag:'🇮🇸'},{code:'IN',name:'India',flag:'🇮🇳'},{code:'ID',name:'Indonesia',flag:'🇮🇩'},
-  {code:'IR',name:'Iran',flag:'🇮🇷'},{code:'IQ',name:'Iraq',flag:'🇮🇶'},{code:'IE',name:'Ireland',flag:'🇮🇪'},
-  {code:'IL',name:'Israel',flag:'🇮🇱'},{code:'IT',name:'Italy',flag:'🇮🇹'},{code:'JM',name:'Jamaica',flag:'🇯🇲'},
-  {code:'JP',name:'Japan',flag:'🇯🇵'},{code:'JO',name:'Jordan',flag:'🇯🇴'},{code:'KZ',name:'Kazakhstan',flag:'🇰🇿'},
-  {code:'KE',name:'Kenya',flag:'🇰🇪'},{code:'KW',name:'Kuwait',flag:'🇰🇼'},{code:'LV',name:'Latvia',flag:'🇱🇻'},
-  {code:'LB',name:'Lebanon',flag:'🇱🇧'},{code:'LT',name:'Lithuania',flag:'🇱🇹'},{code:'LU',name:'Luxembourg',flag:'🇱🇺'},
-  {code:'MY',name:'Malaysia',flag:'🇲🇾'},{code:'MX',name:'Mexico',flag:'🇲🇽'},{code:'MD',name:'Moldova',flag:'🇲🇩'},
-  {code:'MC',name:'Monaco',flag:'🇲🇨'},{code:'MN',name:'Mongolia',flag:'🇲🇳'},{code:'ME',name:'Montenegro',flag:'🇲🇪'},
-  {code:'MA',name:'Morocco',flag:'🇲🇦'},{code:'NP',name:'Nepal',flag:'🇳🇵'},{code:'NL',name:'Netherlands',flag:'🇳🇱'},
-  {code:'NZ',name:'New Zealand',flag:'🇳🇿'},{code:'NI',name:'Nicaragua',flag:'🇳🇮'},{code:'NG',name:'Nigeria',flag:'🇳🇬'},
-  {code:'MK',name:'North Macedonia',flag:'🇲🇰'},{code:'NO',name:'Norway',flag:'🇳🇴'},{code:'PK',name:'Pakistan',flag:'🇵🇰'},
-  {code:'PA',name:'Panama',flag:'🇵🇦'},{code:'PY',name:'Paraguay',flag:'🇵🇾'},{code:'PE',name:'Peru',flag:'🇵🇪'},
-  {code:'PH',name:'Philippines',flag:'🇵🇭'},{code:'PL',name:'Poland',flag:'🇵🇱'},{code:'PT',name:'Portugal',flag:'🇵🇹'},
-  {code:'QA',name:'Qatar',flag:'🇶🇦'},{code:'RO',name:'Romania',flag:'🇷🇴'},{code:'RU',name:'Russia',flag:'🇷🇺'},
-  {code:'SA',name:'Saudi Arabia',flag:'🇸🇦'},{code:'SN',name:'Senegal',flag:'🇸🇳'},{code:'RS',name:'Serbia',flag:'🇷🇸'},
-  {code:'SG',name:'Singapore',flag:'🇸🇬'},{code:'SK',name:'Slovakia',flag:'🇸🇰'},{code:'SI',name:'Slovenia',flag:'🇸🇮'},
-  {code:'ZA',name:'South Africa',flag:'🇿🇦'},{code:'KR',name:'South Korea',flag:'🇰🇷'},{code:'ES',name:'Spain',flag:'🇪🇸'},
-  {code:'LK',name:'Sri Lanka',flag:'🇱🇰'},{code:'SE',name:'Sweden',flag:'🇸🇪'},{code:'CH',name:'Switzerland',flag:'🇨🇭'},
-  {code:'TW',name:'Taiwan',flag:'🇹🇼'},{code:'TH',name:'Thailand',flag:'🇹🇭'},{code:'TN',name:'Tunisia',flag:'🇹🇳'},
-  {code:'TR',name:'Turkey',flag:'🇹🇷'},{code:'UA',name:'Ukraine',flag:'🇺🇦'},{code:'AE',name:'United Arab Emirates',flag:'🇦🇪'},
-  {code:'GB',name:'United Kingdom',flag:'🇬🇧'},{code:'US',name:'United States',flag:'🇺🇸'},{code:'UY',name:'Uruguay',flag:'🇺🇾'},
-  {code:'UZ',name:'Uzbekistan',flag:'🇺🇿'},{code:'VE',name:'Venezuela',flag:'🇻🇪'},{code:'VN',name:'Vietnam',flag:'🇻🇳'},
-];
-
 function ProfileSetupScreen({ onNext, onBack }: { onNext: () => void; onBack: () => void }) {
   const updateProfile = useUpdateProfile();
-  const [fullName, setFullName] = useState('');
-  const [natCode, setNatCode] = useState('');
-  const [natSearch, setNatSearch] = useState('');
-  const [natFocused, setNatFocused] = useState(false);
   const [role, setRole] = useState('Player');
-  const [ranking, setRanking] = useState('');
   const [surface, setSurface] = useState('');
   const [city, setCity] = useState('');
-  const [dob, setDob] = useState('');
   const [budget, setBudget] = useState('');
   const [coachTravel, setCoachTravel] = useState('');
   const [stringing, setStringing] = useState('');
-  const [ipin, setIpin] = useState('');
-  const [atpName, setAtpName] = useState('');
-  const [atpSearching, setAtpSearching] = useState(false);
-  const [atpMatch, setAtpMatch] = useState<{ player_name: string; current_ranking: number | null } | null>(null);
-
-  useEffect(() => {
-    if (atpName.trim().length < 3) { setAtpMatch(null); return; }
-    setAtpSearching(true);
-    const timer = setTimeout(async () => {
-      const { data } = await supabase
-        .from('player_profiles')
-        .select('player_name, current_ranking')
-        .ilike('player_name', `%${atpName.trim()}%`)
-        .limit(1)
-        .single();
-      setAtpMatch(data ?? null);
-      setAtpSearching(false);
-    }, 600);
-    return () => clearTimeout(timer);
-  }, [atpName]);
-
-  const selectedCountry = ALL_COUNTRIES.find(c => c.code === natCode);
-  const filteredCountries = natSearch.trim()
-    ? ALL_COUNTRIES.filter(c =>
-        c.name.toLowerCase().includes(natSearch.toLowerCase()) ||
-        c.code.toLowerCase().includes(natSearch.toLowerCase()))
-    : ALL_COUNTRIES;
+  const [playerName, setPlayerName] = useState('');
 
   async function handleContinue() {
     const payload: any = { onboarding_complete: false };
-    if (fullName.trim()) payload.full_name = fullName.trim();
-    if (natCode) payload.nationality = natCode;
+    const resolvedName = playerName.trim();
+    if (resolvedName) { payload.full_name = resolvedName; payload.atp_player_name = resolvedName; _pendingPlayerName = resolvedName; }
     if (role) payload.role = role;
-    if (ranking && role === 'Player') payload.ranking = parseInt(ranking, 10);
     if (surface) payload.primary_surface = surface.toLowerCase();
     if (city.trim()) payload.home_city = city.trim();
-    if (dob) payload.date_of_birth = dob;
     if (budget) payload.annual_budget = parseInt(budget, 10);
     if (coachTravel) payload.travel_with_coach = coachTravel;
     if (stringing) payload.travel_with_stringing = stringing;
-    if (ipin.trim()) payload.ipin_number = ipin.trim();
-    if (atpMatch) payload.atp_player_name = atpMatch.player_name;
-    else if (atpName.trim()) payload.atp_player_name = atpName.trim();
     try { await updateProfile.mutateAsync(payload); } catch {}
     onNext();
   }
@@ -383,67 +311,14 @@ function ProfileSetupScreen({ onNext, onBack }: { onNext: () => void; onBack: ()
             <Text style={s.profileTitle}>Set Up Your Profile</Text>
             <Text style={s.profileSub}>Help Tourly personalize your experience</Text>
 
-            <Text style={s.fieldLabel}>Full name *</Text>
-            <TextInput style={s.input} value={fullName} onChangeText={setFullName} placeholder="Your name" placeholderTextColor="#555" />
-
-            <Text style={s.fieldLabel}>Nationality</Text>
-            {selectedCountry && !natFocused ? (
-              <TouchableOpacity
-                style={[s.input, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
-                onPress={() => { setNatSearch(''); setNatFocused(true); setNatCode(''); }}
-                activeOpacity={0.7}>
-                <Text style={{ color: '#FAFAFA', fontSize: 15 }}>{selectedCountry.flag}  {selectedCountry.name}</Text>
-                <Text style={{ color: '#555', fontSize: 16 }}>✕</Text>
-              </TouchableOpacity>
-            ) : (
-              <>
-                <TextInput
-                  style={s.input}
-                  value={natSearch}
-                  onChangeText={v => { setNatSearch(v); setNatFocused(true); }}
-                  onFocus={() => setNatFocused(true)}
-                  placeholder="Search country (e.g. Chile)"
-                  placeholderTextColor="#555"
-                  autoCapitalize="none"
-                />
-                {natFocused && filteredCountries.length > 0 && (
-                  <View style={{ backgroundColor: '#1A1A2E', borderRadius: 10, marginTop: 4, borderWidth: 1, borderColor: '#2A2A4A', overflow: 'hidden' }}>
-                    <ScrollView style={{ maxHeight: 200 }} nestedScrollEnabled keyboardShouldPersistTaps="handled">
-                      {filteredCountries.slice(0, 8).map(c => (
-                        <TouchableOpacity
-                          key={c.code}
-                          style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#2A2A4A', gap: 10 }}
-                          onPress={() => { setNatCode(c.code); setNatSearch(''); setNatFocused(false); }}
-                          activeOpacity={0.7}>
-                          <Text style={{ fontSize: 20 }}>{c.flag}</Text>
-                          <Text style={{ flex: 1, fontSize: 14, color: '#FAFAFA' }}>{c.name}</Text>
-                          <Text style={{ fontSize: 12, color: '#555' }}>{c.code}</Text>
-                        </TouchableOpacity>
-                      ))}
-                    </ScrollView>
-                  </View>
-                )}
-              </>
-            )}
-
             <Text style={s.fieldLabel}>Role</Text>
             <PillGroup options={ROLES} value={role} onChange={setRole} />
-
-            {role === 'Player' && (
-              <>
-                <Text style={[s.fieldLabel, { marginTop: 16 }]}>ATP/ITF Ranking</Text>
-                <TextInput style={s.input} value={ranking} onChangeText={setRanking} keyboardType="numeric" placeholder="e.g. 450" placeholderTextColor="#555" />
-              </>
-            )}
 
             <Text style={[s.fieldLabel, { marginTop: 16 }]}>Primary surface</Text>
             <PillGroup options={SURFACES} value={surface} onChange={setSurface} />
 
             <Text style={[s.fieldLabel, { marginTop: 16 }]}>Home base city</Text>
-            <TextInput style={s.input} value={city} onChangeText={setCity} placeholder="Buenos Aires" placeholderTextColor="#555" />
-
-            <Text style={[s.fieldLabel, { marginTop: 16 }]}>Date of birth</Text>
-            <DatePickerField value={dob} onChange={setDob} placeholder="Select date" />
+            <TextInput style={s.input} value={city} onChangeText={setCity} placeholder="e.g. Buenos Aires" placeholderTextColor="#555" />
 
             <Text style={[s.fieldLabel, { marginTop: 16 }]}>Annual tournament budget (USD)</Text>
             <TextInput style={s.input} value={budget} onChangeText={setBudget} keyboardType="numeric" placeholder="e.g. 25000" placeholderTextColor="#555" />
@@ -454,67 +329,30 @@ function ProfileSetupScreen({ onNext, onBack }: { onNext: () => void; onBack: ()
             <Text style={[s.fieldLabel, { marginTop: 16 }]}>Travel with stringing machine</Text>
             <PillGroup options={STRINGING_OPTS} value={stringing} onChange={setStringing} />
 
-            <Text style={[s.fieldLabel, { marginTop: 16 }]}>ATP/ITF Player Name</Text>
+            <Text style={s.fieldLabel}>Your full name *</Text>
+            <Text style={{ fontSize: 12, color: '#666', marginBottom: 8 }}>
+              Enter your name exactly as it appears on atptour.com — Tourly will link your match history automatically.
+            </Text>
             <View style={{ position: 'relative' }}>
               <TextInput
                 style={s.input}
-                value={atpName}
-                onChangeText={v => { setAtpName(v); setAtpMatch(null); }}
+                value={playerName}
+                onChangeText={setPlayerName}
                 placeholder="e.g. Nicolas Jarry"
                 placeholderTextColor="#555"
                 autoCorrect={false}
+                autoCapitalize="words"
               />
-              {atpSearching && (
-                <ActivityIndicator size="small" color={ACCENT} style={{ position: 'absolute', right: 14, top: 14 }} />
-              )}
             </View>
-            {atpMatch && (
-              <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#0F2A1A', borderRadius: 10, padding: 12, marginTop: 6, gap: 10 }}>
-                <Text style={{ fontSize: 18 }}>✓</Text>
-                <View>
-                  <Text style={{ fontSize: 14, color: '#00E5A0', fontWeight: '700' }}>{atpMatch.player_name}</Text>
-                  {atpMatch.current_ranking && (
-                    <Text style={{ fontSize: 12, color: '#888' }}>ATP/ITF Ranking #{atpMatch.current_ranking}</Text>
-                  )}
-                </View>
-              </View>
-            )}
-            {atpName.trim().length >= 3 && !atpSearching && !atpMatch && (
-              <View style={{ backgroundColor: '#2A1A0A', borderRadius: 8, padding: 10, marginTop: 6, borderWidth: 1, borderColor: '#E8A030' }}>
-                <Text style={{ fontSize: 13, color: '#E8A030', fontWeight: '700', marginBottom: 2 }}>
-                  ⚠ No player found with that name
-                </Text>
-                <Text style={{ fontSize: 12, color: '#AAA', lineHeight: 17 }}>
-                  Check the spelling — use your full name exactly as it appears on atptour.com (e.g. "Carlos Alcaraz"). If correct, your profile will sync automatically once you save.
-                </Text>
-              </View>
-            )}
-            <Text style={{ fontSize: 12, color: '#555', marginTop: 4 }}>
-              Links your account to match history, results, and points defending.
-            </Text>
-
-            <Text style={[s.fieldLabel, { marginTop: 16 }]}>IPIN Number</Text>
-            <TextInput
-              style={s.input}
-              value={ipin}
-              onChangeText={setIpin}
-              placeholder="Optional"
-              placeholderTextColor="#555"
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            <Text style={{ fontSize: 12, color: '#555', marginTop: 4 }}>
-              Optional — enables match history sync. Find it at itftennis.com
-            </Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
 
       <View style={{ paddingHorizontal: 24, paddingBottom: 20 }}>
         <TouchableOpacity
-          style={[s.primaryBtn, (!fullName.trim() || updateProfile.isPending) && { opacity: 0.5 }]}
+          style={[s.primaryBtn, (!playerName.trim() || updateProfile.isPending) && { opacity: 0.5 }]}
           onPress={handleContinue}
-          disabled={!fullName.trim() || updateProfile.isPending}
+          disabled={!playerName.trim() || updateProfile.isPending}
           activeOpacity={0.85}
         >
           <Text style={s.primaryBtnText}>Continue</Text>
@@ -592,11 +430,19 @@ export default function WalkthroughScreen() {
 
   async function finishOnboarding() {
     try { await updateProfile.mutateAsync({ onboarding_complete: true }); } catch {}
+    // Fire scraper once — non-blocking, does not delay navigation
+    if (_pendingPlayerName) triggerScraperOnce(_pendingPlayerName);
+  }
+
+  async function handleBackToLogin() {
+    try { await supabase.auth.signOut(); } catch {}
+    // AuthGate in _layout.tsx will redirect to /auth once session clears
   }
 
   const steps: React.ReactNode[] = [
     <WelcomeScreen
       onNext={() => setStep(1)}
+      onBack={handleBackToLogin}
     />,
     <ProblemScreen
       onNext={() => setStep(2)}

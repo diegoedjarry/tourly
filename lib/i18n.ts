@@ -35,6 +35,33 @@ const strings = {
   'alerts.today': { en: 'Today', es: 'Hoy' },
   'alerts.thisWeek': { en: 'This Week', es: 'Esta Semana' },
   'alerts.noAlerts': { en: 'No upcoming deadlines', es: 'Sin fechas límite próximas' },
+  'alerts.typeWithdrawal': { en: 'Withdrawal', es: 'Retiro' },
+  'alerts.typeSignup': { en: 'Sign up', es: 'Inscripción' },
+  'alerts.typeFreeze': { en: 'Doubles entry', es: 'Inscripción de dobles' },
+
+  // Scheduled notification text
+  'notif.todayTitle': { en: '🚨 Today — {city}', es: '🚨 Hoy — {city}' },
+  'notif.closesIn': { en: '{type} closes in {countdown}', es: '{type} cierra en {countdown}' },
+  'notif.tomorrowTitle': { en: '⚠️ Tomorrow — {city}', es: '⚠️ Mañana — {city}' },
+  'notif.daysTitle': { en: '⚠️ {days} days — {city}', es: '⚠️ {days} días — {city}' },
+  'notif.weekTitle': { en: '📅 This week — {city}', es: '📅 Esta semana — {city}' },
+  'notif.upcomingTitle': { en: '📅 Upcoming — {city}', es: '📅 Próximo — {city}' },
+  'notif.daysWord': { en: '{days} days', es: '{days} días' },
+  'notif.signinTitle': { en: '🎾 Sign-in — {city}', es: '🎾 Registro — {city}' },
+  'notif.signinBody': { en: '{label} in {countdown}', es: '{label} en {countdown}' },
+  'notif.singlesEntry': { en: 'Singles entry', es: 'Inscripción individual' },
+  'notif.withdrawal': { en: 'Withdrawal', es: 'Retiro' },
+  'notif.doublesEntry': { en: 'Doubles entry', es: 'Inscripción de dobles' },
+
+  // Currency note (single-currency app)
+  'expense.usdNote': { en: 'Amounts are tracked in USD', es: 'Los montos se registran en USD' },
+
+  // Support / feedback
+  'settings.support': { en: 'Support', es: 'Soporte' },
+  'settings.reportProblem': { en: 'Report a problem', es: 'Reportar un problema' },
+
+  // Offline write queue
+  'common.savedOffline': { en: 'Saved offline — will sync when connected', es: 'Guardado sin conexión — se sincronizará al reconectar' },
 
   // Tournaments
   'tournaments.addNew': { en: 'Add Tournament', es: 'Agregar Torneo' },
@@ -117,6 +144,14 @@ const strings = {
   'home.upcomingDeadlines': { en: 'Upcoming Deadlines', es: 'Próximas Fechas Límite' },
   'home.noUpcomingDeadlines': { en: 'No upcoming deadlines', es: 'Sin fechas límite próximas' },
   'home.viewAll': { en: 'View All', es: 'Ver Todo' },
+  'home.analytics': { en: 'Analytics', es: 'Analítica' },
+  'home.myPerformance': { en: 'My Performance', es: 'Mi Rendimiento' },
+  'home.myPerformanceSub': { en: 'Ranking, match record, season stats', es: 'Ranking, récord de partidos, estadísticas' },
+  'home.comparePlayers': { en: 'Compare Players', es: 'Comparar Jugadores' },
+  'home.comparePlayersSub': { en: 'Search any player and compare stats', es: 'Busca cualquier jugador y compara estadísticas' },
+  'performance.title': { en: 'My Performance', es: 'Mi Rendimiento' },
+  'performance.pointsToDefend': { en: 'POINTS TO DEFEND', es: 'PUNTOS A DEFENDER' },
+  'compare.title': { en: 'Compare Players', es: 'Comparar Jugadores' },
 
   // Tournament detail
   'tournament.details': { en: 'Details', es: 'Detalles' },
@@ -273,6 +308,7 @@ const strings = {
   'expenses.registerPrizeDesc': { en: 'Record singles or doubles prize money', es: 'Registra premio de singles o dobles' },
   'expenses.whereMoneyGoes': { en: 'WHERE YOUR MONEY GOES', es: 'EN QUÉ GASTAS' },
   'expenses.costBySurface': { en: 'COST BY SURFACE', es: 'COSTO POR SUPERFICIE' },
+  'expenses.costByCountry': { en: 'COST BY COUNTRY', es: 'COSTO POR PAÍS' },
   'expenses.tournamentCosts': { en: 'TOURNAMENT COSTS', es: 'COSTOS POR TORNEO' },
   'expenses.activeWeeks': { en: 'ACTIVE WEEKS', es: 'SEMANAS ACTIVAS' },
   'expenses.coachImpact': { en: 'COACH IMPACT', es: 'IMPACTO DEL COACH' },
@@ -324,6 +360,7 @@ const strings = {
   'tournaments.played': { en: 'Played', es: 'Jugado' },
   'tournaments.registeredBadge': { en: 'Registered', es: 'Inscrito' },
   'tournaments.notRegistered': { en: 'Not registered', es: 'No inscrito' },
+  'tournaments.signUpClosed': { en: 'Sign-up closed', es: 'Inscripción cerrada' },
   'tournaments.searchPlaceholder': { en: 'Search tournament name…', es: 'Buscar nombre de torneo…' },
   'tournaments.tapToAdd': { en: 'tap to add →', es: 'toca para agregar →' },
   'tournaments.noMatches': { en: 'No matches for', es: 'Sin resultados para' },

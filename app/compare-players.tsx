@@ -12,6 +12,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Text } from '@/components/ui/text';
 import { useAppQuery } from '@/hooks/useAppQuery';
+import { useLanguage } from '@/hooks/useLanguage';
 
 const DEMO_OPPONENT = {
   name: 'R. Nadal',
@@ -36,6 +37,7 @@ const SURFACE_COLORS: Record<Surface, string> = {
 
 export default function ComparePlayersScreen() {
   const router = useRouter();
+  const { t } = useLanguage();
   const [query, setQuery] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('player');
   const [surfaceExpanded, setSurfaceExpanded] = useState(false);
@@ -68,7 +70,7 @@ export default function ComparePlayersScreen() {
       {/* Header */}
       <View style={s.header}>
         <View style={s.headerCenter}>
-          <Text style={s.headerTitle}>Compare Players</Text>
+          <Text style={s.headerTitle}>{t('compare.title')}</Text>
         </View>
         <TouchableOpacity style={s.closeBtn} onPress={() => router.back()} activeOpacity={0.7}>
           <Ionicons name="close" size={22} color="#FAFAFA" />

@@ -9,7 +9,10 @@ import {
   Modal,
   Switch,
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Linking,
 } from 'react-native';
+import Constants from 'expo-constants';
 import { Text } from '@/components/ui/text';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -26,10 +29,12 @@ import {
   detectHeaderRow,
   insertExpenses,
   smartParse,
+  checkDuplicates,
   type MappedExpense,
   type ImportResult,
 } from '@/utils/import-expenses';
 import { parseNotes, type ParsedExpense } from '@/utils/parse-notes';
+import { expenseDupeKey } from '@/utils/categories';
 import { DEMO_MODE } from '@/config/demo';
 import { T } from '@/constants/theme';
 import { useLanguage, setLanguage } from '@/hooks/useLanguage';
@@ -128,7 +133,8 @@ export default function SettingsScreen() {
         return;
       }
 
-      setImportData(result);
+      const isDuplicate = await checkDuplicates(result.mapped);
+      setImportData({ ...result, likelyDuplicate: isDuplicate });
       setImportStep('preview');
     } catch (err: any) {
       showAlert(t('settings.importError'), err?.message ?? 'Could not process file.');
@@ -145,16 +151,37 @@ export default function SettingsScreen() {
       for (const tourney of tournaments) {
         tMap[tourney.name?.toLowerCase()] = tourney.id;
       }
-      const count = await insertExpenses(importData.mapped, tMap);
+      // Normalized-category keys: two genuine same-day, same-amount expenses in
+      // different categories aren't dropped, and re-importing our own export
+      // (labels like "Meals" vs stored "food") self-dedupes.
+      const existingKeys = new Set<string>(
+        (appData?.expenses ?? []).map((e: any) => expenseDupeKey(e.date, e.amount, e.category ?? '')),
+      );
+      const count = await insertExpenses(importData.mapped, tMap, { tournaments, existingKeys });
+      const skipped = importData.mapped.length - count;
       await queryClient.invalidateQueries({ queryKey: ['expenses'] });
       await queryClient.invalidateQueries({ queryKey: ['tournaments'] });
-      showAlert(t('settings.importComplete'), `${count} expenses imported successfully.`);
+      const unreadable = importData.unmapped > 0
+        ? ` ${importData.unmapped} row${importData.unmapped !== 1 ? 's' : ''} could not be read (missing/invalid amount).`
+        : '';
+      showAlert(
+        t('settings.importComplete'),
+        `${count} expenses imported successfully.${skipped > 0 ? ` ${skipped} duplicate${skipped !== 1 ? 's' : ''} skipped.` : ''}${unreadable}`,
+      );
       setImportStep('idle');
       setImportData(null);
     } catch (err: any) {
       showAlert(t('settings.importError'), err?.message ?? 'Could not save expenses.');
       setImportStep('preview');
     }
+  }
+
+  function reportProblem() {
+    const version = Constants.expoConfig?.version ?? 'unknown';
+    const subject = encodeURIComponent('Tourly beta feedback');
+    const body = encodeURIComponent(`\n\n—\nApp version: ${version}\nPlatform: ${Platform.OS} ${Platform.Version}`);
+    Linking.openURL(`mailto:diegoedjarry@gmail.com?subject=${subject}&body=${body}`)
+      .catch(() => showAlert(t('settings.reportProblem'), 'diegoedjarry@gmail.com'));
   }
 
   function openEdit(field: EditField, currentValue: string) {
@@ -511,6 +538,15 @@ export default function SettingsScreen() {
           </View>
         </View>}
 
+        {/* ── SUPPORT ── */}
+        <AccordionHeader label={t('settings.support')} open={openSection === 'support'} onPress={() => toggleSection('support')} />
+        {openSection === 'support' && <View style={s.card}>
+          <TouchableOpacity style={s.row} activeOpacity={0.6} onPress={reportProblem}>
+            <Text style={[s.rowLabel, { color: T.teal }]}>{t('settings.reportProblem')}</Text>
+            <View style={s.rowRight}><Text style={s.rowArrow}>›</Text></View>
+          </TouchableOpacity>
+        </View>}
+
         {/* ── SHARED ACCESS ── */}
         {!DEMO_MODE && (
           <>
@@ -795,6 +831,7 @@ export default function SettingsScreen() {
       {/* Invite share modal */}
       {showInvite && (
         <Modal transparent animationType="fade" visible onRequestClose={() => setShowInvite(false)}>
+          <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
           <View style={s.modalOverlay}>
             <View style={s.modalCard}>
               <Text style={s.modalTitle}>Invite Coach / Agent</Text>
@@ -833,12 +870,14 @@ export default function SettingsScreen() {
               </View>
             </View>
           </View>
+          </KeyboardAvoidingView>
         </Modal>
       )}
 
       {/* Change email modal */}
       {showChangeEmail && (
         <Modal transparent animationType="fade" visible onRequestClose={() => setShowChangeEmail(false)}>
+          <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
           <View style={s.modalOverlay}>
             <View style={s.modalCard}>
               <Text style={s.modalTitle}>Change Email</Text>
@@ -881,6 +920,7 @@ export default function SettingsScreen() {
               </View>
             </View>
           </View>
+          </KeyboardAvoidingView>
         </Modal>
       )}
 
@@ -896,10 +936,23 @@ export default function SettingsScreen() {
               <Text style={{ fontSize: 15, color: T.textPrimary, textAlign: 'center', fontWeight: '600', marginBottom: 4 }}>
                 {importData.mapped.length} expenses found
               </Text>
+              <Text style={{ fontSize: 12, color: T.textSecondary, textAlign: 'center', marginBottom: 4 }}>
+                {t('expense.usdNote')}
+              </Text>
               {importData.unmapped > 0 && (
                 <Text style={{ fontSize: 13, color: T.clayText, textAlign: 'center', marginBottom: 8 }}>
-                  {importData.unmapped} rows skipped (missing amount or date)
+                  {importData.unmapped} rows skipped (missing amount, negative/credit, or no date)
                 </Text>
+              )}
+              {importData.likelyDuplicate && (
+                <View style={{ backgroundColor: 'rgba(184,137,42,0.15)', borderRadius: 8, padding: 10, marginBottom: 8 }}>
+                  <Text style={{ fontSize: 13, color: '#B8892A', textAlign: 'center', fontWeight: '600' }}>
+                    ⚠ This file looks like it may have already been imported.
+                  </Text>
+                  <Text style={{ fontSize: 12, color: '#B8892A', textAlign: 'center', marginTop: 2 }}>
+                    Importing again will create duplicate expenses.
+                  </Text>
+                </View>
               )}
               <ScrollView style={{ maxHeight: 300, marginBottom: 16 }} showsVerticalScrollIndicator>
                 {importData.mapped.slice(0, 20).map((e, i) => (
@@ -941,6 +994,7 @@ export default function SettingsScreen() {
       {/* Paste notes modal */}
       {showPasteNotes && (
         <Modal transparent animationType="slide" visible onRequestClose={() => setShowPasteNotes(false)}>
+          <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
           <View style={s.modalOverlay}>
             <View style={[s.modalCard, { maxHeight: '85%' }]}>
               <Text style={s.modalTitle}>{parsedNotes.length > 0 ? 'Preview' : 'Paste Your Notes'}</Text>
@@ -1012,7 +1066,10 @@ export default function SettingsScreen() {
                           const tournaments = appData?.tournaments ?? [];
                           const tMap: Record<string, string> = {};
                           for (const tourney of tournaments) { tMap[tourney.name?.toLowerCase()] = tourney.id; }
-                          const count = await insertExpenses(mapped, tMap);
+                          const existingKeys = new Set<string>(
+                            (appData?.expenses ?? []).map((e: any) => `${e.date}:${e.amount}`),
+                          );
+                          const count = await insertExpenses(mapped, tMap, { tournaments, existingKeys });
                           await queryClient.invalidateQueries({ queryKey: ['expenses'] });
                           setShowPasteNotes(false);
                           setParsedNotes([]);
@@ -1029,12 +1086,14 @@ export default function SettingsScreen() {
               )}
             </View>
           </View>
+          </KeyboardAvoidingView>
         </Modal>
       )}
 
       {/* Change password modal */}
       {showChangePassword && (
         <Modal transparent animationType="fade" visible onRequestClose={() => setShowChangePassword(false)}>
+          <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
           <View style={s.modalOverlay}>
             <View style={s.modalCard}>
               <Text style={s.modalTitle}>Change Password</Text>
@@ -1086,6 +1145,7 @@ export default function SettingsScreen() {
               </View>
             </View>
           </View>
+          </KeyboardAvoidingView>
         </Modal>
       )}
     </SafeAreaView>
@@ -1343,6 +1403,7 @@ function EditTextModal({ visible, title, value, onChange, onSave, onClose, autoC
   if (!visible) return null;
   return (
     <Modal transparent animationType="fade" visible onRequestClose={onClose}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
       <View style={s.modalOverlay}>
         <View style={s.modalCard}>
           <Text style={s.modalTitle}>{title}</Text>
@@ -1366,6 +1427,7 @@ function EditTextModal({ visible, title, value, onChange, onSave, onClose, autoC
           </View>
         </View>
       </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

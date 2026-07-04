@@ -58,8 +58,9 @@ check("pointsEarned",  e1["pointsEarned"],  4)
 #   lost R32 vs Juan Carlos Prado Angelo.
 #   Score "6-4 7-6(4)" is from WINNER's perspective (Prado Angelo).
 #   Confirmed via ATP draw (2025 Challenger Temuco).
+#   ATP Rulebook §9.04: R32 first-round loss = 0 main-draw points.
 #   Expected: roundReached=R32, wins=0 (main draw), losses=1,
-#             qualifying matches=2, pointsEarned=8 (4 md + 4 qualifying)
+#             qualifying matches=2, pointsEarned=4 (0 md + 4 qualifying)
 # ═══════════════════════════════════════════════════════════════════
 print("\nCASE 2 — Jarry, Temuco CH")
 rows2 = [
@@ -78,7 +79,7 @@ check("roundReached",          e2["roundReached"],   "R32")
 check("wins (main draw only)", e2["wins"],           0)
 check("losses",                e2["losses"],         1)
 check("qualifying match count", len(q_matches2),    2)
-check("pointsEarned",          e2["pointsEarned"],  8)
+check("pointsEarned",          e2["pointsEarned"],  4)
 # Verify the R32 match is NOT counted as a win (score from winner's perspective)
 r32_match = next((m for m in e2["matches"] if m["round"] == "R32"), None)
 assert r32_match is not None, "R32 match not found in matches list"
@@ -210,7 +211,7 @@ assert len(mh6) == 1, f"Expected 1 tournament entry, got {len(mh6)}"
 e6 = mh6[0]
 check("roundReached is 'unconfirmed' (not 'R32')",
       e6["roundReached"], "unconfirmed")
-check("pointsEarned = 3 (CH50 qualifier only, no R32 main draw pts)",
+check("pointsEarned = 3 (CH50 qualifier only; R32 main draw = 0 per §9.04)",
       e6["pointsEarned"], 3)
 check("wins = 0",   e6["wins"],   0)
 check("losses = 0", e6["losses"], 0)

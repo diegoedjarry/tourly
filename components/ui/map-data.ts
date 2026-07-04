@@ -1,4 +1,7 @@
-// City coordinates [longitude, latitude] for ITF/ATP/Challenger tournament venues
+// City coordinates [longitude, latitude] for ITF/ATP/Challenger tournament venues.
+// Ambiguous city names are disambiguated with an ISO2 suffix: 'San Juan|AR' vs
+// 'San Juan|PR'. The lookup in tournament-map.tsx matches the suffix against the
+// tournament's country when available.
 export const CITY_COORDS: Record<string, [number, number]> = {
   // South America
   'Santiago': [-70.67, -33.45],
@@ -94,7 +97,7 @@ export const CITY_COORDS: Record<string, [number, number]> = {
   'Bahía Blanca': [-62.27, -38.72],
   'Bahia Blanca': [-62.27, -38.72],
   'San Luis': [-66.35, -33.30],
-  'San Juan': [-68.53, -31.54],
+  'San Juan|AR': [-68.53, -31.54],
   'Resistencia': [-59.01, -27.46],
 
   // North/Central America & Caribbean
@@ -106,7 +109,7 @@ export const CITY_COORDS: Record<string, [number, number]> = {
   'Cancún': [-86.85, 21.16],
   'Cancun': [-86.85, 21.16],
   'Santo Domingo': [-69.93, 18.49],
-  'San Juan': [-66.11, 18.47],
+  'San Juan|PR': [-66.11, 18.47],
   'Houston': [-95.37, 29.76],
   'Dallas': [-96.80, 32.78],
   'Atlanta': [-84.39, 33.75],

@@ -33,12 +33,15 @@ import { useDemoData } from '@/hooks/useDemoData';
 import { useFirstVisit } from '@/hooks/useFirstVisit';
 import { useTabSwipe } from '@/hooks/useTabSwipe';
 import { ScreenWalkthrough } from '@/components/ui/screen-walkthrough';
+import { countryFlag, nameToIso2 } from '@/utils/countryFlag';
+import { playerNameFilter } from '@/utils/text';
 
 const TOURNAMENTS_WALKTHROUGH = [
   { icon: '➕', title: 'Add a Tournament', body: 'Tap + to add your first tournament. Tourly calculates all deadlines automatically from the start date.' },
   { icon: '📋', title: 'Tournament details', body: 'Tap any tournament to see its full breakdown — deadlines, expenses, prize money, and net result.' },
 ];
 import { TournamentExpenseDetail } from '@/app/(tabs)/expenses';
+import { LoadingLogo } from '@/components/ui/LoadingLogo';
 
 function genId(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -86,12 +89,6 @@ function getGroup(t: any): 'active' | 'upcoming' | 'past' {
   if (end) { end.setHours(23, 59, 59, 999); }
   if (end && now > end) return 'past';
   if (start && now >= start) return 'active';
-  // Missed sign-up deadline without registering → treat as past
-  if (!t.isRegistered && t.signUpDeadline) {
-    const signUp = parseLocalDate(t.signUpDeadline);
-    if (signUp) { signUp.setHours(23, 59, 59, 999); }
-    if (signUp && now > signUp) return 'past';
-  }
   return 'upcoming';
 }
 
@@ -141,47 +138,6 @@ function deadlineLabel(dateStr: string | undefined): string {
   return `in ${d}d`;
 }
 
-const ITF3_TO_ISO2: Record<string, string> = {
-  'ROU':'RO','ESP':'ES','FRA':'FR','GER':'DE','ITA':'IT','GBR':'GB','USA':'US',
-  'ARG':'AR','BRA':'BR','AUS':'AU','SUI':'CH','BEL':'BE','NED':'NL','POL':'PL',
-  'CZE':'CZ','POR':'PT','SWE':'SE','AUT':'AT','GRE':'GR','HUN':'HU','BUL':'BG',
-  'CRO':'HR','SRB':'RS','RUS':'RU','UKR':'UA','KAZ':'KZ','JPN':'JP','CHN':'CN',
-  'KOR':'KR','IND':'IN','CHI':'CL','COL':'CO','PER':'PE','MEX':'MX','CAN':'CA',
-  'RSA':'ZA','EGY':'EG','MAR':'MA','TUN':'TN','SVK':'SK','SLO':'SI','TUR':'TR',
-  'ISR':'IL','THA':'TH','MAS':'MY','INA':'ID','PHI':'PH','UZB':'UZ','NGR':'NG',
-};
-
-const COUNTRY_NAME_ALIASES: Record<string, string> = {
-  'great britain': 'GB', 'china, p.r.': 'CN', "chinese taipei": 'TW',
-  'turkiye': 'TR', 'korea, rep.': 'KR', 'iran, i.r.': 'IR',
-  'slovak republic': 'SK', 'czech republic': 'CZ', 'republic of moldova': 'MD',
-};
-
-function countryFlag(country: string): string {
-  const raw = (country ?? '').trim();
-  if (!raw) return '';
-  const upper = raw.toUpperCase();
-  // 2-letter ISO code
-  if (raw.length === 2) {
-    return String.fromCodePoint(...[...upper].map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
-  }
-  // 3-letter ITF code → 2-letter ISO
-  if (raw.length === 3 && ITF3_TO_ISO2[upper]) {
-    const iso2 = ITF3_TO_ISO2[upper];
-    return String.fromCodePoint(...[...iso2].map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
-  }
-  // Alias overrides (ITF uses different names than ISO standard)
-  const alias = COUNTRY_NAME_ALIASES[raw.toLowerCase()];
-  if (alias) {
-    return String.fromCodePoint(...[...alias].map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
-  }
-  // Full country name → look up in COUNTRIES
-  const found = COUNTRIES.find(c => c.name.toLowerCase() === raw.toLowerCase());
-  if (found) {
-    return String.fromCodePoint(...[...found.code.toUpperCase()].map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
-  }
-  return '';
-}
 
 function fmt(n: number) {
   return '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 0 });
@@ -192,6 +148,18 @@ function fmtShortDate(iso: string): string {
   const [, m, d] = iso.split('-').map(Number);
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   return `${d} ${months[m - 1]}`;
+}
+
+function challengerDisplayName(trn: { name?: string; city?: string; category?: string }): string {
+  const cat = trn.category ?? '';
+  if (!cat.toLowerCase().includes('challenger')) return trn.name ?? '';
+  const tierMatch = cat.match(/\d+/);
+  const city = (trn.city ?? '').trim();
+  if (city && tierMatch) {
+    return `${city.toUpperCase()} CH ${tierMatch[0]}`;
+  }
+  // Fallback: city or tier missing — use category + name to avoid blank label
+  return `${cat} ${trn.name ?? ''}`.trim();
 }
 
 function getWeekMonday(dateStr: string | undefined): string {
@@ -366,9 +334,21 @@ const COUNTRIES = [
 ];
 const COUNTRY_NAME: Record<string, string> = Object.fromEntries(COUNTRIES.map(c => [c.code, c.name]));
 
+// Localized country display name (Hermes may lack Intl.DisplayNames — fall back
+// to the English COUNTRY_NAME map, then to the raw code).
+function countryDisplayName(code: string | undefined, lang: string): string {
+  if (!code) return '';
+  const up = code.toUpperCase();
+  try {
+    const name = new (Intl as any).DisplayNames([lang], { type: 'region' }).of(up);
+    if (name && name !== up) return name;
+  } catch {}
+  return COUNTRY_NAME[up] ?? code;
+}
+
 // ─── Country Picker ──────────────────────────────────────────────────────────
 
-function CountryPicker({ value, onChange, label, t }: { value: string; onChange: (code: string) => void; label?: string; t: (key: any) => string }) {
+function CountryPicker({ value, onChange, label, labelStyle, t }: { value: string; onChange: (code: string) => void; label?: string; labelStyle?: any; t: (key: any) => string }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const filtered = search.trim()
@@ -378,7 +358,7 @@ function CountryPicker({ value, onChange, label, t }: { value: string; onChange:
 
   return (
     <>
-      {label && <Text style={cpStyles.label}>{label}</Text>}
+      {label && <Text style={[cpStyles.label, labelStyle]}>{label}</Text>}
       <TouchableOpacity style={cpStyles.trigger} onPress={() => { setOpen(true); setSearch(''); }} activeOpacity={0.7}>
         <Text style={cpStyles.triggerText}>
           {selected ? `${countryFlag(selected.code)} ${selected.name}` : t('tournament.selectCountry')}
@@ -392,7 +372,7 @@ function CountryPicker({ value, onChange, label, t }: { value: string; onChange:
           <View style={cpStyles.handle} />
           <TextInput
             style={cpStyles.searchInput}
-            placeholder="Search country…"
+            placeholder={t('tournament.searchCountry')}
             placeholderTextColor="#888"
             value={search}
             onChangeText={setSearch}
@@ -590,7 +570,7 @@ interface EditState {
 }
 
 export function TournamentDetail({ tournamentId, onClose }: { tournamentId: string; onClose: () => void }) {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const { data } = useAppQuery({ tournaments: {} });
 
   const tournament = (data?.tournaments ?? []).find((x: any) => x.id === tournamentId);
@@ -610,7 +590,7 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
   const surfaceBg   = SURFACE_BG[(editing ? editState?.surface : tournament.surface) as Surface]   ?? '#FAEEDA';
   const surfaceText = SURFACE_TEXT[(editing ? editState?.surface : tournament.surface) as Surface]  ?? '#854F0B';
   const group       = getGroup(tournament);
-  const metaLine    = [fmtDateRange(tournament.startDate, tournament.endDate), COUNTRY_NAME[tournament.country?.toUpperCase()] ?? tournament.country]
+  const metaLine    = [fmtDateRange(tournament.startDate, tournament.endDate), countryDisplayName(tournament.country, lang) || tournament.country]
     .filter(Boolean).join('  ·  ');
 
   function startEdit() {
@@ -618,7 +598,7 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
     const calc  = start ? calcDeadlines(start, tournament.category) : null;
     setEditState({
       name: tournament.name ?? '',
-      country: tournament.country ?? 'US',
+      country: tournament.country ?? '',
       city: tournament.city ?? '',
       surface: tournament.surface ?? 'clay',
       category: tournament.category ?? 'M25',
@@ -630,7 +610,13 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
       singlesPrizeMoney:  (tournament.singlesPrizeMoney ?? 0) > 0 ? String(tournament.singlesPrizeMoney) : '',
       doublesPrizeMoney:  (tournament.doublesPrizeMoney ?? 0) > 0 ? String(tournament.doublesPrizeMoney) : '',
     });
-    setEditOverrides({ signUp: false, withdrawal: false, freeze: false });
+    // A stored deadline that differs from the formula is a user override —
+    // start with the override flag ON so saving doesn't silently reset it.
+    setEditOverrides({
+      signUp:     !!(tournament.signUpDeadline     && calc && tournament.signUpDeadline     !== calc.signUpDeadline),
+      withdrawal: !!(tournament.withdrawalDeadline && calc && tournament.withdrawalDeadline !== calc.withdrawalDeadline),
+      freeze:     !!(tournament.freezeDeadline     && calc && tournament.freezeDeadline     !== calc.freezeDeadline),
+    });
     setEditError('');
     setEditing(true);
   }
@@ -689,16 +675,18 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
       signUpDeadline: editOverrides.signUp ? editState.signUpDeadline : editCalc.signUpDeadline,
       withdrawalDeadline: editOverrides.withdrawal ? editState.withdrawalDeadline : editCalc.withdrawalDeadline,
       freezeDeadline: editOverrides.freeze ? editState.freezeDeadline : editCalc.freezeDeadline,
-      singlesPrizeMoney: parseFloat(editState.singlesPrizeMoney) || 0,
-      doublesPrizeMoney: parseFloat(editState.doublesPrizeMoney) || 0,
+      // Accept comma decimals — locale decimal-pad keyboards only offer ","
+      singlesPrizeMoney: parseFloat(editState.singlesPrizeMoney.replace(',', '.')) || 0,
+      doublesPrizeMoney: parseFloat(editState.doublesPrizeMoney.replace(',', '.')) || 0,
     };
     try {
       if (DEMO_MODE) {
         demoCtx?.patchTournament(tournament.id, updates);
       } else {
+        // Notifications are rescheduled by useNotificationSetup when the
+        // tournaments query refreshes — no direct call here (it would use
+        // stale data and ignore the user's notification preferences).
         await apiPatchTournament(tournament.id, updates);
-        const { rescheduleAllNotifications } = await import('@/utils/notifications');
-        rescheduleAllNotifications(data?.tournaments ?? []);
       }
       setEditing(false);
       setEditState(null);
@@ -718,6 +706,8 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
         await apiPatchTournament(tournament.id, updates);
       }
       onClose();
+    } catch (e: any) {
+      Alert.alert('Could not save', e?.message ?? 'Please try again.');
     } finally { setSavingAction(null); }
   }
 
@@ -728,17 +718,17 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
       if (DEMO_MODE) {
         demoCtx?.patchTournament(tournament.id, { isWithdrawn: newValue });
       } else {
+        // Re-registering reschedules via the useNotificationSetup effect.
         await apiPatchTournament(tournament.id, { isWithdrawn: newValue });
         if (newValue) {
           const { cancelTournamentNotifications } = await import('@/utils/notifications');
           await cancelTournamentNotifications(tournament.id);
-        } else {
-          const { rescheduleAllNotifications } = await import('@/utils/notifications');
-          rescheduleAllNotifications(data?.tournaments ?? []);
         }
       }
       setShowWithdraw(false);
       onClose();
+    } catch (e: any) {
+      Alert.alert('Could not save', e?.message ?? 'Please try again.');
     } finally { setSavingAction(null); }
   }
 
@@ -775,7 +765,7 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 }}>
                   <CourtIcon surface={editState.surface} />
                   <Text style={[det.headerMeta, { color: surfaceText + 'CC' }]}>
-                    {COUNTRY_NAME[editState.country?.toUpperCase()] ?? editState.country}
+                    {countryDisplayName(editState.country, lang) || editState.country}
                   </Text>
                 </View>
               </>
@@ -797,6 +787,17 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
             )}
           </View>
 
+          {!editing && !tournament.country && (
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(240,168,48,0.12)', borderRadius: 10, marginHorizontal: 20, marginTop: 12, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: 'rgba(240,168,48,0.35)' }}
+              activeOpacity={0.8}
+              onPress={() => setEditing(true)}
+            >
+              <Text style={{ fontSize: 14 }}>⚠️</Text>
+              <Text style={{ flex: 1, fontSize: 12, color: T.amber, fontWeight: '600' }}>Country missing — tap to add it so this tournament appears in Cost by Country.</Text>
+            </TouchableOpacity>
+          )}
+
           {editing && editState ? (
             /* ── EDIT MODE ── */
             <View style={det.body}>
@@ -814,7 +815,13 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
 
               <CategoryPicker label="CATEGORY" value={editState.category} onChange={(v) => setEF('category', v)} t={t} />
 
-              <CountryPicker label="COUNTRY" value={editState.country} onChange={(v) => setEF('country', v)} t={t} />
+              <CountryPicker
+                label={!editState.country ? '⚠ COUNTRY — missing' : 'COUNTRY'}
+                labelStyle={!editState.country ? { color: T.amber } : undefined}
+                value={editState.country}
+                onChange={(v) => setEF('country', v)}
+                t={t}
+              />
 
               <Text style={det.sectionLabel}>{t('tournament.city').toUpperCase()}</Text>
               <TextInput style={det.editInput} value={editState.city} onChangeText={(v) => setEF('city', v)}
@@ -925,20 +932,29 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
                 <>
                   <Text style={det.sectionLabel}>{t('tournament.status')}</Text>
                   <View style={det.toggleCard}>
-                    {!tournament.isWithdrawn && (
-                      <View style={det.toggleRow}>
-                        <Text style={det.toggleLabel}>{tournament.isRegistered ? t('tournaments.registeredBadge') : t('tournaments.notRegistered')}</Text>
-                        {savingAction === 'register' || savingAction === 'unregister'
-                          ? <ActivityIndicator size="small" color={T.teal} />
-                          : <Switch
-                              value={!!tournament.isRegistered}
-                              onValueChange={(v) => doAction(v ? 'register' : 'unregister', { isRegistered: v })}
-                              trackColor={{ false: T.cardBorder, true: T.teal }}
-                              thumbColor={T.textPrimary}
-                              disabled={!!savingAction}
-                            />}
-                      </View>
-                    )}
+                    {!tournament.isWithdrawn && (() => {
+                      const signUpClosed = !tournament.isRegistered && (daysUntil(tournament.signUpDeadline) ?? 0) < 0;
+                      return (
+                        <View style={det.toggleRow}>
+                          <Text style={[det.toggleLabel, signUpClosed && { color: T.red }]}>
+                            {tournament.isRegistered
+                              ? t('tournaments.registeredBadge')
+                              : signUpClosed
+                                ? t('tournaments.signUpClosed')
+                                : t('tournaments.notRegistered')}
+                          </Text>
+                          {savingAction === 'register' || savingAction === 'unregister'
+                            ? <ActivityIndicator size="small" color={T.teal} />
+                            : <Switch
+                                value={!!tournament.isRegistered}
+                                onValueChange={(v) => doAction(v ? 'register' : 'unregister', { isRegistered: v })}
+                                trackColor={{ false: T.cardBorder, true: T.teal }}
+                                thumbColor={T.textPrimary}
+                                disabled={!!savingAction || signUpClosed}
+                              />}
+                        </View>
+                      );
+                    })()}
                     <View style={det.toggleDivider} />
                     <View style={det.toggleRow}>
                       <Text style={[det.toggleLabel, det.toggleLabelWithdraw]}>
@@ -1020,8 +1036,13 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
 
               {/* PAST: nothing here — header shows name/dates, expenses section (if added) below */}
 
-              {/* Prize money — shown for all groups if any prize money exists */}
-              {((tournament.singlesPrizeMoney ?? 0) > 0 || (tournament.doublesPrizeMoney ?? 0) > 0) && (
+              {/* Prize money — shown for all groups if any prize money exists.
+                  Legacy records only have `prizeMoney`; fall back to it for the total. */}
+              {(() => {
+                const splitPrize = (tournament.singlesPrizeMoney ?? 0) + (tournament.doublesPrizeMoney ?? 0);
+                const totalPrize = splitPrize > 0 ? splitPrize : (tournament.prizeMoney ?? 0);
+                if (totalPrize <= 0) return null;
+                return (
                 <>
                   <Text style={det.sectionLabel}>{t('prize.prizeMoney')}</Text>
                   <View style={det.prizeCard}>
@@ -1038,16 +1059,17 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
                         <Text style={det.prizeAmount}>${tournament.doublesPrizeMoney.toLocaleString()}</Text>
                       </View>
                     )}
-                    <View style={det.deadlineDivider} />
+                    {splitPrize > 0 && <View style={det.deadlineDivider} />}
                     <View style={det.prizeRow}>
                       <Text style={[det.prizeLabel, { fontWeight: '700' }]}>{t('prize.total')}</Text>
                       <Text style={[det.prizeAmount, { color: T.green, fontWeight: '700' }]}>
-                        ${((tournament.singlesPrizeMoney ?? 0) + (tournament.doublesPrizeMoney ?? 0)).toLocaleString()}
+                        ${totalPrize.toLocaleString()}
                       </Text>
                     </View>
                   </View>
                 </>
-              )}
+                );
+              })()}
 
               {/* ── Tournament Contact ── */}
               {(tournament.supervisorName || tournament.supervisorEmail || tournament.supervisorPhone) && (
@@ -1087,8 +1109,8 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
                 </>
               )}
 
-              {/* ── Ranking Impact ── */}
-              <RankingImpactSection tournament={tournament} />
+              {/* ── Ranking Impact — only shown after tournament has concluded ── */}
+              {group === 'past' && <RankingImpactSection tournament={tournament} />}
 
             </View>
           )}
@@ -1257,6 +1279,8 @@ export function AddTournamentModal({ onClose, defaultStartDate }: { onClose: () 
       const _su2  = tournament.signUpDeadline ? parseLocalDate(tournament.signUpDeadline) : null;
       if (_su2) _su2.setHours(23, 59, 59, 999);
       const updates: any = { isInMyList: true };
+      const composedName2 = challengerDisplayName(tournament);
+      if (composedName2 !== tournament.name) updates.name = composedName2;
       if ((_su2 !== null && _now2 > _su2) || (_s2 !== null && _now2 >= _s2) || (_e2 !== null && _now2 > _e2)) {
         updates.isRegistered = true;
       }
@@ -1321,8 +1345,7 @@ export function AddTournamentModal({ onClose, defaultStartDate }: { onClose: () 
           isWithdrawn: false, isInMyList: true, status: 'upcoming',
           prizeMoney: 0, singlesPrizeMoney: 0, doublesPrizeMoney: 0,
         });
-        const { rescheduleAllNotifications } = await import('@/utils/notifications');
-        rescheduleAllNotifications(data?.tournaments ?? []);
+        // Notifications reschedule via useNotificationSetup once the query refreshes.
         onClose();
       }
     } catch (e: any) { setError(e?.message ?? 'Failed to save.'); setSaving(false); }
@@ -1559,25 +1582,27 @@ function TournamentDiscoveryModal({
     try {
       const calc = tournament.startDate ? calcDeadlines(tournament.startDate, tournament.category) : {};
       await apiAddTournament({
-        name: tournament.name,
+        name: challengerDisplayName(tournament),
         city: tournament.city,
         country: tournament.country,
         surface: tournament.surface,
         category: tournament.category,
         startDate: tournament.startDate,
         endDate: tournament.endDate ?? (tournament.startDate ? calcEndDate(tournament.startDate) : undefined),
-        prizeMoney: tournament.prizeMoney,
+        prizeMoney: 0, singlesPrizeMoney: 0, doublesPrizeMoney: 0,
         isInMyList: true,
         isRegistered: false,
         ...calc,
       });
       onClose();
-    } catch (_) {}
+    } catch (e: any) {
+      Alert.alert('Could not add tournament', e?.message ?? 'Please try again.');
+    }
   }
 
   const activeList = browseMode === 'challenger'
     ? itfDiscoverable.filter(t => (t.category ?? '').toLowerCase().includes('challenger'))
-    : itfDiscoverable;
+    : itfDiscoverable.filter(t => ['M15', 'M25'].includes(t.category ?? ''));
 
   const filtered = activeList.filter((trn: any) => {
     if (discoverySearch.trim()) {
@@ -1618,6 +1643,8 @@ function TournamentDiscoveryModal({
   async function handleAddFromDiscovery(tournament: any) {
     try {
       const updates: any = { isInMyList: true };
+      const composedName = challengerDisplayName(tournament);
+      if (composedName !== tournament.name) updates.name = composedName;
       if (tournament.startDate && !tournament.freezeDeadline) {
         const calc = calcDeadlines(tournament.startDate, tournament.category);
         if (!tournament.signUpDeadline)     updates.signUpDeadline     = calc.signUpDeadline;
@@ -1626,7 +1653,9 @@ function TournamentDiscoveryModal({
       }
       await apiPatchTournament(tournament.id, updates);
       onClose();
-    } catch (_) {}
+    } catch (e: any) {
+      Alert.alert('Could not add tournament', e?.message ?? 'Please try again.');
+    }
   }
 
   async function saveRestWeek() {
@@ -1634,7 +1663,7 @@ function TournamentDiscoveryModal({
     setSavingRest(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      await supabase.from('training_blocks').insert({
+      const { error } = await supabase.from('training_blocks').insert({
         title: 'Descanso 😴',
         start_date: restMonday,
         end_date: addDays(restMonday, 6),
@@ -1642,10 +1671,13 @@ function TournamentDiscoveryModal({
         user_id: user?.id,
         block_type: 'rest',
       });
+      if (error) throw error;
       queryClient.invalidateQueries({ queryKey: ['training_blocks'] });
       setShowRestModal(false);
       setRestMonday(''); setRestNote('');
-    } catch (_) {}
+    } catch (e: any) {
+      Alert.alert('Could not save rest week', e?.message ?? 'Please try again.');
+    }
     setSavingRest(false);
   }
 
@@ -1654,7 +1686,7 @@ function TournamentDiscoveryModal({
     setSavingTrain(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      await supabase.from('training_blocks').insert({
+      const { error } = await supabase.from('training_blocks').insert({
         title: trainLabel.trim(),
         start_date: trainStart,
         end_date: trainEnd,
@@ -1662,10 +1694,13 @@ function TournamentDiscoveryModal({
         user_id: user?.id,
         block_type: 'training',
       });
+      if (error) throw error;
       queryClient.invalidateQueries({ queryKey: ['training_blocks'] });
       setShowTrainingModal(false);
       setTrainStart(''); setTrainEnd(''); setTrainLabel(''); setTrainNote('');
-    } catch (_) {}
+    } catch (e: any) {
+      Alert.alert('Could not save training block', e?.message ?? 'Please try again.');
+    }
     setSavingTrain(false);
   }
 
@@ -1796,13 +1831,13 @@ function TournamentDiscoveryModal({
                           </View>
                           <View style={{ flex: 1 }}>
                             <Text style={disc.trnName} numberOfLines={1}>
-                              {trn.country ? countryFlag(trn.country) + ' ' : ''}{trn.name}
+                              {trn.country ? countryFlag(trn.country) + ' ' : ''}{challengerDisplayName(trn)}
                             </Text>
                             <Text style={disc.trnMeta} numberOfLines={1}>
                               {[trn.city, fmtDateRange(trn.startDate, trn.endDate), trn.prizeMoney ? `$${Number(trn.prizeMoney).toLocaleString()}` : null].filter(Boolean).join(' · ')}
                             </Text>
                           </View>
-                          {trn.category ? <View style={disc.catPill}><Text style={disc.catPillText}>{trn.category}</Text></View> : null}
+                          {trn.category && !trn.category.toLowerCase().includes('challenger') ? <View style={disc.catPill}><Text style={disc.catPillText}>{trn.category}</Text></View> : null}
                           {urgentColor && days !== null ? (
                             <View style={[disc.deadlinePill, { backgroundColor: urgentColor + '22', marginLeft: 6 }]}>
                               <Text style={[disc.deadlinePillText, { color: urgentColor }]}>{days}d</Text>
@@ -2131,6 +2166,9 @@ export default function TournamentsScreen() {
   const [selectedTournaments, setSelectedTournaments] = useState<Set<string>>(new Set());
   const tournamentSelectMode = selectedTournaments.size > 0;
   const [removingTournaments, setRemovingTournaments] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [scrapedPast, setScrapedPast] = useState<{ name: string; startDate: string; endDate: string; surface: string | null }[] | null>(DEMO_MODE ? [] : null);
+  const [materializingId, setMaterializingId] = useState<string | null>(null);
 
   function toggleTournamentSelect(id: string) {
     setSelectedTournaments(prev => {
@@ -2141,32 +2179,28 @@ export default function TournamentsScreen() {
   }
 
   function removeSelectedTournaments() {
-    const count = selectedTournaments.size;
-    Alert.alert(
-      `Delete ${count} tournament${count !== 1 ? 's' : ''}?`,
-      'This cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete', style: 'destructive',
-          onPress: async () => {
-            setRemovingTournaments(true);
-            try {
-              for (const id of selectedTournaments) {
-                if (DEMO_MODE) {
-                  demoCtx?.patchTournament(id, { isInMyList: false });
-                } else {
-                  await apiDeleteTournament(id);
-                }
-              }
-            } finally {
-              setRemovingTournaments(false);
-              setSelectedTournaments(new Set());
-            }
-          },
-        },
-      ],
-    );
+    setShowDeleteConfirm(true);
+  }
+
+  async function executeDeleteSelected() {
+    setShowDeleteConfirm(false);
+    setRemovingTournaments(true);
+    try {
+      const { cancelTournamentNotifications } = await import('@/utils/notifications');
+      for (const id of selectedTournaments) {
+        if (DEMO_MODE) {
+          demoCtx?.patchTournament(id, { isInMyList: false });
+        } else {
+          await cancelTournamentNotifications(id);
+          await apiDeleteTournament(id);
+        }
+      }
+    } catch (e: any) {
+      Alert.alert('Could not delete', e?.message ?? 'Please try again.');
+    } finally {
+      setRemovingTournaments(false);
+      setSelectedTournaments(new Set());
+    }
   }
 
   const { openTournament } = useLocalSearchParams<{ openTournament?: string }>();
@@ -2201,28 +2235,64 @@ export default function TournamentsScreen() {
   }, []);
 
   const reconciledRef = useRef(new Set<string>());
+  // Fill in MISSING deadlines from the formula. Never overwrite a stored
+  // deadline that differs from the formula — those are user overrides.
   useEffect(() => {
     const tournaments = data?.tournaments ?? [];
     for (const trn of tournaments) {
       if (!trn.startDate || !trn.category || reconciledRef.current.has(trn.id)) continue;
-      const correct = calcDeadlines(trn.startDate, trn.category);
-      const needsFix =
-        (trn.signUpDeadline && trn.signUpDeadline !== correct.signUpDeadline) ||
-        (trn.withdrawalDeadline && trn.withdrawalDeadline !== correct.withdrawalDeadline) ||
-        (trn.freezeDeadline && trn.freezeDeadline !== correct.freezeDeadline);
-      if (!needsFix) { reconciledRef.current.add(trn.id); continue; }
       reconciledRef.current.add(trn.id);
+      const correct = calcDeadlines(trn.startDate, trn.category);
       const updates: any = {};
-      if (trn.signUpDeadline !== correct.signUpDeadline) updates.signUpDeadline = correct.signUpDeadline;
-      if (trn.withdrawalDeadline !== correct.withdrawalDeadline) updates.withdrawalDeadline = correct.withdrawalDeadline;
-      if (trn.freezeDeadline !== correct.freezeDeadline) updates.freezeDeadline = correct.freezeDeadline;
+      if (!trn.signUpDeadline)     updates.signUpDeadline     = correct.signUpDeadline;
+      if (!trn.withdrawalDeadline) updates.withdrawalDeadline = correct.withdrawalDeadline;
+      if (!trn.freezeDeadline)     updates.freezeDeadline     = correct.freezeDeadline;
+      if (Object.keys(updates).length === 0) continue;
       if (DEMO_MODE) {
         demoCtx?.patchTournament(trn.id, updates);
       } else {
-        apiPatchTournament(trn.id, updates);
+        apiPatchTournament(trn.id, updates).catch(() => {});
       }
     }
   }, [data?.tournaments]);
+
+  // ── Scraped match history for Past section ─────────────────────────────────
+  useEffect(() => {
+    if (DEMO_MODE) return;
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) { setScrapedPast([]); return; }
+      supabase.from('profiles').select('atp_player_name').eq('id', user.id).single()
+        .then(({ data: prof }) => {
+          if (!prof?.atp_player_name) { setScrapedPast([]); return; }
+          const nameParts = prof.atp_player_name.trim().split(/\s+/).slice(0, 2).join(' ');
+          supabase.from('player_profiles').select('match_history')
+            .or(playerNameFilter(nameParts))
+            .order('last_updated', { ascending: false }).limit(1)
+            .then(({ data: rows }) => {
+              if (!rows?.[0]?.match_history) { setScrapedPast([]); return; }
+              const todayStr = new Date().toISOString().slice(0, 10);
+              const seen = new Set<string>();
+              const entries: { name: string; startDate: string; endDate: string; surface: string | null }[] = [];
+              (rows[0].match_history as any[]).forEach((m: any) => {
+                const name = m.tournamentName ?? '';
+                const startDate = m.date ?? '';
+                if (!name || !startDate || startDate >= todayStr) return;
+                const key = `${name.toLowerCase()}|${startDate}`;
+                if (seen.has(key)) return;
+                seen.add(key);
+                const [y, mo, d] = startDate.split('-').map(Number);
+                const end = new Date(y, mo - 1, d + 6);
+                const endDate = `${end.getFullYear()}-${String(end.getMonth()+1).padStart(2,'0')}-${String(end.getDate()).padStart(2,'0')}`;
+                entries.push({ name, startDate, endDate, surface: m.surface ?? null });
+              });
+              setScrapedPast(entries.sort((a, b) => b.startDate.localeCompare(a.startDate)));
+            }, () => setScrapedPast([]));
+        }, () => setScrapedPast([]));
+    }).catch((err) => {
+      console.warn('[tournaments] scraped history fetch failed', err);
+      setScrapedPast([]);
+    });
+  }, []);
 
   const allMyTournaments = (data?.tournaments ?? []).filter(
     (trn: any) => trn.isInMyList !== false
@@ -2237,6 +2307,57 @@ export default function TournamentsScreen() {
   const activeGroup   = filtered.filter((trn: any) => getGroup(trn) === 'active');
   const upcomingGroup = filtered.filter((trn: any) => getGroup(trn) === 'upcoming');
   const pastGroup     = filtered.filter((trn: any) => getGroup(trn) === 'past');
+
+  const scrapedPastEntries = useMemo(() => {
+    if (!scrapedPast) return null;
+    const existingKeys = new Set(
+      (data?.tournaments ?? []).map((t: any) => `${(t.name ?? '').toLowerCase()}|${(t.startDate ?? '')}`)
+    );
+    return scrapedPast.filter(s => !existingKeys.has(`${s.name.toLowerCase()}|${s.startDate}`));
+  }, [scrapedPast, data?.tournaments]);
+
+  async function materializeAndOpen(entry: { name: string; startDate: string; endDate: string; surface: string | null }) {
+    if (DEMO_MODE) return;
+    const key = `${entry.name}|${entry.startDate}`;
+    setMaterializingId(key);
+    try {
+      // Attempt to auto-derive country from itf_tournaments by matching start_date + city keyword.
+      // Strip common ITF prefixes/suffixes to isolate the city word, then query by city column.
+      let country: string | null = null;
+      const cityWord = entry.name
+        .replace(/^(M15|M25|M50|M100)\s+/i, '')
+        .replace(/\s+(CH|FL|NC|TX|CA|PA|NY|TN|GA|OH|BC|WA)\s*$/i, '')
+        .trim();
+      if (cityWord) {
+        const { data: itfRows } = await supabase
+          .from('itf_tournaments')
+          .select('country')
+          .eq('start_date', entry.startDate)
+          .or(`city.ilike.%${cityWord}%,name.ilike.%${cityWord}%`)
+          .limit(1);
+        if (itfRows?.[0]?.country) {
+          country = nameToIso2(itfRows[0].country);
+        }
+      }
+
+      const row = await apiAddTournament({
+        name: entry.name,
+        startDate: entry.startDate,
+        endDate: entry.endDate,
+        country,
+        surface: entry.surface,
+        isRegistered: false,
+        isWithdrawn: false,
+        isInMyList: false,
+        prizeMoney: 0,
+        singlesPrizeMoney: 0,
+        doublesPrizeMoney: 0,
+      });
+      if (row?.id) setDetailId(row.id);
+    } finally {
+      setMaterializingId(null);
+    }
+  }
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -2275,7 +2396,7 @@ export default function TournamentsScreen() {
           </View>
         )}
 
-        {isLoading && <ActivityIndicator color={T.teal} style={{ marginTop: 40 }} />}
+        {isLoading && <LoadingLogo style={{ minHeight: 300 }} />}
 
         {!isLoading && activeFilter !== 'withdrawn' && filtered.length === 0 && (
           <Text style={styles.emptyText}>{t('tournaments.noTournamentsYet')}</Text>
@@ -2316,7 +2437,8 @@ export default function TournamentsScreen() {
             ))}
           </>
         )}
-        {activeFilter !== 'withdrawn' && pastGroup.length > 0 && (
+        {activeFilter !== 'withdrawn' && (activeFilter === 'all' || activeFilter === 'past') &&
+          (pastGroup.length > 0 || (scrapedPastEntries && scrapedPastEntries.length > 0)) && (
           <>
             <Text style={styles.sectionLabel}>{t('tournaments.past').toUpperCase()}</Text>
             {groupByWeek(pastGroup, t('tournaments.noDate')).reverse().map(week => (
@@ -2328,6 +2450,36 @@ export default function TournamentsScreen() {
                     onPress={() => tournamentSelectMode ? toggleTournamentSelect(item.id) : setExpenseDetailId(item.id)}
                     onLongPress={() => toggleTournamentSelect(item.id)} />
                 ))}
+              </View>
+            ))}
+            {scrapedPastEntries && scrapedPastEntries.length > 0 && groupByWeek(
+              scrapedPastEntries.map(e => ({ ...e, id: `scraped|${e.name}|${e.startDate}` })),
+              ''
+            ).reverse().map(week => (
+              <View key={`scraped-${week.weekKey}`}>
+                <Text style={styles.weekLabel}>{week.weekLabel}</Text>
+                {week.items.map((item: any) => {
+                  const mKey = `${item.name}|${item.startDate}`;
+                  return (
+                    <TouchableOpacity
+                      key={mKey}
+                      style={styles.card}
+                      activeOpacity={0.8}
+                      disabled={materializingId === mKey}
+                      onPress={() => materializeAndOpen(item)}
+                    >
+                      <View style={styles.cardTopRow}>
+                        {item.surface && <CourtIcon surface={item.surface} size="sm" />}
+                        <Text style={styles.cardTitle} numberOfLines={2}>{item.name}</Text>
+                        {materializingId === mKey
+                          ? <ActivityIndicator size="small" color={T.accent} />
+                          : <View style={styles.scrapedBadge}><Text style={styles.scrapedBadgeText}>History</Text></View>
+                        }
+                      </View>
+                      <Text style={styles.cardMeta}>{fmtDateRange(item.startDate, item.endDate)}{item.surface ? ` · ${item.surface}` : ''}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
             ))}
           </>
@@ -2384,6 +2536,27 @@ export default function TournamentsScreen() {
         onOpenAddManual={() => setShowAddForm(true)}
       />
       {showAddForm && <AddTournamentModal onClose={() => setShowAddForm(false)} />}
+      {showDeleteConfirm && (() => {
+        const count = selectedTournaments.size;
+        return (
+          <Modal transparent animationType="fade" onRequestClose={() => setShowDeleteConfirm(false)}>
+            <Pressable style={styles.dialogBackdrop} onPress={() => setShowDeleteConfirm(false)}>
+              <Pressable style={styles.dialog} onPress={() => {}}>
+                <Text style={styles.dialogTitle}>Delete {count} tournament{count !== 1 ? 's' : ''}?</Text>
+                <Text style={styles.dialogBody}>This cannot be undone.</Text>
+                <View style={styles.dialogActions}>
+                  <TouchableOpacity style={styles.cancelBtn} onPress={() => setShowDeleteConfirm(false)} activeOpacity={0.7}>
+                    <Text style={styles.cancelBtnText}>{t('common.cancel')}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.withdrawConfirmBtn} onPress={executeDeleteSelected} activeOpacity={0.8}>
+                    <Text style={styles.withdrawConfirmText}>Delete</Text>
+                  </TouchableOpacity>
+                </View>
+              </Pressable>
+            </Pressable>
+          </Modal>
+        );
+      })()}
       {detailId && <TournamentDetail tournamentId={detailId} onClose={() => setDetailId(null)} />}
       {expenseDetailId && (() => {
         const trn = allMyTournaments.find((x: any) => x.id === expenseDetailId);
@@ -2442,6 +2615,8 @@ const styles = StyleSheet.create({
   notRegisteredText: { fontSize: 10, fontWeight: '600', color: T.textTertiary },
   playedBadge: { backgroundColor: '#0A2010', borderRadius: 20, paddingHorizontal: 8, paddingVertical: 2, flexShrink: 0 },
   playedText: { fontSize: 10, fontWeight: '600', color: T.green },
+  scrapedBadge: { borderWidth: 1, borderColor: 'rgba(91,91,214,0.4)', backgroundColor: 'rgba(91,91,214,0.12)', borderRadius: 20, paddingHorizontal: 8, paddingVertical: 2, flexShrink: 0 },
+  scrapedBadgeText: { fontSize: 10, fontWeight: '600', color: T.accent },
   pillRow: { flexDirection: 'row', gap: 6 },
   pill: { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 },
   pillRed: { backgroundColor: T.red },

@@ -36,6 +36,16 @@ function toEmoji(iso2: string): string {
   return String.fromCodePoint(...[...iso2.toUpperCase()].map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
 }
 
+/** Resolve any country string (full name, 2-letter ISO, 3-letter ITF) → 2-letter ISO code, or null. */
+export function nameToIso2(country: string): string | null {
+  const raw = (country ?? '').trim();
+  if (!raw) return null;
+  if (raw.length === 2) return raw.toUpperCase();
+  const iso2from3 = ITF3_TO_ISO2[raw.toUpperCase()];
+  if (iso2from3) return iso2from3;
+  return NAME_TO_ISO2[raw.toLowerCase()] ?? null;
+}
+
 export function countryFlag(country: string): string {
   const raw = (country ?? '').trim();
   if (!raw) return '';

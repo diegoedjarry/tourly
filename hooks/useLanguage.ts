@@ -18,6 +18,12 @@ AsyncStorage.getItem(LANG_KEY).then(saved => {
   }
 }).catch(() => {});
 
+// Current UI language for non-React modules (e.g. lib/api offline notices).
+// Tracks the persisted app language; the per-profile override lives in useLanguage().
+export function getCurrentLang(): Lang {
+  return currentLang;
+}
+
 export async function setLanguage(lang: Lang) {
   currentLang = lang;
   await AsyncStorage.setItem(LANG_KEY, lang).catch(() => {});
@@ -36,9 +42,10 @@ export function useLanguage() {
 
   const profileLang = (profile?.language as Lang) || undefined;
   // Profile language is the source of truth once loaded.
-  // localLang covers the window before profile loads and reflects
-  // setLanguage() calls made from Settings before the profile write resolves.
-  const lang: Lang = profileLang ?? localLang;
+  // When profile is explicitly null (logged-out / auth screen), always use 'en'
+  // so the login page never shows a language stored from a previous session.
+  // undefined means still loading — keep localLang to avoid a flash.
+  const lang: Lang = profile === null ? 'en' : (profileLang ?? localLang);
 
   const t = useCallback((key: StringKey): string => {
     return translate(key, lang);

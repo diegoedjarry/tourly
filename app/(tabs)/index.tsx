@@ -2,11 +2,9 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   ScrollView,
   View,
-
   StyleSheet,
   StatusBar,
   TouchableOpacity,
-  ActivityIndicator,
 } from 'react-native';
 import { Text } from '@/components/ui/text';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -22,11 +20,13 @@ import { useFirstVisit } from '@/hooks/useFirstVisit';
 import { useTabSwipe } from '@/hooks/useTabSwipe';
 import { ScreenWalkthrough } from '@/components/ui/screen-walkthrough';
 import { useOfflineSync } from '@/hooks/useOfflineSync';
+import { supabase } from '@/lib/supabase';
 
 import { FloatingInsight } from '@/components/ui/floating-insight';
 import { useProfile } from '@/hooks/useProfile';
 import { T, SURFACE_STRIPE } from '@/constants/theme';
 import { TourlyLogo } from '@/components/ui/tourly-logo';
+import { LoadingLogo } from '@/components/ui/LoadingLogo';
 import { useLanguage } from '@/hooks/useLanguage';
 
 
@@ -43,8 +43,9 @@ function daysUntil(dateStr: string | undefined): number | null {
 function getUpcomingDeadlines(tournaments: any[]) {
   const items: Array<{ t: any; type: string; date: string; days: number | null; isToday: boolean }> = [];
   for (const t of tournaments) {
-    if (t.isWithdrawn) continue;
-    if (t.withdrawalDeadline) {
+    if (t.isWithdrawn || t.isInMyList === false) continue;
+    // Withdrawal only applies once registered
+    if (t.isRegistered && t.withdrawalDeadline) {
       const d = daysUntil(t.withdrawalDeadline);
       if (d !== null && d >= 0 && d <= 7) {
         items.push({ t, type: 'Withdrawal', date: t.withdrawalDeadline, days: d, isToday: d === 0 });
@@ -54,6 +55,12 @@ function getUpcomingDeadlines(tournaments: any[]) {
       const d = daysUntil(t.signUpDeadline);
       if (d !== null && d >= 0 && d <= 7) {
         items.push({ t, type: 'Sign up', date: t.signUpDeadline, days: d, isToday: d === 0 });
+      }
+    }
+    if (t.freezeDeadline) {
+      const d = daysUntil(t.freezeDeadline);
+      if (d !== null && d >= 0 && d <= 7) {
+        items.push({ t, type: 'Doubles entry', date: t.freezeDeadline, days: d, isToday: d === 0 });
       }
     }
   }
@@ -111,6 +118,28 @@ export default function HomeScreen() {
   })();
   const hasGeneratedRef = useRef(false);
 
+  const [scrapedMatchHistory, setScrapedMatchHistory] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (DEMO_MODE) return;
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) return;
+      supabase.from('profiles').select('atp_player_name').eq('id', user.id).single()
+        .then(({ data: prof }) => {
+          if (!prof?.atp_player_name) return;
+          const nameParts = prof.atp_player_name.trim().split(/\s+/).slice(0, 2).join(' ');
+          supabase.from('player_profiles')
+            .select('match_history')
+            .ilike('player_name', `%${nameParts}%`)
+            .order('last_updated', { ascending: false })
+            .limit(1)
+            .then(({ data }) => {
+              setScrapedMatchHistory(data?.[0]?.match_history ?? []);
+            });
+        });
+    });
+  }, []);
+
   const tournaments = data?.tournaments ?? [];
   const expenses = data?.expenses ?? [];
 
@@ -131,18 +160,24 @@ export default function HomeScreen() {
 
   const seasonStats = useMemo(() => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
-    const played = tournaments.filter((t: any) => {
+    const currentYear = today.getFullYear();
+    // Prefer scraped match history count for accuracy; fall back to local tournament count
+    const scrapedPlayed = scrapedMatchHistory.filter((m: any) =>
+      (m.date ?? '').startsWith(String(currentYear))
+    ).length;
+    const localPlayed = tournaments.filter((t: any) => {
       const d = parseLocalDate(t.startDate);
       return d && d <= today && !t.isWithdrawn;
     }).length;
+    const played = scrapedPlayed > 0 ? scrapedPlayed : localPlayed;
     const totalSpent = expenses.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
     const totalPrize = tournaments.reduce((s: number, t: any) => {
-      const singles = t.singlesPrizeMoney ?? 0;
-      const doubles = t.doublesPrizeMoney ?? 0;
-      return s + (singles + doubles > 0 ? singles + doubles : (t.prizeMoney ?? 0));
+      const split = (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0);
+      // Fall back to legacy prizeMoney for records created before the singles/doubles split
+      return s + (split > 0 ? split : (t.prizeMoney ?? 0));
     }, 0);
     return { played, totalSpent, totalPrize, net: totalPrize - totalSpent };
-  }, [tournaments, expenses]);
+  }, [tournaments, expenses, scrapedMatchHistory]);
 
   const { activeTournamentSpent, recentExpenses, activePrizeMoney, activeNet } = useMemo(() => {
     const atExpenses = activeTournament
@@ -152,9 +187,8 @@ export default function HomeScreen() {
     const recent = [...atExpenses]
       .sort((a: any, b: any) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
       .slice(0, 3);
-    const singles = activeTournament?.singlesPrizeMoney ?? 0;
-    const doubles = activeTournament?.doublesPrizeMoney ?? 0;
-    const prize = singles + doubles > 0 ? singles + doubles : (activeTournament?.prizeMoney ?? 0);
+    const split = (activeTournament?.singlesPrizeMoney ?? 0) + (activeTournament?.doublesPrizeMoney ?? 0);
+    const prize = split > 0 ? split : (activeTournament?.prizeMoney ?? 0);
     return { activeTournamentSpent: spent, recentExpenses: recent, activePrizeMoney: prize, activeNet: prize - spent };
   }, [activeTournament, expenses]);
 
@@ -200,52 +234,45 @@ export default function HomeScreen() {
           )}
 
           {isLoading ? (
-            <ActivityIndicator color={T.accent} style={{ marginTop: 48 }} />
-          ) : tournaments.length === 0 ? (
-            <View style={st.emptyState}>
-              <Text style={st.emptyStateIcon}>🎾</Text>
-              <Text style={st.emptyStateTitle}>{t('home.noTournamentsYet')}</Text>
-              <Text style={st.emptyStateBody}>{t('home.noTournamentsBody')}</Text>
-              <TouchableOpacity style={st.emptyStateCta} activeOpacity={0.8} onPress={() => router.push('/(tabs)/tournaments' as any)}>
-                <Text style={st.emptyStateCtaText}>{t('home.goToTournaments')}</Text>
-              </TouchableOpacity>
-            </View>
+            <LoadingLogo style={{ minHeight: 200 }} />
           ) : (
             <>
-              {/* Upcoming Deadlines */}
-              <View style={st.section}>
-                <Text style={st.sectionLabel}>{t('home.upcomingDeadlines')}</Text>
-                {deadlines.length === 0 ? (
-                  <Text style={st.emptyNote}>{t('home.noUrgentDeadlines')}</Text>
-                ) : (
-                  deadlines.map((item, idx) => {
-                    const stripe = SURFACE_STRIPE[item.t.surface] ?? T.cardBorder;
-                    return (
-                      <TouchableOpacity
-                        key={idx}
-                        style={[st.deadlineCard, { borderLeftColor: stripe }]}
-                        onPress={() => setDetailId(item.t.id)}
-                        activeOpacity={0.8}
-                      >
-                        <View style={st.cardLeft}>
-                          <Text style={st.cardTitle}>
-                            {item.t.country ? countryFlag(item.t.country) + ' ' : ''}{item.t.name}
-                          </Text>
-                          <View style={st.cardSubRow}>
-                            <Text style={st.cardSub}>{item.type}</Text>
-                            {item.t.surface ? <CourtIcon surface={item.t.surface} /> : null}
+              {/* Upcoming Deadlines — shown only when tournaments exist */}
+              {tournaments.length > 0 && (
+                <View style={st.section}>
+                  <Text style={st.sectionLabel}>{t('home.upcomingDeadlines')}</Text>
+                  {deadlines.length === 0 ? (
+                    <Text style={st.emptyNote}>{t('home.noUrgentDeadlines')}</Text>
+                  ) : (
+                    deadlines.map((item, idx) => {
+                      const stripe = SURFACE_STRIPE[item.t.surface] ?? T.cardBorder;
+                      return (
+                        <TouchableOpacity
+                          key={idx}
+                          style={[st.deadlineCard, { borderLeftColor: stripe }]}
+                          onPress={() => setDetailId(item.t.id)}
+                          activeOpacity={0.8}
+                        >
+                          <View style={st.cardLeft}>
+                            <Text style={st.cardTitle}>
+                              {item.t.country ? countryFlag(item.t.country) + ' ' : ''}{item.t.name}
+                            </Text>
+                            <View style={st.cardSubRow}>
+                              <Text style={st.cardSub}>{item.type}</Text>
+                              {item.t.surface ? <CourtIcon surface={item.t.surface} /> : null}
+                            </View>
                           </View>
-                        </View>
-                        {item.isToday ? (
-                          <View style={st.todayPill}><Text style={st.todayPillText}>{t('home.today')}</Text></View>
-                        ) : (
-                          <Text style={[st.daysText, { color: deadlineUrgencyColor(item.days) }]}>{item.days}d</Text>
-                        )}
-                      </TouchableOpacity>
-                    );
-                  })
-                )}
-              </View>
+                          {item.isToday ? (
+                            <View style={st.todayPill}><Text style={st.todayPillText}>{t('home.today')}</Text></View>
+                          ) : (
+                            <Text style={[st.daysText, { color: deadlineUrgencyColor(item.days) }]}>{item.days}d</Text>
+                          )}
+                        </TouchableOpacity>
+                      );
+                    })
+                  )}
+                </View>
+              )}
 
               {/* Current Tournament */}
               {activeTournament && (
@@ -326,17 +353,26 @@ export default function HomeScreen() {
                 </View>
               )}
 
-              {/* My Performance & Compare Players */}
+              {/* No tournaments yet — inline prompt, does not replace the page */}
+              {tournaments.length === 0 && (
+                <View style={st.section}>
+                  <TouchableOpacity style={st.emptyStateCta} activeOpacity={0.8} onPress={() => router.push('/(tabs)/tournaments' as any)}>
+                    <Text style={st.emptyStateCtaText}>{t('home.goToTournaments')}</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {/* My Performance & Compare Players — always visible */}
               <View style={st.section}>
-                <Text style={st.sectionLabel}>Analytics</Text>
+                <Text style={st.sectionLabel}>{t('home.analytics')}</Text>
                 <TouchableOpacity
                   style={[st.deadlineCard, { borderLeftColor: T.accent, marginBottom: 6 }]}
                   onPress={() => router.push('/my-performance' as any)}
                   activeOpacity={0.8}
                 >
                   <View style={st.cardLeft}>
-                    <Text style={st.cardTitle}>My Performance</Text>
-                    <Text style={st.cardSub}>Ranking, match record, season stats</Text>
+                    <Text style={st.cardTitle}>{t('home.myPerformance')}</Text>
+                    <Text style={st.cardSub}>{t('home.myPerformanceSub')}</Text>
                   </View>
                   <Text style={st.featureChevron}>›</Text>
                 </TouchableOpacity>
@@ -346,14 +382,14 @@ export default function HomeScreen() {
                   activeOpacity={0.8}
                 >
                   <View style={st.cardLeft}>
-                    <Text style={st.cardTitle}>Compare Players</Text>
-                    <Text style={st.cardSub}>Search any player and compare stats</Text>
+                    <Text style={st.cardTitle}>{t('home.comparePlayers')}</Text>
+                    <Text style={st.cardSub}>{t('home.comparePlayersSub')}</Text>
                   </View>
                   <Text style={st.featureChevron}>›</Text>
                 </TouchableOpacity>
               </View>
 
-              {/* Season Snapshot */}
+              {/* Season Snapshot — always visible */}
               <View style={st.section}>
                 <Text style={st.sectionLabel}>{t('home.seasonSnapshot')}</Text>
                 <View style={st.seasonBar}>

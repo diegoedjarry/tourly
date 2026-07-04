@@ -1,47 +1,14 @@
 import { cacheDirectory, writeAsStringAsync, EncodingType } from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as XLSX from 'xlsx';
+import { EXPORT_CATEGORIES as CATEGORIES, normalizeCategory } from '@/utils/categories';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-const CATEGORIES = [
-  'Equipment',
-  'Travel Coach',
-  'Academy',
-  'Physiotherapy',
-  'Flights',
-  'Transportation',
-  'Hotels',
-  'Meals',
-  'Physical Trainer',
-  'Strings & Grip',
-  'Stringing Fee',
-  'Other',
-];
-
-function normalizeCategory(raw: string): string {
-  const lower = (raw ?? '').toLowerCase().trim();
-  for (const cat of CATEGORIES) {
-    if (cat.toLowerCase() === lower) return cat;
-  }
-  const map: Record<string, string> = {
-    travel: 'Transportation',
-    flight: 'Flights',
-    hotel: 'Hotels',
-    accommodation: 'Hotels',
-    food: 'Meals',
-    coaching: 'Academy',
-    physio: 'Physiotherapy',
-    'entry fee': 'Other',
-    equipment: 'Equipment',
-    strings: 'Strings & Grip',
-    stringing: 'Stringing Fee',
-  };
-  return map[lower] ?? 'Other';
-}
-
-function fmt(n: number): string {
-  return `$${n.toFixed(2)}`;
+// Numeric cells (rounded to cents) so exported amounts are summable in Excel
+// and re-import cleanly. Column headers carry the USD label.
+function fmt(n: number): number {
+  return Math.round(n * 100) / 100;
 }
 
 function buildMonthlySummarySheet(expenses: any[], year: number): XLSX.WorkSheet {
@@ -119,15 +86,47 @@ function buildIndividualExpensesSheet(expenses: any[], tournaments: any[]): XLSX
   return ws;
 }
 
+// Distinct years present in the expense data (fallback: current year).
+function expenseYears(expenses: any[]): number[] {
+  const years = new Set<number>();
+  for (const e of expenses) {
+    const y = parseInt(String(e.date ?? '').slice(0, 4), 10);
+    if (y >= 2000 && y <= 2100) years.add(y);
+  }
+  if (years.size === 0) years.add(new Date().getFullYear());
+  return [...years].sort();
+}
+
+function buildTournamentsSheet(tournaments: any[]): XLSX.WorkSheet {
+  const rows: any[][] = [
+    ['Name', 'Country', 'City', 'Surface', 'Category', 'Start Date', 'End Date', 'Singles Prize', 'Doubles Prize', 'Status', 'Registered', 'Withdrawn'],
+  ];
+  for (const t of tournaments) {
+    rows.push([
+      t.name, t.country, t.city, t.surface, t.category,
+      t.startDate, t.endDate,
+      t.singlesPrizeMoney ?? t.prizeMoney ?? 0,
+      t.doublesPrizeMoney ?? 0,
+      t.status, t.isRegistered ? 'Yes' : 'No', t.isWithdrawn ? 'Yes' : 'No',
+    ]);
+  }
+  return XLSX.utils.aoa_to_sheet(rows);
+}
+
 export async function exportAllCsv(tournaments: any[], expenses: any[]) {
   const year = new Date().getFullYear();
   const wb = XLSX.utils.book_new();
 
-  const summarySheet = buildMonthlySummarySheet(expenses, year);
-  XLSX.utils.book_append_sheet(wb, summarySheet, 'Monthly Summary');
-
+  // Detail sheet first — the importer reads it back row-per-expense, so
+  // export → re-import round-trips without creating aggregate duplicates.
   const detailSheet = buildIndividualExpensesSheet(expenses, tournaments);
-  XLSX.utils.book_append_sheet(wb, detailSheet, 'Individual Expenses');
+  XLSX.utils.book_append_sheet(wb, detailSheet, 'Expenses');
+
+  for (const y of expenseYears(expenses)) {
+    XLSX.utils.book_append_sheet(wb, buildMonthlySummarySheet(expenses, y), `Summary ${y}`);
+  }
+
+  XLSX.utils.book_append_sheet(wb, buildTournamentsSheet(tournaments), 'Tournaments');
 
   const wbOut = XLSX.write(wb, { type: 'base64', bookType: 'xlsx' });
   const fileName = `Tourly_Expenses_${year}.xlsx`;
@@ -143,20 +142,7 @@ export async function exportAllCsv(tournaments: any[], expenses: any[]) {
 
 export async function exportTournamentsCsv(tournaments: any[]) {
   const wb = XLSX.utils.book_new();
-  const rows: any[][] = [
-    ['Name', 'Country', 'City', 'Surface', 'Category', 'Start Date', 'End Date', 'Singles Prize', 'Doubles Prize', 'Status', 'Registered', 'Withdrawn'],
-  ];
-  for (const t of tournaments) {
-    rows.push([
-      t.name, t.country, t.city, t.surface, t.category,
-      t.startDate, t.endDate,
-      t.singlesPrizeMoney ?? t.prizeMoney ?? 0,
-      t.doublesPrizeMoney ?? 0,
-      t.status, t.isRegistered ? 'Yes' : 'No', t.isWithdrawn ? 'Yes' : 'No',
-    ]);
-  }
-  const ws = XLSX.utils.aoa_to_sheet(rows);
-  XLSX.utils.book_append_sheet(wb, ws, 'Tournaments');
+  XLSX.utils.book_append_sheet(wb, buildTournamentsSheet(tournaments), 'Tournaments');
 
   const wbOut = XLSX.write(wb, { type: 'base64', bookType: 'xlsx' });
   const filePath = `${cacheDirectory}Tourly_Tournaments.xlsx`;
@@ -172,11 +158,13 @@ export async function exportExpensesCsv(expenses: any[], tournaments: any[]) {
   const year = new Date().getFullYear();
   const wb = XLSX.utils.book_new();
 
-  const summarySheet = buildMonthlySummarySheet(expenses, year);
-  XLSX.utils.book_append_sheet(wb, summarySheet, 'Monthly Summary');
-
+  // Detail sheet first / named "Expenses" — see exportAllCsv.
   const detailSheet = buildIndividualExpensesSheet(expenses, tournaments);
-  XLSX.utils.book_append_sheet(wb, detailSheet, 'Individual Expenses');
+  XLSX.utils.book_append_sheet(wb, detailSheet, 'Expenses');
+
+  for (const y of expenseYears(expenses)) {
+    XLSX.utils.book_append_sheet(wb, buildMonthlySummarySheet(expenses, y), `Summary ${y}`);
+  }
 
   const wbOut = XLSX.write(wb, { type: 'base64', bookType: 'xlsx' });
   const fileName = `Tourly_Expenses_${year}.xlsx`;

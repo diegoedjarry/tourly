@@ -44,8 +44,8 @@ function mapExpense(e: Expense) {
 
 export function useAppQuery(_query: any) {
   const demoCtx = useDemoData();
-  const { data: tournaments, isLoading: tLoading } = useTournaments();
-  const { data: expenses, isLoading: eLoading } = useExpenses();
+  const { data: tournaments, isLoading: tLoading, isFetching: tFetching } = useTournaments();
+  const { data: expenses, isLoading: eLoading, isFetching: eFetching } = useExpenses();
 
   const mappedTournaments = useMemo(
     () => (tournaments ?? []).map(mapTournament),
@@ -57,7 +57,7 @@ export function useAppQuery(_query: any) {
   );
 
   if (DEMO_MODE && demoCtx) {
-    return { data: demoCtx.demoData as any, isLoading: false, error: null };
+    return { data: demoCtx.demoData as any, isLoading: false, isFetching: false, error: null };
   }
 
   return {
@@ -66,6 +66,7 @@ export function useAppQuery(_query: any) {
       expenses: mappedExpenses,
     },
     isLoading: tLoading || eLoading,
+    isFetching: tFetching || eFetching,
     error: null,
   };
 }

@@ -1,3 +1,5 @@
+import { parseAmount as parseAmountValue } from '@/utils/import-expenses';
+
 export interface ParsedExpense {
   amount: number;
   description: string;
@@ -6,13 +8,13 @@ export interface ParsedExpense {
 }
 
 const CATEGORY_KEYWORDS: Record<string, string[]> = {
-  'Travel': ['flight', 'vuelo', 'plane', 'avion', 'airline', 'aerolinea', 'airport', 'aeropuerto', 'uber', 'taxi', 'cab', 'bus', 'train', 'tren', 'gas', 'gasolina', 'toll', 'peaje', 'transport', 'transporte', 'lyft', 'rental car', 'auto'],
-  'Accommodation': ['hotel', 'airbnb', 'hostel', 'room', 'habitacion', 'alojamiento', 'accommodation', 'stay', 'lodge', 'rent', 'arriendo', 'booking', 'hospedaje'],
-  'Food': ['meal', 'comida', 'food', 'dinner', 'cena', 'lunch', 'almuerzo', 'breakfast', 'desayuno', 'restaurant', 'restaurante', 'coffee', 'cafe', 'snack', 'grocery', 'supermercado', 'eating'],
-  'Equipment': ['racket', 'raqueta', 'string', 'cuerda', 'encordado', 'grip', 'shoes', 'zapatillas', 'shoe', 'clothes', 'ropa', 'bag', 'bolso', 'gear', 'equipment', 'equipo', 'overgrip', 'dampener'],
-  'Entry Fee': ['entry', 'inscripcion', 'registration', 'registro', 'sign up', 'fee', 'entry fee', 'tournament fee'],
-  'Coaching': ['coach', 'coaching', 'entrenador', 'trainer', 'training', 'entrenamiento', 'lesson', 'clase', 'academy', 'academia'],
-  'Physio': ['physio', 'physiotherapy', 'kinesiolog', 'massage', 'masaje', 'doctor', 'medical', 'medico', 'therapy', 'terapia', 'health', 'salud', 'injury'],
+  'Travel': ['flight', 'vuelo', 'plane', 'avion', 'airline', 'aerolinea', 'airport', 'aeropuerto', 'uber', 'taxi', 'cab', 'bus', 'train', 'tren', 'gas', 'gasolina', 'toll', 'peaje', 'transport', 'transporte', 'lyft', 'rental car', 'auto', 'такси', 'поезд', 'автобус', 'самолет', 'vol', 'avião', 'aviao', 'ônibus', 'onibus', '出租车', '火车', '机票'],
+  'Accommodation': ['hotel', 'airbnb', 'hostel', 'room', 'habitacion', 'alojamiento', 'accommodation', 'stay', 'lodge', 'rent', 'arriendo', 'booking', 'hospedaje', 'отель', 'гостиница', 'hôtel', 'hébergement', 'hospedagem', '酒店', '住宿'],
+  'Food': ['meal', 'comida', 'food', 'dinner', 'cena', 'lunch', 'almuerzo', 'breakfast', 'desayuno', 'restaurant', 'restaurante', 'coffee', 'cafe', 'snack', 'grocery', 'supermercado', 'eating', 'еда', 'обед', 'ужин', 'repas', 'déjeuner', 'dîner', 'almoço', 'almoco', 'jantar', '午餐', '晚餐', '餐厅'],
+  'Equipment': ['racket', 'raqueta', 'string', 'cuerda', 'encordado', 'grip', 'shoes', 'zapatillas', 'shoe', 'clothes', 'ropa', 'bag', 'bolso', 'gear', 'equipment', 'equipo', 'overgrip', 'dampener', 'ракетка', 'струны', 'cordage', 'raquette', 'raquete', 'corda', '球拍', '球线'],
+  'Entry Fee': ['entry', 'inscripcion', 'registration', 'registro', 'sign up', 'fee', 'entry fee', 'tournament fee', 'взнос', 'inscription', 'inscrição', 'inscricao', '报名费'],
+  'Coaching': ['coach', 'coaching', 'entrenador', 'trainer', 'training', 'entrenamiento', 'lesson', 'clase', 'academy', 'academia', 'тренер', 'entraîneur', 'treinador', '教练', '训练'],
+  'Physio': ['physio', 'physiotherapy', 'kinesiolog', 'massage', 'masaje', 'doctor', 'medical', 'medico', 'therapy', 'terapia', 'health', 'salud', 'injury', 'массаж', 'врач', 'kiné', 'kine', 'massagem', 'fisio', '按摩', '医生'],
 };
 
 function detectCategory(text: string): string {
@@ -31,12 +33,14 @@ function detectCategory(text: string): string {
   return bestCat;
 }
 
+// Captured groups are handed to the shared parseAmount() from import-expenses,
+// which understands both US ("1,500.50") and European/SA ("1.500,50") formats.
 const AMOUNT_PATTERNS = [
-  /\$\s?([\d,]+\.?\d*)/,                          // $350 or $1,200.50
-  /([\d,]+\.?\d*)\s*(?:usd|dollars?|dolares?)/i,  // 350 USD, 350 dollars
-  /(?:usd|dollars?|dolares?)\s*([\d,]+\.?\d*)/i,  // USD 350
-  /([\d,]+\.?\d*)\s*(?:clp|pesos?)/i,             // 5000 CLP
-  /(?:^|[\s:=\-–—])([\d,]+\.?\d{0,2})(?:\s*$|[\s,;.])/m, // standalone number
+  /\$\s?(\d[\d.,]*)/,                          // $350, $1,200.50, $1.500,50
+  /(\d[\d.,]*)\s*(?:usd|dollars?|dolares?|reais|reales)/i,  // 350 USD, 50 reais
+  /(?:usd|dollars?|dolares?)\s*(\d[\d.,]*)/i,  // USD 350
+  /(\d[\d.,]*)\s*(?:clp|pesos?|cfa|xof|eur|euros?)/i,       // 5000 CLP, 5000 CFA
+  /(?:^|[\s:=\-–—])(\d[\d.,]*)(?:\s*$|[\s,;.])/m,           // standalone number
 ];
 
 const DATE_PATTERNS = [
@@ -89,11 +93,16 @@ function extractDate(text: string): string | null {
       let y = m[3] ? parseInt(m[3]) : new Date().getFullYear();
       if (y < 100) y += 2000;
 
+      // If one part must be a day (>12), it disambiguates the format.
       if (a > 12 && b <= 12) {
         return `${y}-${String(b).padStart(2, '0')}-${String(a).padStart(2, '0')}`;
       }
-      if (a <= 12) {
+      if (b > 12 && a <= 12) {
         return `${y}-${String(a).padStart(2, '0')}-${String(b).padStart(2, '0')}`;
+      }
+      // Ambiguous — default to DD/MM, consistent with the file-import parser.
+      if (a <= 12 && b <= 12) {
+        return `${y}-${String(b).padStart(2, '0')}-${String(a).padStart(2, '0')}`;
       }
     }
   }
@@ -101,14 +110,37 @@ function extractDate(text: string): string | null {
 }
 
 function extractAmount(text: string): number | null {
+  // Remove date-like tokens ("15/06/2025", "15.01.24", "2025-06-15") so their
+  // digits are never misread as amounts.
+  const cleaned = text
+    .replace(/\b\d{4}[\/\-.]\d{1,2}[\/\-.]\d{1,2}\b/g, ' ')
+    .replace(/\b\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}\b/g, ' ');
   for (const pattern of AMOUNT_PATTERNS) {
-    const m = text.match(pattern);
+    const m = cleaned.match(pattern);
     if (m && m[1]) {
-      const num = parseFloat(m[1].replace(/,/g, ''));
-      if (!isNaN(num) && num > 0 && num < 1000000) return num;
+      const num = parseAmountValue(m[1]);
+      if (num !== null && num > 0) return num;
     }
   }
   return null;
+}
+
+// Split a line into candidate expense segments.
+// Uses comma+space (only when NOT followed by a digit, so "1,234" is safe)
+// and " and " / " y " conjunctions as delimiters.
+function segmentLine(line: string): string[] {
+  const byComma = line.split(/,\s+(?!\d)/);
+  const byAnd = byComma.flatMap(part => part.split(/\s+(?:and|y)\s+/i));
+  return byAnd.map(s => s.trim()).filter(s => s.length > 0);
+}
+
+function cleanDescription(seg: string): string {
+  return seg
+    .replace(/\$\s?\d[\d.,]*/g, '')
+    .replace(/\d[\d.,]*\s*(?:usd|dollars?|dolares?|clp|pesos?|reais|reales|cfa|xof|eur|euros?)/gi, '')
+    .replace(/[-–—:]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 export function parseNotes(text: string): ParsedExpense[] {
@@ -124,22 +156,33 @@ export function parseNotes(text: string): ParsedExpense[] {
     const lineDate = extractDate(line);
     if (lineDate) currentDate = lineDate;
 
-    const amount = extractAmount(line);
-    if (amount == null) continue;
+    // Try to split the line into multiple expense segments
+    const segments = segmentLine(line);
+    const segmentsWithAmounts = segments.filter(s => extractAmount(s) != null);
 
-    const description = line
-      .replace(/\$\s?[\d,]+\.?\d*/g, '')
-      .replace(/[\d,]+\.?\d*\s*(?:usd|dollars?|dolares?|clp|pesos?)/gi, '')
-      .replace(/[-–—:]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    expenses.push({
-      amount,
-      description: description || 'Expense',
-      date: lineDate ?? currentDate,
-      category: detectCategory(line),
-    });
+    if (segmentsWithAmounts.length > 1) {
+      // Multi-expense line: create one entry per segment that has an amount
+      for (const seg of segmentsWithAmounts) {
+        const amount = extractAmount(seg);
+        if (amount == null) continue;
+        expenses.push({
+          amount,
+          description: cleanDescription(seg) || 'Expense',
+          date: lineDate ?? currentDate,
+          category: detectCategory(seg),
+        });
+      }
+    } else {
+      // Single expense line — original behavior
+      const amount = extractAmount(line);
+      if (amount == null) continue;
+      expenses.push({
+        amount,
+        description: cleanDescription(line) || 'Expense',
+        date: lineDate ?? currentDate,
+        category: detectCategory(line),
+      });
+    }
   }
 
   return expenses;
