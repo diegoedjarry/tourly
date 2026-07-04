@@ -1152,6 +1152,77 @@ function PrizeRow({ label, icon, amount, onSave }: {
 
 // ─── Tournament expense detail ────────────────────────────────────────────────
 
+// ── Scraped match results for a played tournament (from player_profiles) ─────
+// Matches the tournament by (name, startDate) against the player's match_history.
+function ScrapedResultsSection({ tournament }: { tournament: any }) {
+  const { t: tr } = useLanguage();
+  const [entry, setEntry] = useState<any | null>(null);
+
+  useEffect(() => {
+    if (DEMO_MODE) return;
+    let cancelled = false;
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user || cancelled) return;
+      supabase.from('profiles').select('atp_player_name').eq('id', user.id).single()
+        .then(({ data: prof }) => {
+          if (!prof?.atp_player_name || cancelled) return;
+          const nameParts = prof.atp_player_name.trim().split(/\s+/).slice(0, 2).join(' ');
+          supabase.from('player_profiles').select('match_history')
+            .or(playerNameFilter(nameParts))
+            .order('last_updated', { ascending: false }).limit(1)
+            .then(({ data }) => {
+              if (cancelled) return;
+              const history: any[] = data?.[0]?.match_history ?? [];
+              const found = history.find((m: any) =>
+                (m.tournamentName ?? '').trim().toLowerCase() === (tournament.name ?? '').trim().toLowerCase() &&
+                m.date === tournament.startDate);
+              setEntry(found ?? null);
+            }, () => {});
+        }, () => {});
+    }).catch((err) => console.warn('[expenses] match results fetch failed', err));
+    return () => { cancelled = true; };
+  }, [tournament.id, tournament.name, tournament.startDate]);
+
+  if (!entry) return null; // no scraped results for this week — section simply absent
+
+  const matches: any[] = [...(entry.matches ?? [])].reverse(); // chronological: Q1 → deepest round
+  return (
+    <>
+      <Text style={det.sectionLabel}>{tr('tournament.matchResults')}</Text>
+      <View style={det.prizeCard}>
+        {matches.map((m: any, i: number) => (
+          <View key={i}>
+            {i > 0 && <View style={det.prizeDivider} />}
+            <View style={{ flexDirection: 'row', alignItems: 'center', padding: 14, gap: 10 }}>
+              <Text style={{ width: 36, fontSize: 12, fontWeight: '700', color: T.textTertiary }}>{m.round}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 14, fontWeight: '600', color: T.textPrimary }} numberOfLines={1}>{m.opponent}</Text>
+                <Text style={{ fontSize: 12, color: T.textTertiary, marginTop: 1 }}>{m.score}</Text>
+              </View>
+              <Text style={{ fontSize: 13, fontWeight: '800', color: m.playerWon ? T.green : T.red }}>
+                {m.playerWon ? 'W' : 'L'}
+              </Text>
+            </View>
+          </View>
+        ))}
+        <View style={det.prizeDivider} />
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', padding: 14 }}>
+          <Text style={{ fontSize: 12, color: T.textTertiary }}>
+            {tr('tournament.pointsEarned')}{': '}
+            <Text style={{ color: T.textPrimary, fontWeight: '700' }}>+{entry.pointsEarned ?? 0}</Text>
+          </Text>
+          {entry.rankingThatWeek != null && (
+            <Text style={{ fontSize: 12, color: T.textTertiary }}>
+              {tr('tournament.rankingThatWeek')}{': '}
+              <Text style={{ color: T.textPrimary, fontWeight: '700' }}>#{entry.rankingThatWeek}</Text>
+            </Text>
+          )}
+        </View>
+      </View>
+    </>
+  );
+}
+
 export function TournamentExpenseDetail({ tournament, onClose, allTournaments }: {
   tournament: any; onClose: () => void; allTournaments: any[];
 }) {
@@ -1244,6 +1315,11 @@ export function TournamentExpenseDetail({ tournament, onClose, allTournaments }:
           </View>
 
           <View style={det.body}>
+
+            {/* ── MATCH RESULTS (played tournaments with scraped history) ── */}
+            {!!t.startDate && t.startDate < new Date().toISOString().slice(0, 10) && (
+              <ScrapedResultsSection tournament={t} />
+            )}
 
             {/* ── PRIZE MONEY ── */}
             <Text style={det.sectionLabel}>{tr('prize.prizeMoney')}</Text>

@@ -9,19 +9,23 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
+      "bundleIdentifier": "com.diegojarry.tourly",
+      "buildNumber": "1",
       "supportsTablet": true,
       "config": {
         "googleMapsApiKey": "AIzaSyBgFrftL8Lfb5-tRqj7UWJKeLgahlUJsAM"
       }
     },
     "android": {
+      "package": "com.diegojarry.tourly",
+      "versionCode": 1,
       "config": {
         "googleMaps": {
           "apiKey": "AIzaSyBgFrftL8Lfb5-tRqj7UWJKeLgahlUJsAM"
         }
       },
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#5B5BD6",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"

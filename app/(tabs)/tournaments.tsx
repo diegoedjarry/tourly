@@ -217,7 +217,9 @@ function TournamentCard({ item, onPress, selected, selectMode, onLongPress, t }:
         {group === 'past' ? (
           item.isRegistered
             ? <View style={styles.playedBadge}><Text style={styles.playedText}>{t('tournaments.played')}</Text></View>
-            : null
+            : item.isInMyList === false
+              ? <View style={styles.scrapedBadge}><Text style={styles.scrapedBadgeText}>{t('tournaments.history')}</Text></View>
+              : null
         ) : (
           item.isRegistered
             ? <View style={styles.registeredBadge}><Text style={styles.registeredText}>{t('tournaments.registeredBadge')}</Text></View>
@@ -2306,7 +2308,16 @@ export default function TournamentsScreen() {
 
   const activeGroup   = filtered.filter((trn: any) => getGroup(trn) === 'active');
   const upcomingGroup = filtered.filter((trn: any) => getGroup(trn) === 'upcoming');
-  const pastGroup     = filtered.filter((trn: any) => getGroup(trn) === 'past');
+  // Past includes materialized history records (isInMyList === false) so a
+  // tournament viewed from scraped history stays visible instead of vanishing
+  // from both the scraped list and the my-list group.
+  const materializedPast = (data?.tournaments ?? []).filter(
+    (trn: any) => trn.isInMyList === false && !trn.isWithdrawn && getGroup(trn) === 'past'
+  );
+  const pastGroup     = [
+    ...filtered.filter((trn: any) => getGroup(trn) === 'past'),
+    ...(activeFilter === 'all' || activeFilter === 'past' ? materializedPast : []),
+  ];
 
   const scrapedPastEntries = useMemo(() => {
     if (!scrapedPast) return null;
@@ -2338,6 +2349,19 @@ export default function TournamentsScreen() {
         if (itfRows?.[0]?.country) {
           country = nameToIso2(itfRows[0].country);
         }
+        // itf_tournaments only holds a rolling window of current/upcoming events,
+        // so past history events rarely match on start_date. Fall back to a
+        // date-less city/name match — the same city recurs across editions.
+        if (!country) {
+          const { data: anyRows } = await supabase
+            .from('itf_tournaments')
+            .select('country')
+            .or(`city.ilike.%${cityWord}%,name.ilike.%${cityWord}%`)
+            .limit(1);
+          if (anyRows?.[0]?.country) {
+            country = nameToIso2(anyRows[0].country);
+          }
+        }
       }
 
       const row = await apiAddTournament({
@@ -2345,6 +2369,7 @@ export default function TournamentsScreen() {
         startDate: entry.startDate,
         endDate: entry.endDate,
         country,
+        city: cityWord || null,
         surface: entry.surface,
         isRegistered: false,
         isWithdrawn: false,
@@ -2353,7 +2378,9 @@ export default function TournamentsScreen() {
         singlesPrizeMoney: 0,
         doublesPrizeMoney: 0,
       });
-      if (row?.id) setDetailId(row.id);
+      // Open the results/expenses view — TournamentDetail is the management
+      // modal (deadlines/registration) and shows nothing useful for history.
+      if (row?.id) setExpenseDetailId(row.id);
     } finally {
       setMaterializingId(null);
     }
@@ -2473,7 +2500,7 @@ export default function TournamentsScreen() {
                         <Text style={styles.cardTitle} numberOfLines={2}>{item.name}</Text>
                         {materializingId === mKey
                           ? <ActivityIndicator size="small" color={T.accent} />
-                          : <View style={styles.scrapedBadge}><Text style={styles.scrapedBadgeText}>History</Text></View>
+                          : <View style={styles.scrapedBadge}><Text style={styles.scrapedBadgeText}>{t('tournaments.history')}</Text></View>
                         }
                       </View>
                       <Text style={styles.cardMeta}>{fmtDateRange(item.startDate, item.endDate)}{item.surface ? ` · ${item.surface}` : ''}</Text>
@@ -2559,7 +2586,9 @@ export default function TournamentsScreen() {
       })()}
       {detailId && <TournamentDetail tournamentId={detailId} onClose={() => setDetailId(null)} />}
       {expenseDetailId && (() => {
-        const trn = allMyTournaments.find((x: any) => x.id === expenseDetailId);
+        // Look up across ALL tournaments — materialized history records have
+        // isInMyList === false and would never resolve from allMyTournaments.
+        const trn = (data?.tournaments ?? []).find((x: any) => x.id === expenseDetailId);
         return trn ? (
           <TournamentExpenseDetail
             tournament={trn}
