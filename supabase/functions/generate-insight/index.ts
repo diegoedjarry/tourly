@@ -137,7 +137,9 @@ serve(async (req) => {
     const tournamentSummaries = tournaments.map((t: any) => {
       const tExpenses = expenses.filter((e: any) => e.tournament_id === t.id);
       const spent = tExpenses.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
-      const prize = (t.singles_prize_money ?? 0) + (t.doubles_prize_money ?? 0) + (t.prize_money ?? 0);
+      // Split fields are authoritative; legacy prize_money is a FALLBACK for old
+      // records, never added on top (adding both double-counts).
+      const prize = ((t.singles_prize_money ?? 0) + (t.doubles_prize_money ?? 0)) || (t.prize_money ?? 0);
       const byCategory: Record<string, number> = {};
       tExpenses.forEach((e: any) => { byCategory[e.category] = (byCategory[e.category] ?? 0) + e.amount; });
       return {
@@ -158,7 +160,7 @@ serve(async (req) => {
 
     const totalExpenses = expenses.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
     const totalPrize = tournaments.reduce((s: number, t: any) =>
-      s + (t.singles_prize_money ?? 0) + (t.doubles_prize_money ?? 0) + (t.prize_money ?? 0), 0);
+      s + (((t.singles_prize_money ?? 0) + (t.doubles_prize_money ?? 0)) || (t.prize_money ?? 0)), 0);
 
     const expenseByCategory: Record<string, number> = {};
     expenses.forEach((e: any) => {

@@ -38,6 +38,11 @@ import { ScreenWalkthrough } from '@/components/ui/screen-walkthrough';
 import { parseNotes, ParsedExpense } from '@/utils/parse-notes';
 import { useProfile } from '@/hooks/useProfile';
 import { AgentIcon } from '@/components/ui/agent-icon';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { parseReceipt, RECEIPT_TO_APP_CATEGORY } from '@/utils/receipt';
+import { ReceiptCaptureSheet, CapturedReceipt } from '@/components/ui/ReceiptCaptureSheet';
+import { smartDefaultCurrency, fmtCurrency } from '@/utils/currency';
+import { SwipeableRow } from '@/components/ui/SwipeableRow';
 
 const EXPENSES_WALKTHROUGH = [
   { icon: '💸', title: 'Log Your First Expense', body: 'Tap + to log your first expense. Link it to a tournament to track your weekly costs and see which tournaments give the best financial return.' },
@@ -82,6 +87,28 @@ const COACH_CAT_KEYS    = ['cat.coachFee', 'cat.coachFlight', 'cat.coachHotel', 
 function fmt(n: number): string {
   const abs = Math.abs(n).toLocaleString('en-US');
   return n < 0 ? `-$${abs}` : `$${abs}`;
+}
+
+// Per-row amount display: non-USD expenses render in their original currency
+// with the ISO code as a subtle suffix. Aggregates (totals, charts, P&L) stay
+// in USD — amounts are stored as entered, never converted.
+function fmtRowAmount(e: any): string {
+  const cur = e?.currency;
+  if (!cur || cur === 'USD') return fmt(e?.amount ?? 0);
+  const s = fmtCurrency(e.amount ?? 0, cur);
+  return s.includes(cur) ? s : `${s} ${cur}`;
+}
+
+// Receipt buckets → the exact chip values used by this form, so the scanned
+// category highlights in the picker. Falls back to the raw mapped value.
+const RECEIPT_CAT_TO_CHIP: Record<string, string> = {
+  'Hotels': 'Hotel',
+  'Food': 'Meals',
+  'Stringing': 'Stringing Fee',
+};
+function receiptCategoryToChip(receiptCategory: string): string {
+  const mapped = RECEIPT_TO_APP_CATEGORY[receiptCategory as keyof typeof RECEIPT_TO_APP_CATEGORY] ?? 'Other';
+  return RECEIPT_CAT_TO_CHIP[mapped] ?? mapped;
 }
 
 // ─── Daily-rotating insight messages ──────────────────────────────────────────
@@ -213,6 +240,73 @@ function matchTournamentByDate(dateStr: string | undefined, tournaments: any[]):
   return undefined;
 }
 
+// ─── Currency selector (chips + free 3-letter code entry) ────────────────────
+
+function CurrencyChips({ value, onChange, quickPicks }: {
+  value: string; onChange: (code: string) => void; quickPicks: string[];
+}) {
+  const { t } = useLanguage();
+  const [customOpen, setCustomOpen] = useState(false);
+  const [customText, setCustomText] = useState('');
+
+  // Smart default first, then quick picks, then whatever is currently selected
+  // (e.g. a scanned receipt's currency) — deduped, one tap for the default.
+  const chips = Array.from(new Set([...quickPicks, value].filter(Boolean)));
+
+  function confirmCustom() {
+    const code = customText.trim().toUpperCase();
+    if (/^[A-Z]{3}$/.test(code)) {
+      onChange(code);
+      setCustomOpen(false);
+      setCustomText('');
+    }
+  }
+
+  return (
+    <View>
+      <View style={form.chipRow}>
+        {chips.map((c) => (
+          <TouchableOpacity
+            key={c}
+            style={[form.chip, value === c && form.chipActive]}
+            onPress={() => onChange(c)}
+            activeOpacity={0.7}>
+            <Text style={[form.chipText, value === c && form.chipTextActive]}>{c}</Text>
+          </TouchableOpacity>
+        ))}
+        {!customOpen && (
+          <TouchableOpacity
+            style={rc.otherPill}
+            onPress={() => { setCustomOpen(true); setCustomText(''); }}
+            activeOpacity={0.7}>
+            <Text style={rc.otherPillText}>{t('expense.currencyOther')}</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+      {customOpen && (
+        <View style={form.customRow}>
+          <TextInput
+            style={form.customInput}
+            value={customText}
+            onChangeText={(v) => setCustomText(v.toUpperCase())}
+            placeholder={t('expense.currencyCodeHint')}
+            placeholderTextColor={T.textSecondary}
+            autoFocus
+            autoCapitalize="characters"
+            autoCorrect={false}
+            maxLength={3}
+            returnKeyType="done"
+            onSubmitEditing={confirmCustom}
+          />
+          <TouchableOpacity style={form.customDoneBtn} onPress={confirmCustom} activeOpacity={0.8}>
+            <Text style={form.customDoneText}>{t('common.done')}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
+  );
+}
+
 // ─── Add Expense Screen (full-screen modal) ───────────────────────────────────
 
 export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, defaultDate }: {
@@ -244,6 +338,17 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
   const [saving, setSaving]                      = useState(false);
   const [error, setError]                        = useState('');
 
+  // Zero-Click receipt scanning
+  const [showScanSheet, setShowScanSheet]        = useState(false);
+  const [scanning, setScanning]                  = useState(false);
+  const [scanHint, setScanHint]                  = useState('');
+  const [merchant, setMerchant]                  = useState('');
+
+  // Currency — smart default from the linked/active tournament; one tap to keep.
+  const [currency, setCurrency]                  = useState(() =>
+    smartDefaultCurrency(tournaments.find((x) => x.id === (defaultTournamentId ?? autoMatchedId ?? '')), tournaments));
+  const [currencyTouched, setCurrencyTouched]    = useState(false);
+
   // Monthly fixed expense mode
   const [isMonthlyFixed, setIsMonthlyFixed]      = useState(false);
   const nowForFixed = new Date();
@@ -252,9 +357,62 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
 
   const selectedTournament = tournaments.find((t) => t.id === tournamentId);
 
+  // Re-derive the smart default when the linked tournament changes — but never
+  // override a currency the user (or a scanned receipt) explicitly picked.
+  useEffect(() => {
+    if (currencyTouched) return;
+    setCurrency(smartDefaultCurrency(selectedTournament, tournaments));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tournamentId]);
+
   const allCategories = withCoach ? [...PERSONAL_CATS, ...COACH_CATS] : PERSONAL_CATS;
   const isCoachExpense = COACH_CATS.includes(category);
   const isFixedCat = FIXED_CATS.has(category.toLowerCase());
+
+  async function handleReceiptCaptured(file: CapturedReceipt) {
+    setScanning(true);
+    setScanHint('');
+    try {
+      const result = await parseReceipt(file.base64, file.mediaType);
+      if (result.ok) {
+        const r = result.receipt;
+        setAmount(String(r.amount));
+        setCurrency(r.currency);
+        setCurrencyTouched(true);
+        const d = r.date ?? todayIso();
+        setDate(d);
+        const chip = receiptCategoryToChip(r.category);
+        setCategory(chip);
+        setCustomMode(false);
+        setCustomText('');
+        if (r.merchant) {
+          setMerchant(r.merchant);
+          setNote((prev) => prev || r.merchant);
+        }
+        if (!manuallyPicked && !FIXED_CATS.has(chip.toLowerCase())) {
+          setTournamentId(matchTournamentByDate(d, tournaments) ?? '');
+        }
+        if (r.confidence === 'low') setScanHint(t('receipt.readFailed'));
+      } else {
+        // Graceful fallback — pre-fill whatever was readable, never crash.
+        const p = result.partial;
+        if (p.amount != null) setAmount(String(p.amount));
+        if (p.currency) { setCurrency(p.currency); setCurrencyTouched(true); }
+        if (p.date) {
+          setDate(p.date);
+          if (!manuallyPicked) setTournamentId(matchTournamentByDate(p.date, tournaments) ?? '');
+        }
+        if (p.category) { setCategory(receiptCategoryToChip(p.category)); setCustomMode(false); setCustomText(''); }
+        if (p.merchant) {
+          setMerchant(p.merchant);
+          setNote((prev) => prev || p.merchant!);
+        }
+        setScanHint(result.reason || t('receipt.readFailed'));
+      }
+    } finally {
+      setScanning(false);
+    }
+  }
 
   function selectCategory(cat: string) {
     setCategory(cat);
@@ -295,6 +453,8 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
           tournamentId: isMonthlyFixed ? null : tournamentId,
           category: finalCategory,
           amount: amt,
+          currency,
+          merchant: merchant.trim() || null,
           note: note.trim(),
           date: isMonthlyFixed ? fixedDateStr : date,
           isCoachExpense: isMonthlyFixed ? false : isCoachExpense,
@@ -307,6 +467,8 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
           tournamentId: isMonthlyFixed ? null : tournamentId,
           category: finalCategory,
           amount: amt,
+          currency,
+          merchant: merchant.trim() || null,
           note: note.trim(),
           date: isMonthlyFixed ? fixedDateStr : date,
           isCoachExpense: isMonthlyFixed ? false : isCoachExpense,
@@ -351,6 +513,31 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
               </View>
             )}
 
+            {/* ── Scan receipt (Zero-Click entry point) ── */}
+            {!isMonthlyFixed && (
+              <TouchableOpacity
+                style={rc.scanBtn}
+                onPress={() => setShowScanSheet(true)}
+                disabled={scanning}
+                activeOpacity={0.8}>
+                {scanning ? (
+                  <>
+                    <ActivityIndicator size="small" color={T.teal} />
+                    <Text style={rc.scanBtnText}>{t('receipt.reading')}</Text>
+                  </>
+                ) : (
+                  <>
+                    <Text style={rc.scanBtnIcon}>📷</Text>
+                    <Text style={rc.scanBtnText}>{t('receipt.scanButton')}</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            )}
+
+            {/* Amber hint — partial/low-confidence read, review before saving */}
+            {!isMonthlyFixed && !!scanHint && (
+              <Text style={rc.scanHint}>{scanHint}</Text>
+            )}
 
             {/* ── Tournament (hidden in monthly fixed mode) ── */}
             {!isMonthlyFixed && tournaments.length > 0 && (
@@ -497,9 +684,9 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
 
             {/* ── Amount ── */}
             <View style={form.section}>
-              <Text style={form.sectionLabel}>{t('expense.amountUsd')}</Text>
+              <Text style={form.sectionLabel}>{t('expense.amount')}</Text>
               <View style={form.amountRow}>
-                <Text style={form.currencySign}>$</Text>
+                <Text style={form.currencySign}>{currency === 'USD' ? '$' : currency}</Text>
                 <TextInput
                   style={form.amountInput}
                   value={amount}
@@ -509,7 +696,19 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
                   keyboardType="decimal-pad"
                 />
               </View>
-              <Text style={{ fontSize: 11, color: T.textSecondary, marginTop: 4 }}>{t('expense.usdNote')}</Text>
+            </View>
+
+            {/* ── Currency ── */}
+            <View style={form.section}>
+              <Text style={form.sectionLabel}>{t('expense.currency')}</Text>
+              <CurrencyChips
+                value={currency}
+                onChange={(c) => { setCurrency(c); setCurrencyTouched(true); }}
+                quickPicks={[smartDefaultCurrency(selectedTournament, tournaments), 'USD', 'EUR']}
+              />
+              {currency !== 'USD' && (
+                <Text style={{ fontSize: 11, color: T.textSecondary, marginTop: 6 }}>{t('expense.currencyNote')}</Text>
+              )}
             </View>
 
             {/* ── Date (hidden in monthly fixed mode, date derived from month/year) ── */}
@@ -570,6 +769,12 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
+
+      <ReceiptCaptureSheet
+        visible={showScanSheet}
+        onClose={() => setShowScanSheet(false)}
+        onCaptured={handleReceiptCaptured}
+      />
     </Modal>
   );
 }
@@ -603,6 +808,7 @@ function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => v
   const [customMode, setCustomMode] = useState(!knownCat);
   const [customText, setCustomText] = useState(knownCat ? '' : expense.category ?? '');
   const [amount,     setAmount]     = useState(String(expense.amount ?? ''));
+  const [currency,   setCurrency]   = useState(expense.currency ?? 'USD');
   const [date,       setDate]       = useState(expense.date ?? todayIso());
   const [note,       setNote]       = useState(expense.note ?? '');
   const [saving,     setSaving]     = useState(false);
@@ -631,6 +837,7 @@ function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => v
     const updates: Record<string, any> = {
       category: finalCategory,
       amount: amt,
+      currency,
       note: note.trim(),
       date: isMonthlyFixed ? `${fixedMonthStr}-01` : date,
       isCoachExpense: isMonthlyFixed ? false : COACH_CATS.includes(finalCategory),
@@ -752,12 +959,25 @@ function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => v
 
             {/* ── Amount ── */}
             <View style={form.section}>
-              <Text style={form.sectionLabel}>{t('expense.amountUsd')}</Text>
+              <Text style={form.sectionLabel}>{t('expense.amount')}</Text>
               <View style={form.amountRow}>
-                <Text style={form.currencySign}>$</Text>
+                <Text style={form.currencySign}>{currency === 'USD' ? '$' : currency}</Text>
                 <TextInput style={form.amountInput} value={amount} onChangeText={setAmount}
                   placeholder="0.00" placeholderTextColor={T.textSecondary} keyboardType="decimal-pad" />
               </View>
+            </View>
+
+            {/* ── Currency ── */}
+            <View style={form.section}>
+              <Text style={form.sectionLabel}>{t('expense.currency')}</Text>
+              <CurrencyChips
+                value={currency}
+                onChange={setCurrency}
+                quickPicks={[expense.currency ?? 'USD', 'USD', 'EUR']}
+              />
+              {currency !== 'USD' && (
+                <Text style={{ fontSize: 11, color: T.textSecondary, marginTop: 6 }}>{t('expense.currencyNote')}</Text>
+              )}
             </View>
 
             {/* ── Date (regular mode only) ── */}
@@ -818,7 +1038,7 @@ function ExpenseActionSheet({ expense, onEdit, onDelete, onLink, onCancel }: {
         <Pressable style={sheet.container} onPress={() => {}}>
           <View style={sheet.handle} />
           <Text style={sheet.title} numberOfLines={1}>{label}</Text>
-          <Text style={sheet.amount}>{fmt(expense.amount)}</Text>
+          <Text style={sheet.amount}>{fmtRowAmount(expense)}</Text>
 
           <TouchableOpacity style={sheet.row} onPress={onEdit} activeOpacity={0.75}>
             <Text style={sheet.rowIcon}>✏️</Text>
@@ -1341,7 +1561,7 @@ export function TournamentExpenseDetail({ tournament, onClose, allTournaments }:
                       {e.note ? <Text style={det.expenseNote} numberOfLines={1}>{e.note}</Text> : null}
                     </View>
                     <View style={det.expenseRight}>
-                      <Text style={det.expenseAmt}>{fmt(e.amount)}</Text>
+                      <Text style={det.expenseAmt}>{fmtRowAmount(e)}</Text>
                       <Text style={det.expenseDate}>{e.date}</Text>
                     </View>
                     <Text style={det.expenseMoreDot}>⋯</Text>
@@ -2654,7 +2874,7 @@ function MonthlyFixedSection({ expenses }: { expenses: any[] }) {
             {items.map((e: any) => (
               <View key={e.id} style={mf.expenseRow}>
                 <Text style={mf.expenseCat} numberOfLines={1}>{e.category}</Text>
-                <Text style={mf.expenseAmt}>{fmt(e.amount ?? 0)}</Text>
+                <Text style={mf.expenseAmt}>{fmtRowAmount(e)}</Text>
               </View>
             ))}
           </View>
@@ -3270,7 +3490,7 @@ export default function ExpensesScreen() {
                               <Text style={{ fontSize: 13, fontWeight: '600', color: '#FAFAFA' }}>{exp.category}</Text>
                               <Text style={{ fontSize: 11, color: '#A0A0C8' }}>{exp.date}</Text>
                             </View>
-                            <Text style={{ fontSize: 14, fontWeight: '700', color: '#E24B4A' }}>{fmt(exp.amount ?? 0)}</Text>
+                            <Text style={{ fontSize: 14, fontWeight: '700', color: '#E24B4A' }}>{fmtRowAmount(exp)}</Text>
                           </TouchableOpacity>
                         );
                       })}
@@ -3583,13 +3803,18 @@ export default function ExpensesScreen() {
                     </TouchableOpacity>
                   </View>
                 )}
+                <GestureHandlerRootView>
                 <ScrollView style={{ maxHeight: 400 }} showsVerticalScrollIndicator={false}>
                   {catExpenses.length === 0 ? (
                     <Text style={drillStyles.empty}>No expenses in this category.</Text>
                   ) : catExpenses.map((e: any, i: number) => {
                     const isSelected = selectedIds.has(e.id);
                     return (
-                      <TouchableOpacity key={e.id ?? i}
+                      <SwipeableRow key={e.id ?? i}
+                        actionLabel={t('common.delete')}
+                        enabled={!selectMode}
+                        onAction={() => setDeleteExpense(e)}>
+                      <TouchableOpacity
                         style={[drillStyles.row, isSelected && drillStyles.rowSelected]}
                         activeOpacity={0.7}
                         onPress={() => selectMode ? toggleSelect(e.id) : setActionExpense(e)}
@@ -3612,12 +3837,14 @@ export default function ExpensesScreen() {
                             </Text>
                           ) : null}
                         </View>
-                        <Text style={drillStyles.rowAmt}>{fmt(e.amount ?? 0)}</Text>
+                        <Text style={drillStyles.rowAmt}>{fmtRowAmount(e)}</Text>
                         {!selectMode && <Text style={{ color: T.textTertiary, fontSize: 16, marginLeft: 8 }}>›</Text>}
                       </TouchableOpacity>
+                      </SwipeableRow>
                     );
                   })}
                 </ScrollView>
+                </GestureHandlerRootView>
                 {selectMode ? (
                   <View style={{ flexDirection: 'row', gap: 8, marginTop: 16 }}>
                     <TouchableOpacity
@@ -4021,6 +4248,25 @@ const form = StyleSheet.create({
     color: T.teal,
     fontWeight: '700',
   },
+});
+
+// ─── Receipt scan + currency styles ──────────────────────────────────────────
+
+const rc = StyleSheet.create({
+  scanBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
+    backgroundColor: T.tealMuted, borderRadius: 14,
+    borderWidth: 1.5, borderColor: T.teal,
+    paddingVertical: 15, marginBottom: 16,
+  },
+  scanBtnIcon: { fontSize: 18 },
+  scanBtnText: { fontSize: 15, fontWeight: '700', color: T.teal },
+  scanHint: { fontSize: 12, color: T.amber, marginBottom: 16, lineHeight: 17 },
+  otherPill: {
+    borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8,
+    borderWidth: 1.5, borderColor: T.cardBorder, borderStyle: 'dashed',
+  },
+  otherPillText: { fontSize: 13, fontWeight: '600', color: T.textTertiary },
 });
 
 const pn = StyleSheet.create({

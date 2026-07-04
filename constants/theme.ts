@@ -1,30 +1,36 @@
 import { Platform } from 'react-native';
 
-// Antigravity design system for Tourly
-// 8px grid · 60-30-10 color · aggressive typography hierarchy
+// Tourly trust palette — deep-navy institutional base, court-green action
+// accents, premium amber urgency. 8px grid · 60-30-10 · dark-surface system.
+//
+// Key contract is unchanged (bg/card/accent/green/amber/teal/…): every screen
+// that imports T rebrands through this file alone. Do not add per-screen hexes
+// for anything that has a semantic token here.
 export const T = {
-  // 60% — Background and canvas
-  bg: '#0F0F1A',
+  // 60% — Canvas. Deep authoritative navy (trust / stability anchor).
+  bg: '#0A1128',
 
-  // 30% — Cards, containers
-  card: '#1A1A2E',
-  cardElevated: '#22222E',
-  cardBorder: '#2A2A3C',
+  // 30% — Cards and containers. Navy-family surfaces, one step lighter each.
+  card: '#111C38',
+  cardElevated: '#182647',
+  cardBorder: '#22305A',
 
-  // Text hierarchy
-  textPrimary: '#FFFFFF',
-  textSecondary: '#8888AA',
-  textTertiary: '#666688',
-  textMuted: '#3E3E52',
+  // Text hierarchy — crisp off-white down to structural muted.
+  textPrimary: '#F8F9FA',
+  textSecondary: '#8B96B8',
+  textTertiary: '#5E6A8C',
+  textMuted: '#39456B',
 
-  // 10% — Accent (Electric Indigo)
-  accent: '#5B5BD6',
-  accentMuted: 'rgba(91, 91, 214, 0.15)',
+  // 10% — Brand accent. Refined steel indigo (matches app icon family).
+  accent: '#5E6AD2',
+  accentMuted: 'rgba(94, 106, 210, 0.16)',
 
   // Semantic colors
-  green: '#44CF6C',
+  // green: financial-positive metrics and success states ONLY.
+  green: '#00B876',
   red: '#EF4444',
-  amber: '#F0A830',
+  // amber: deadline urgency — important without panic (premium ochre).
+  amber: '#D97706',
 
   // Surface accents (stripe/icon only, never full card bg)
   claySurface: '#C4692A',
@@ -34,9 +40,10 @@ export const T = {
   grassSurface: '#2D6A2D',
   grassText: '#68B83A',
 
-  // Teal (secondary action)
-  teal: '#00D4AA',
-  tealMuted: 'rgba(0, 212, 170, 0.15)',
+  // Action color (CTAs, confirm buttons) — court green per trust palette.
+  // Kept under the legacy `teal` key so every existing CTA converts here.
+  teal: '#00A86B',
+  tealMuted: 'rgba(0, 168, 107, 0.15)',
 } as const;
 
 // Surface stripe color for left-border accents

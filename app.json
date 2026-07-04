@@ -55,7 +55,15 @@
         }
       ],
       "@react-native-community/datetimepicker",
-      "expo-notifications"
+      "expo-notifications",
+      "expo-localization",
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Tourly uses the camera to snap receipts so expenses log themselves.",
+          "photosPermission": "Tourly uses your photo library to import receipt photos."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

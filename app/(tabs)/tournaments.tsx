@@ -35,6 +35,7 @@ import { useTabSwipe } from '@/hooks/useTabSwipe';
 import { ScreenWalkthrough } from '@/components/ui/screen-walkthrough';
 import { countryFlag, nameToIso2 } from '@/utils/countryFlag';
 import { playerNameFilter } from '@/utils/text';
+import { SwipeableRow } from '@/components/ui/SwipeableRow';
 
 const TOURNAMENTS_WALKTHROUGH = [
   { icon: '➕', title: 'Add a Tournament', body: 'Tap + to add your first tournament. Tourly calculates all deadlines automatically from the start date.' },
@@ -2171,6 +2172,10 @@ export default function TournamentsScreen() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [scrapedPast, setScrapedPast] = useState<{ name: string; startDate: string; endDate: string; surface: string | null }[] | null>(DEMO_MODE ? [] : null);
   const [materializingId, setMaterializingId] = useState<string | null>(null);
+  // Swipe actions — confirmation targets. Same confirm dialogs as the detail /
+  // select-mode flows; the swipe only opens them, never mutates directly.
+  const [swipeWithdrawTrn, setSwipeWithdrawTrn] = useState<any | null>(null);
+  const [swipeDeleteTrn,   setSwipeDeleteTrn]   = useState<any | null>(null);
 
   function toggleTournamentSelect(id: string) {
     setSelectedTournaments(prev => {
@@ -2184,12 +2189,11 @@ export default function TournamentsScreen() {
     setShowDeleteConfirm(true);
   }
 
-  async function executeDeleteSelected() {
-    setShowDeleteConfirm(false);
+  async function deleteTournamentIds(ids: string[]) {
     setRemovingTournaments(true);
     try {
       const { cancelTournamentNotifications } = await import('@/utils/notifications');
-      for (const id of selectedTournaments) {
+      for (const id of ids) {
         if (DEMO_MODE) {
           demoCtx?.patchTournament(id, { isInMyList: false });
         } else {
@@ -2201,7 +2205,38 @@ export default function TournamentsScreen() {
       Alert.alert('Could not delete', e?.message ?? 'Please try again.');
     } finally {
       setRemovingTournaments(false);
-      setSelectedTournaments(new Set());
+    }
+  }
+
+  async function executeDeleteSelected() {
+    setShowDeleteConfirm(false);
+    await deleteTournamentIds([...selectedTournaments]);
+    setSelectedTournaments(new Set());
+  }
+
+  // Confirmed swipe-to-delete (non-registered tournaments only).
+  async function confirmSwipeDelete() {
+    const trn = swipeDeleteTrn;
+    setSwipeDeleteTrn(null);
+    if (!trn) return;
+    await deleteTournamentIds([trn.id]);
+  }
+
+  // Confirmed swipe-to-withdraw — mirrors TournamentDetail's confirmWithdraw.
+  async function confirmSwipeWithdraw() {
+    const trn = swipeWithdrawTrn;
+    setSwipeWithdrawTrn(null);
+    if (!trn) return;
+    try {
+      if (DEMO_MODE) {
+        demoCtx?.patchTournament(trn.id, { isWithdrawn: true });
+      } else {
+        await apiPatchTournament(trn.id, { isWithdrawn: true });
+        const { cancelTournamentNotifications } = await import('@/utils/notifications');
+        await cancelTournamentNotifications(trn.id);
+      }
+    } catch (e: any) {
+      Alert.alert('Could not save', e?.message ?? 'Please try again.');
     }
   }
 
@@ -2438,12 +2473,21 @@ export default function TournamentsScreen() {
             {groupByWeek(activeGroup, t('tournaments.noDate')).map(week => (
               <View key={week.weekKey}>
                 <Text style={styles.weekLabel}>{week.weekLabel}</Text>
-                {week.items.map((item: any) => (
-                  <TournamentCard key={item.id} item={item} t={t}
-                    selected={selectedTournaments.has(item.id)} selectMode={tournamentSelectMode}
-                    onPress={() => tournamentSelectMode ? toggleTournamentSelect(item.id) : setDetailId(item.id)}
-                    onLongPress={() => toggleTournamentSelect(item.id)} />
-                ))}
+                {week.items.map((item: any) => {
+                  const canWithdraw = item.isRegistered && !item.isWithdrawn;
+                  return (
+                    <SwipeableRow key={item.id}
+                      enabled={!tournamentSelectMode}
+                      actionLabel={canWithdraw ? t('tournament.withdraw') : t('common.delete')}
+                      actionColor={canWithdraw ? T.amber : T.red}
+                      onAction={() => canWithdraw ? setSwipeWithdrawTrn(item) : setSwipeDeleteTrn(item)}>
+                      <TournamentCard item={item} t={t}
+                        selected={selectedTournaments.has(item.id)} selectMode={tournamentSelectMode}
+                        onPress={() => tournamentSelectMode ? toggleTournamentSelect(item.id) : setDetailId(item.id)}
+                        onLongPress={() => toggleTournamentSelect(item.id)} />
+                    </SwipeableRow>
+                  );
+                })}
               </View>
             ))}
           </>
@@ -2454,12 +2498,21 @@ export default function TournamentsScreen() {
             {groupByWeek(upcomingGroup, t('tournaments.noDate')).map(week => (
               <View key={week.weekKey}>
                 <Text style={styles.weekLabel}>{week.weekLabel}</Text>
-                {week.items.map((item: any) => (
-                  <TournamentCard key={item.id} item={item} t={t}
-                    selected={selectedTournaments.has(item.id)} selectMode={tournamentSelectMode}
-                    onPress={() => tournamentSelectMode ? toggleTournamentSelect(item.id) : setDetailId(item.id)}
-                    onLongPress={() => toggleTournamentSelect(item.id)} />
-                ))}
+                {week.items.map((item: any) => {
+                  const canWithdraw = item.isRegistered && !item.isWithdrawn;
+                  return (
+                    <SwipeableRow key={item.id}
+                      enabled={!tournamentSelectMode}
+                      actionLabel={canWithdraw ? t('tournament.withdraw') : t('common.delete')}
+                      actionColor={canWithdraw ? T.amber : T.red}
+                      onAction={() => canWithdraw ? setSwipeWithdrawTrn(item) : setSwipeDeleteTrn(item)}>
+                      <TournamentCard item={item} t={t}
+                        selected={selectedTournaments.has(item.id)} selectMode={tournamentSelectMode}
+                        onPress={() => tournamentSelectMode ? toggleTournamentSelect(item.id) : setDetailId(item.id)}
+                        onLongPress={() => toggleTournamentSelect(item.id)} />
+                    </SwipeableRow>
+                  );
+                })}
               </View>
             ))}
           </>
@@ -2584,6 +2637,32 @@ export default function TournamentsScreen() {
           </Modal>
         );
       })()}
+      {swipeWithdrawTrn && (
+        <WithdrawDialog
+          name={swipeWithdrawTrn.name}
+          onConfirm={confirmSwipeWithdraw}
+          onCancel={() => setSwipeWithdrawTrn(null)}
+          t={t}
+        />
+      )}
+      {swipeDeleteTrn && (
+        <Modal transparent animationType="fade" onRequestClose={() => setSwipeDeleteTrn(null)}>
+          <Pressable style={styles.dialogBackdrop} onPress={() => setSwipeDeleteTrn(null)}>
+            <Pressable style={styles.dialog} onPress={() => {}}>
+              <Text style={styles.dialogTitle}>Delete 1 tournament?</Text>
+              <Text style={styles.dialogBody}>{swipeDeleteTrn.name} — this cannot be undone.</Text>
+              <View style={styles.dialogActions}>
+                <TouchableOpacity style={styles.cancelBtn} onPress={() => setSwipeDeleteTrn(null)} activeOpacity={0.7}>
+                  <Text style={styles.cancelBtnText}>{t('common.cancel')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.withdrawConfirmBtn} onPress={confirmSwipeDelete} activeOpacity={0.8}>
+                  <Text style={styles.withdrawConfirmText}>{t('common.delete')}</Text>
+                </TouchableOpacity>
+              </View>
+            </Pressable>
+          </Pressable>
+        </Modal>
+      )}
       {detailId && <TournamentDetail tournamentId={detailId} onClose={() => setDetailId(null)} />}
       {expenseDetailId && (() => {
         // Look up across ALL tournaments — materialized history records have

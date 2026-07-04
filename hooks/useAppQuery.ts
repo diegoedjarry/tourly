@@ -35,6 +35,9 @@ function mapExpense(e: Expense) {
     tournamentId: e.tournament_id,
     category: e.category,
     amount: e.amount,
+    // Original transaction currency (ISO 4217) as charged — never converted.
+    currency: (e as any).currency ?? 'USD',
+    merchant: (e as any).merchant ?? null,
     date: e.date,
     note: e.note,
     isCoachExpense: e.is_coach_expense ?? false,

@@ -34,33 +34,71 @@ async function isOffline(): Promise<boolean> {
   }
 }
 
+// ── Optimistic cache primitives ──────────────────────────────────────────────
+// Every mutation applies its change to the react-query cache BEFORE the network
+// round-trip, so the UI updates instantly (native-feel, no frozen spinners).
+// On server error the snapshot is restored and the error rethrown for the
+// caller's alert. Offline writes keep their optimistic row — the queue flush
+// invalidates and reconciles on reconnect.
+type Row = Record<string, any>;
+
+function optimisticInsert(key: string[], row: Row): () => void {
+  const previous = queryClient.getQueryData<Row[]>(key);
+  queryClient.setQueryData<Row[]>(key, (old) => [row, ...(old ?? [])]);
+  return () => queryClient.setQueryData(key, previous);
+}
+
+function optimisticMerge(key: string[], id: string, patch: Row): () => void {
+  const previous = queryClient.getQueryData<Row[]>(key);
+  queryClient.setQueryData<Row[]>(key, (old) =>
+    (old ?? []).map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  return () => queryClient.setQueryData(key, previous);
+}
+
+function optimisticRemove(key: string[], id: string): () => void {
+  const previous = queryClient.getQueryData<Row[]>(key);
+  queryClient.setQueryData<Row[]>(key, (old) => (old ?? []).filter((r) => r.id !== id));
+  return () => queryClient.setQueryData(key, previous);
+}
+
+function replaceRow(key: string[], tempId: string, serverRow: Row) {
+  queryClient.setQueryData<Row[]>(key, (old) =>
+    (old ?? []).map((r) => (r.id === tempId ? serverRow : r)));
+}
+
+const tempId = () => `optimistic-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
 export async function apiPatchTournament(id: string, updates: Record<string, any>) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
+  const rollback = optimisticMerge(['tournaments'], id, toSnake(updates));
   if (await isOffline()) {
     await enqueue({ table: 'tournaments', action: 'update', data: updates, matchId: id, userId: user.id });
     notifyQueued();
     return;
   }
   const { error } = await supabase.from('tournaments').update(toSnake(updates)).eq('id', id);
-  if (error) throw error;
+  if (error) { rollback(); throw error; }
   queryClient.invalidateQueries({ queryKey: ['tournaments'] });
 }
 
 export async function apiAddTournament(data: Record<string, any>) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
+  const optimistic = { ...toSnake(data), id: tempId(), user_id: user.id, created_at: new Date().toISOString() };
+  const rollback = optimisticInsert(['tournaments'], optimistic);
   if (await isOffline()) {
     await enqueue({ table: 'tournaments', action: 'insert', data, userId: user.id });
     notifyQueued();
-    return data;
+    return optimistic;
   }
   const { data: row, error } = await supabase
     .from('tournaments')
     .insert({ ...toSnake(data), user_id: user.id })
     .select()
     .single();
-  if (error) throw error;
+  if (error) { rollback(); throw error; }
+  replaceRow(['tournaments'], optimistic.id, row);
   queryClient.invalidateQueries({ queryKey: ['tournaments'] });
   return row;
 }
@@ -68,17 +106,20 @@ export async function apiAddTournament(data: Record<string, any>) {
 export async function apiAddExpense(data: Record<string, any>) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
+  const optimistic = { ...toSnake(data), id: tempId(), user_id: user.id, created_at: new Date().toISOString() };
+  const rollback = optimisticInsert(['expenses'], optimistic);
   if (await isOffline()) {
     await enqueue({ table: 'expenses', action: 'insert', data, userId: user.id });
     notifyQueued();
-    return data;
+    return optimistic;
   }
   const { data: row, error } = await supabase
     .from('expenses')
     .insert({ ...toSnake(data), user_id: user.id })
     .select()
     .single();
-  if (error) throw error;
+  if (error) { rollback(); throw error; }
+  replaceRow(['expenses'], optimistic.id, row);
   queryClient.invalidateQueries({ queryKey: ['expenses'] });
   return row;
 }
@@ -86,38 +127,41 @@ export async function apiAddExpense(data: Record<string, any>) {
 export async function apiUpdateExpense(id: string, updates: Record<string, any>) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
+  const rollback = optimisticMerge(['expenses'], id, toSnake(updates));
   if (await isOffline()) {
     await enqueue({ table: 'expenses', action: 'update', data: updates, matchId: id, userId: user.id });
     notifyQueued();
     return;
   }
   const { error } = await supabase.from('expenses').update(toSnake(updates)).eq('id', id);
-  if (error) throw error;
+  if (error) { rollback(); throw error; }
   queryClient.invalidateQueries({ queryKey: ['expenses'] });
 }
 
 export async function apiDeleteExpense(id: string) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
+  const rollback = optimisticRemove(['expenses'], id);
   if (await isOffline()) {
     await enqueue({ table: 'expenses', action: 'delete', matchId: id, userId: user.id });
     notifyQueued();
     return;
   }
   const { error } = await supabase.from('expenses').delete().eq('id', id);
-  if (error) throw error;
+  if (error) { rollback(); throw error; }
   queryClient.invalidateQueries({ queryKey: ['expenses'] });
 }
 
 export async function apiDeleteTournament(id: string) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
+  const rollback = optimisticRemove(['tournaments'], id);
   if (await isOffline()) {
     await enqueue({ table: 'tournaments', action: 'delete', matchId: id, userId: user.id });
     notifyQueued();
     return;
   }
   const { error } = await supabase.from('tournaments').delete().eq('id', id);
-  if (error) throw error;
+  if (error) { rollback(); throw error; }
   queryClient.invalidateQueries({ queryKey: ['tournaments'] });
 }
