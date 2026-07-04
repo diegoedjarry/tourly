@@ -2040,6 +2040,10 @@ const CAT_PIE_COLORS: Record<string, string> = {
 const PIE_FALLBACK = [T.teal, T.accent, T.clayText, T.hardText, T.red, T.green, T.amber, '#9333EA', T.grassText, '#C084FC', '#A855F7', '#F472B6'];
 
 function tPrize(t: any): number {
+  // Only tournaments actually played (registered, not withdrawn) count as
+  // prize money won — a tournament merely added to the list (never entered)
+  // must never contribute here, regardless of what its prize field holds.
+  if (!t.isRegistered || t.isWithdrawn) return 0;
   const split = (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0);
   // Fall back to legacy prizeMoney for records created before the singles/doubles split
   return split > 0 ? split : (t.prizeMoney ?? 0);
@@ -3978,7 +3982,9 @@ export default function ExpensesScreen() {
                     .map((trn: any) => {
                       const singles = trn.singlesPrizeMoney ?? 0;
                       const doubles = trn.doublesPrizeMoney ?? 0;
-                      const prize = singles + doubles;
+                      // tPrize() gates on isRegistered/!isWithdrawn and falls back to
+                      // the legacy prizeMoney field — same rule as every other total.
+                      const prize = tPrize(trn);
                       return { trn, prize, singles, doubles };
                     })
                     .filter(({ prize }: any) => prize > 0)
@@ -4185,7 +4191,10 @@ export default function ExpensesScreen() {
       )}
 
       {drillCategory && (() => {
-        const catExpenses = periodExpenses
+        // Full history for this category, not just the currently-selected
+        // period — tapping a chart slice/bar means "show me every expense in
+        // this category," regardless of whether the chart is on Week/Month/Year.
+        const catExpenses = expenses
           .filter((e: any) => {
             const grouped = groupCategory(normalizeCat(e.category ?? 'Other'));
             return grouped === drillCategory.cat;
@@ -4200,7 +4209,10 @@ export default function ExpensesScreen() {
                 <View style={drillStyles.handle} />
                 <View style={drillStyles.header}>
                   <View style={[drillStyles.dot, { backgroundColor: drillCategory.color }]} />
-                  <Text style={drillStyles.title}>{drillCategory.cat}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={drillStyles.title}>{drillCategory.cat}</Text>
+                    <Text style={{ fontSize: 11, color: T.textTertiary, marginTop: 1 }}>{t('expenses.allTime')}</Text>
+                  </View>
                   <Text style={drillStyles.total}>{fmt(catTotal)}</Text>
                 </View>
                 {selectMode && (

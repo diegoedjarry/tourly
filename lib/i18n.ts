@@ -370,6 +370,7 @@ const strings = {
   'expenses.budgetDayOf': { en: 'Day', es: 'Día' },
   'expenses.budgetDayOfSep': { en: 'of', es: 'de' },
   'expenses.recent': { en: 'Recent', es: 'Recientes' },
+  'expenses.allTime': { en: 'All time', es: 'Todo el tiempo' },
   'expenses.deletedUndo': { en: 'Deleted — UNDO', es: 'Eliminado — DESHACER' },
   'expenses.undo': { en: 'UNDO', es: 'DESHACER' },
   'expense.reimbursed': { en: 'Reimbursed', es: 'Reembolsado' },
