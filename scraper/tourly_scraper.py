@@ -30,6 +30,8 @@ from playwright_stealth import Stealth
 from pydantic import BaseModel, ConfigDict, ValidationError
 from supabase import create_client, Client
 
+import itf_results
+
 load_dotenv()
 
 # ── Hardcoded for testing — swap SUPABASE_SERVICE_KEY to secret key before prod ─
@@ -1760,6 +1762,27 @@ async def run_player_phase(integrator: TourlyDataIntegrator, player_name: str) -
             status        = "ok" if gate_ok else "low_rows"
             error_note    = (f"invalid_count={scraper.last_row_invalid_count} (informational; "
                               f"<={SCHEMA_INVALID_RATIO_FAIL:.0%} threshold)") if scraper.last_row_invalid_count else None
+
+            # Best-effort cross-check against an independent second results source
+            # (Sofascore). Read-only/flag-only by design — never mutates profile or
+            # match_history; any failure here degrades to "xcheck: unavailable" and
+            # never affects the phase's own status/gate.
+            xcheck_note = "xcheck: unavailable"
+            try:
+                alt_results = await itf_results.fetch_player_results(player_name)
+                discrepancies = itf_results.cross_check(profile.get("match_history") or [], alt_results)
+                xcheck_note = itf_results.summarise(discrepancies) if alt_results is not None else "xcheck: unavailable"
+                high = [d for d in discrepancies if d.severity == "HIGH"]
+                if high:
+                    print(f"🚨  CROSS-CHECK: {len(high)} HIGH discrepancy(ies) for '{player_name}':")
+                    for d in high:
+                        print(f"    {d}")
+            except Exception as e:
+                print(f"⚠  Cross-check skipped for '{player_name}': {e}")
+                xcheck_note = "xcheck: skipped (error)"
+
+            error_note = f"{error_note}; {xcheck_note}" if error_note else xcheck_note
+
             if not gate_ok:
                 print(f"⚠  LOW ROWS: '{player_name}' scrape returned empty "
                       f"match_history — existing data preserved (see guard above).")
