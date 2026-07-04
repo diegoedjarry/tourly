@@ -24,6 +24,8 @@ function mapTournament(t: Tournament) {
     prizeMoney: t.prize_money,
     singlesPrizeMoney: t.singles_prize_money,
     doublesPrizeMoney: t.doubles_prize_money,
+    // Percent of prize withheld at source (gross vs net); null = none recorded
+    taxWithholdingPct: (t as any).tax_withholding_pct ?? null,
     status: t.status,
     createdAt: t.created_at,
   };
@@ -41,6 +43,10 @@ function mapExpense(e: Expense) {
     date: e.date,
     note: e.note,
     isCoachExpense: e.is_coach_expense ?? false,
+    // v2: reimbursement state, split share (0-100), indicative USD value
+    isReimbursed: (e as any).is_reimbursed ?? false,
+    sharePct: (e as any).share_pct ?? 100,
+    amountUsd: (e as any).amount_usd ?? null,
     createdAt: e.created_at,
   };
 }

@@ -36,6 +36,7 @@ import { ScreenWalkthrough } from '@/components/ui/screen-walkthrough';
 import { countryFlag, nameToIso2 } from '@/utils/countryFlag';
 import { playerNameFilter } from '@/utils/text';
 import { SwipeableRow } from '@/components/ui/SwipeableRow';
+import { estimateTripCost } from '@/utils/trip-estimate';
 
 const TOURNAMENTS_WALKTHROUGH = [
   { icon: '➕', title: 'Add a Tournament', body: 'Tap + to add your first tournament. Tourly calculates all deadlines automatically from the start date.' },
@@ -570,13 +571,25 @@ interface EditState {
   startDate: string; endDate: string; signUpDeadline: string; withdrawalDeadline: string;
   freezeDeadline: string;
   singlesPrizeMoney: string; doublesPrizeMoney: string;
+  taxWithholdingPct: string;
 }
 
 export function TournamentDetail({ tournamentId, onClose }: { tournamentId: string; onClose: () => void }) {
   const { t, lang } = useLanguage();
-  const { data } = useAppQuery({ tournaments: {} });
+  const { data } = useAppQuery({ tournaments: {}, expenses: {} });
 
   const tournament = (data?.tournaments ?? []).find((x: any) => x.id === tournamentId);
+
+  const tripEstimate = useMemo(() => {
+    if (!tournament) return null;
+    const todayIso = new Date().toISOString().slice(0, 10);
+    if (!(tournament.startDate > todayIso)) return null; // only for upcoming tournaments the player hasn't played yet
+    return estimateTripCost(
+      { country: tournament.country ?? '', category: tournament.category ?? '', startDate: tournament.startDate },
+      data?.tournaments ?? [],
+      data?.expenses ?? [],
+    );
+  }, [tournament, data?.tournaments, data?.expenses]);
 
   const [showWithdraw,    setShowWithdraw]    = useState(false);
   const [undoingWithdraw, setUndoingWithdraw] = useState(false);
@@ -612,6 +625,7 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
       freezeDeadline:     tournament.freezeDeadline     ?? calc?.freezeDeadline     ?? '',
       singlesPrizeMoney:  (tournament.singlesPrizeMoney ?? 0) > 0 ? String(tournament.singlesPrizeMoney) : '',
       doublesPrizeMoney:  (tournament.doublesPrizeMoney ?? 0) > 0 ? String(tournament.doublesPrizeMoney) : '',
+      taxWithholdingPct:  (tournament.taxWithholdingPct ?? 0) > 0 ? String(tournament.taxWithholdingPct) : '',
     });
     // A stored deadline that differs from the formula is a user override —
     // start with the override flag ON so saving doesn't silently reset it.
@@ -681,6 +695,9 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
       // Accept comma decimals — locale decimal-pad keyboards only offer ","
       singlesPrizeMoney: parseFloat(editState.singlesPrizeMoney.replace(',', '.')) || 0,
       doublesPrizeMoney: parseFloat(editState.doublesPrizeMoney.replace(',', '.')) || 0,
+      taxWithholdingPct: editState.taxWithholdingPct.trim()
+        ? Math.min(100, Math.max(0, parseFloat(editState.taxWithholdingPct.replace(',', '.')) || 0))
+        : null,
     };
     try {
       if (DEMO_MODE) {
@@ -885,6 +902,16 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
                 </View>
               </View>
 
+              <Text style={det.editDateLabel}>{t('tournament.taxWithholding')}</Text>
+              <TextInput
+                style={det.editInput}
+                value={editState.taxWithholdingPct}
+                onChangeText={(v) => setEditState(prev => prev ? { ...prev, taxWithholdingPct: v } : prev)}
+                placeholder="0"
+                placeholderTextColor={T.textSecondary}
+                keyboardType="numeric"
+              />
+
               {editError ? <Text style={det.editError}>{editError}</Text> : null}
 
               <View style={det.editActions}>
@@ -1069,8 +1096,54 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
                         ${totalPrize.toLocaleString()}
                       </Text>
                     </View>
+                    {(tournament.taxWithholdingPct ?? 0) > 0 && (() => {
+                      const pct = tournament.taxWithholdingPct;
+                      const net = totalPrize * (1 - pct / 100);
+                      return (
+                        <>
+                          <View style={det.deadlineDivider} />
+                          <View style={det.prizeRow}>
+                            <Text style={det.prizeLabel}>
+                              {t('tournament.netAfterWithholdingPrefix')} {pct}% {t('tournament.netAfterWithholdingSuffix')}
+                            </Text>
+                            <Text style={det.prizeAmount}>${net.toLocaleString(undefined, { maximumFractionDigits: 0 })}</Text>
+                          </View>
+                        </>
+                      );
+                    })()}
                   </View>
                 </>
+                );
+              })()}
+
+              {/* Trip cost estimator — upcoming, not-yet-played tournaments only */}
+              {tripEstimate && (() => {
+                const basisLabel = tripEstimate.basis === 'country'
+                  ? t('tournament.tripEstimateBasisCountry')
+                  : tripEstimate.basis === 'category'
+                    ? t('tournament.tripEstimateBasisCategory')
+                    : t('tournament.tripEstimateBasisOverall');
+                const tournamentWord = tripEstimate.sampleSize === 1
+                  ? t('tournament.estimatedTripCostTournament')
+                  : t('tournament.estimatedTripCostTournaments');
+                return (
+                  <>
+                    <Text style={det.sectionLabel}>{t('tournament.estimatedTripCost')}</Text>
+                    <View style={det.tripEstimateCard}>
+                      <IconSymbol name="paperplane.fill" size={18} color={T.amber} style={{ marginRight: 10 }} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={det.tripEstimateAmount}>
+                          ~${Math.round(tripEstimate.estimate).toLocaleString()}
+                          <Text style={det.tripEstimateRange}>
+                            {'  '}({t('tournament.estimatedTripCostRangeLabel')} ${Math.round(tripEstimate.low).toLocaleString()}–${Math.round(tripEstimate.high).toLocaleString()})
+                          </Text>
+                        </Text>
+                        <Text style={det.tripEstimateMeta}>
+                          {t('tournament.estimatedTripCostBasedOnPast')} {tripEstimate.sampleSize} {tournamentWord} {basisLabel}
+                        </Text>
+                      </View>
+                    </View>
+                  </>
                 );
               })()}
 
@@ -2880,4 +2953,12 @@ const det = StyleSheet.create({
   prizeRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12 },
   prizeLabel: { fontSize: 14, color: T.textSecondary },
   prizeAmount: { fontSize: 15, fontWeight: '600', color: T.textPrimary },
+  tripEstimateCard: {
+    flexDirection: 'row', alignItems: 'flex-start',
+    backgroundColor: T.bg, borderRadius: 16, borderWidth: 1, borderColor: T.cardBorder,
+    padding: 14,
+  },
+  tripEstimateAmount: { fontSize: 15, fontWeight: '700', color: T.amber },
+  tripEstimateRange: { fontSize: 13, fontWeight: '500', color: T.textSecondary },
+  tripEstimateMeta: { fontSize: 12, color: T.textTertiary, marginTop: 4, lineHeight: 16 },
 });

@@ -24,6 +24,7 @@ import { useAppQuery } from '@/hooks/useAppQuery';
 import { useQueryClient } from '@tanstack/react-query';
 import { useMyShares, useInviteShare, useRevokeShare } from '@/hooks/useSharedAccess';
 import { exportTournamentsCsv, exportExpensesCsv, exportAllCsv } from '@/utils/export-csv';
+import { exportSeasonStatementPdf } from '@/utils/export-pdf';
 import {
   pickAndParseFile,
   detectHeaderRow,
@@ -81,7 +82,7 @@ export default function SettingsScreen() {
   const router = useRouter();
   const { show: showAlert } = useAppAlert();
   const { data: profile, isLoading } = useProfile();
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const updateProfile = useUpdateProfile();
   const { user, signOut, updateEmail, updatePassword } = useAuth();
   const { data: appData } = useAppQuery({ tournaments: {}, expenses: {} });
@@ -484,6 +485,32 @@ export default function SettingsScreen() {
             }}>
             <Text style={s.rowLabel}>{t('settings.exportExpenses')}</Text>
             <View style={s.rowRight}><Text style={s.rowArrow}>›</Text></View>
+          </TouchableOpacity>
+          <Sep />
+          <TouchableOpacity
+            style={s.row}
+            activeOpacity={0.6}
+            disabled={exporting}
+            onPress={async () => {
+              setExporting(true);
+              try {
+                await exportSeasonStatementPdf(
+                  new Date().getFullYear(),
+                  appData?.tournaments ?? [],
+                  appData?.expenses ?? [],
+                  profile?.full_name ?? undefined,
+                  lang,
+                );
+              } catch (e: any) {
+                showAlert('Export failed', e?.message ?? t('settings.exportSeasonStatementFailed'));
+              } finally {
+                setExporting(false);
+              }
+            }}>
+            <Text style={s.rowLabel}>{t('settings.exportSeasonStatement')}</Text>
+            <View style={s.rowRight}>
+              {exporting ? <ActivityIndicator size="small" color={T.teal} /> : <Text style={s.rowArrow}>›</Text>}
+            </View>
           </TouchableOpacity>
           <Sep />
           <TouchableOpacity

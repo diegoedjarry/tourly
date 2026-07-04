@@ -42,7 +42,9 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { parseReceipt, RECEIPT_TO_APP_CATEGORY } from '@/utils/receipt';
 import { ReceiptCaptureSheet, CapturedReceipt } from '@/components/ui/ReceiptCaptureSheet';
 import { smartDefaultCurrency, fmtCurrency } from '@/utils/currency';
+import { toUsd } from '@/utils/fx';
 import { SwipeableRow } from '@/components/ui/SwipeableRow';
+import * as Haptics from 'expo-haptics';
 
 const EXPENSES_WALKTHROUGH = [
   { icon: '💸', title: 'Log Your First Expense', body: 'Tap + to log your first expense. Link it to a tournament to track your weekly costs and see which tournaments give the best financial return.' },
@@ -97,6 +99,26 @@ function fmtRowAmount(e: any): string {
   if (!cur || cur === 'USD') return fmt(e?.amount ?? 0);
   const s = fmtCurrency(e.amount ?? 0, cur);
   return s.includes(cur) ? s : `${s} ${cur}`;
+}
+
+// Single source of truth for every aggregate on this screen (totals, charts,
+// per-tournament sums, budget card): USD-normalized amount, scaled by the
+// user's ownership share. Reimbursed expenses are excluded entirely — callers
+// filter them out before summing (see effectiveExpenses / effectiveSum below).
+function effectiveUsd(e: any): number {
+  const base = e?.amountUsd ?? e?.amount ?? 0;
+  const pct = e?.sharePct ?? 100;
+  return base * (pct / 100);
+}
+
+// Filters out reimbursed expenses — the set every aggregate on this screen
+// should sum over instead of the raw `expenses` array.
+function effectiveExpenses(expenses: any[]): any[] {
+  return expenses.filter((e: any) => e?.isReimbursed !== true);
+}
+
+function effectiveSum(expenses: any[]): number {
+  return effectiveExpenses(expenses).reduce((s: number, e: any) => s + effectiveUsd(e), 0);
 }
 
 // Receipt buckets → the exact chip values used by this form, so the scanned
@@ -309,8 +331,8 @@ function CurrencyChips({ value, onChange, quickPicks }: {
 
 // ─── Add Expense Screen (full-screen modal) ───────────────────────────────────
 
-export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, defaultDate }: {
-  tournaments: any[]; onClose: () => void; defaultTournamentId?: string; defaultDate?: string;
+export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, defaultDate, autoOpenScan }: {
+  tournaments: any[]; onClose: () => void; defaultTournamentId?: string; defaultDate?: string; autoOpenScan?: boolean;
 }) {
   const { t, lang } = useLanguage();
   const monthNames        = lang === 'es' ? MONTH_NAMES_ES : MONTH_NAMES_EN;
@@ -339,7 +361,7 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
   const [error, setError]                        = useState('');
 
   // Zero-Click receipt scanning
-  const [showScanSheet, setShowScanSheet]        = useState(false);
+  const [showScanSheet, setShowScanSheet]        = useState(!!autoOpenScan);
   const [scanning, setScanning]                  = useState(false);
   const [scanHint, setScanHint]                  = useState('');
   const [merchant, setMerchant]                  = useState('');
@@ -354,6 +376,11 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
   const nowForFixed = new Date();
   const [fixedMonth, setFixedMonth]              = useState(nowForFixed.getMonth() + 1); // 1–12
   const [fixedYear, setFixedYear]                = useState(nowForFixed.getFullYear());
+
+  // Reimbursed + split-cost (collapsed by default to keep the form clean)
+  const [isReimbursed, setIsReimbursed]          = useState(false);
+  const [splitOpen, setSplitOpen]                = useState(false);
+  const [sharePctText, setSharePctText]          = useState('100');
 
   const selectedTournament = tournaments.find((t) => t.id === tournamentId);
 
@@ -445,6 +472,13 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
 
     const fixedDateStr = `${fixedYear}-${String(fixedMonth).padStart(2, '0')}-01`;
     const fixedMonthStr = `${fixedYear}-${String(fixedMonth).padStart(2, '0')}`;
+    const sharePctVal = (() => {
+      const n = parseInt(sharePctText, 10);
+      return !isNaN(n) && n >= 1 && n <= 100 ? n : 100;
+    })();
+    // Indicative USD value at entry time — null when the currency is USD
+    // already (no conversion needed) or when the rate is unavailable.
+    const amountUsd = currency !== 'USD' ? await toUsd(amt, currency) : null;
 
     try {
       if (DEMO_MODE) {
@@ -460,6 +494,9 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
           isCoachExpense: isMonthlyFixed ? false : isCoachExpense,
           isMonthlyFixed: isMonthlyFixed,
           fixedMonth: isMonthlyFixed ? fixedMonthStr : null,
+          isReimbursed,
+          sharePct: sharePctVal,
+          amountUsd,
         });
         onClose();
       } else {
@@ -474,6 +511,9 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
           isCoachExpense: isMonthlyFixed ? false : isCoachExpense,
           isMonthlyFixed: isMonthlyFixed,
           fixedMonth: isMonthlyFixed ? fixedMonthStr : null,
+          isReimbursed,
+          sharePct: sharePctVal,
+          amountUsd,
         });
         generateInsight.mutate({ trigger: 'expense_logged' }); // fire and forget
         onClose();
@@ -736,6 +776,37 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
               />
             </View>
 
+            {/* ── Reimbursed toggle ── */}
+            <View style={form.coachToggleRow}>
+              <Text style={form.coachToggleLabel}>{t('expense.reimbursedToggle')}</Text>
+              <Switch value={isReimbursed} onValueChange={setIsReimbursed}
+                trackColor={{ false: T.cardBorder, true: T.teal }} thumbColor={T.textPrimary} />
+            </View>
+
+            {/* ── Split cost (collapsed by default) ── */}
+            {splitOpen ? (
+              <View style={form.section}>
+                <Text style={form.sectionLabel}>{t('expense.myShare')}</Text>
+                <View style={form.amountRow}>
+                  <TextInput
+                    style={form.amountInput}
+                    value={sharePctText}
+                    onChangeText={(v) => setSharePctText(v.replace(/[^0-9]/g, ''))}
+                    keyboardType="number-pad"
+                    placeholder="100"
+                    placeholderTextColor={T.textSecondary}
+                    maxLength={3}
+                  />
+                  <Text style={form.currencySign}>%</Text>
+                </View>
+                <Text style={{ fontSize: 11, color: T.textSecondary, marginTop: 6 }}>{t('expense.myShareHint')}</Text>
+              </View>
+            ) : (
+              <TouchableOpacity style={form.customPill} onPress={() => setSplitOpen(true)} activeOpacity={0.7}>
+                <Text style={form.customPillText}>{t('expense.splitCost')}</Text>
+              </TouchableOpacity>
+            )}
+
             {error ? <Text style={form.error}>{error}</Text> : null}
 
             <TouchableOpacity
@@ -814,6 +885,12 @@ function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => v
   const [saving,     setSaving]     = useState(false);
   const [error,      setError]      = useState('');
 
+  // Reimbursed + split-cost — collapsed by default unless already split
+  const initialSharePct = expense.sharePct ?? expense.share_pct ?? 100;
+  const [isReimbursed, setIsReimbursed] = useState(!!(expense.isReimbursed ?? expense.is_reimbursed));
+  const [splitOpen,    setSplitOpen]    = useState(initialSharePct !== 100);
+  const [sharePctText, setSharePctText] = useState(String(initialSharePct));
+
   function selectCategory(cat: string) {
     setCategory(cat);
     setCustomMode(false);
@@ -834,6 +911,13 @@ function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => v
     if (!finalCategory) { setError(t('expense.selectCategory')); return; }
     setSaving(true); setError('');
     const fixedMonthStr = `${fixedYear}-${String(fixedMonth).padStart(2, '0')}`;
+    const sharePctVal = (() => {
+      const n = parseInt(sharePctText, 10);
+      return !isNaN(n) && n >= 1 && n <= 100 ? n : 100;
+    })();
+    // Recompute the indicative USD value whenever amount or currency changed
+    // from what was originally stored; null when USD or the rate is unavailable.
+    const amountUsd = currency !== 'USD' ? await toUsd(amt, currency) : null;
     const updates: Record<string, any> = {
       category: finalCategory,
       amount: amt,
@@ -844,6 +928,9 @@ function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => v
       isMonthlyFixed,
       fixedMonth: isMonthlyFixed ? fixedMonthStr : null,
       tournamentId: isMonthlyFixed ? null : (expense.tournament_id ?? expense.tournamentId ?? null),
+      isReimbursed,
+      sharePct: sharePctVal,
+      amountUsd,
     };
     try {
       if (DEMO_MODE) {
@@ -993,6 +1080,37 @@ function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => v
               <TextInput style={form.input} value={note} onChangeText={setNote}
                 placeholder={t('expense.notePlaceholder')} placeholderTextColor={T.textSecondary} />
             </View>
+
+            {/* ── Reimbursed toggle ── */}
+            <View style={form.coachToggleRow}>
+              <Text style={form.coachToggleLabel}>{t('expense.reimbursedToggle')}</Text>
+              <Switch value={isReimbursed} onValueChange={setIsReimbursed}
+                trackColor={{ false: T.cardBorder, true: T.teal }} thumbColor={T.textPrimary} />
+            </View>
+
+            {/* ── Split cost (collapsed by default) ── */}
+            {splitOpen ? (
+              <View style={form.section}>
+                <Text style={form.sectionLabel}>{t('expense.myShare')}</Text>
+                <View style={form.amountRow}>
+                  <TextInput
+                    style={form.amountInput}
+                    value={sharePctText}
+                    onChangeText={(v) => setSharePctText(v.replace(/[^0-9]/g, ''))}
+                    keyboardType="number-pad"
+                    placeholder="100"
+                    placeholderTextColor={T.textSecondary}
+                    maxLength={3}
+                  />
+                  <Text style={form.currencySign}>%</Text>
+                </View>
+                <Text style={{ fontSize: 11, color: T.textSecondary, marginTop: 6 }}>{t('expense.myShareHint')}</Text>
+              </View>
+            ) : (
+              <TouchableOpacity style={form.customPill} onPress={() => setSplitOpen(true)} activeOpacity={0.7}>
+                <Text style={form.customPillText}>{t('expense.splitCost')}</Text>
+              </TouchableOpacity>
+            )}
 
             {error ? <Text style={form.error}>{error}</Text> : null}
 
@@ -1479,7 +1597,7 @@ export function TournamentExpenseDetail({ tournament, onClose, allTournaments }:
   const sortedExpenses = [...expenses].sort((a: any, b: any) =>
     (b.date ?? '').localeCompare(a.date ?? '')
   );
-  const totalSpent   = expenses.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
+  const totalSpent   = effectiveSum(expenses);
   // Read prize money from live record only; default 0 until data loads
   const singlesPrize = (liveT?.singlesPrizeMoney ?? tournament.singlesPrizeMoney) ?? 0;
   const doublesPrize = (liveT?.doublesPrizeMoney ?? tournament.doublesPrizeMoney) ?? 0;
@@ -1562,6 +1680,9 @@ export function TournamentExpenseDetail({ tournament, onClose, allTournaments }:
                     </View>
                     <View style={det.expenseRight}>
                       <Text style={det.expenseAmt}>{fmtRowAmount(e)}</Text>
+                      {e.currency && e.currency !== 'USD' && e.amountUsd != null && (
+                        <Text style={det.expenseDate}>≈ {fmt(e.amountUsd)}</Text>
+                      )}
                       <Text style={det.expenseDate}>{e.date}</Text>
                     </View>
                     <Text style={det.expenseMoreDot}>⋯</Text>
@@ -1910,8 +2031,9 @@ function tPrize(t: any): number {
   return split > 0 ? split : (t.prizeMoney ?? 0);
 }
 
-function buildChartData(expenses: any[], tournaments: any[], period: 'week' | 'month' | 'year', monthOffset = 0, yearOffset = 0, monthAbbr = getMonthAbbr('en')) {
+function buildChartData(expensesRaw: any[], tournaments: any[], period: 'week' | 'month' | 'year', monthOffset = 0, yearOffset = 0, monthAbbr = getMonthAbbr('en')) {
   const now = new Date(); now.setHours(0, 0, 0, 0);
+  const expenses = effectiveExpenses(expensesRaw);
   // Withdrawn tournaments never contribute prize money — consistent across all periods
   const activeTournaments = tournaments.filter((t: any) => !t.isWithdrawn);
 
@@ -1925,7 +2047,7 @@ function buildChartData(expenses: any[], tournaments: any[], period: 'week' | 'm
     const spentByDate: Record<string, number> = {};
     for (const e of expenses) {
       if (!e.date) continue;
-      spentByDate[e.date] = (spentByDate[e.date] ?? 0) + (e.amount ?? 0);
+      spentByDate[e.date] = (spentByDate[e.date] ?? 0) + effectiveUsd(e);
     }
     const earnedByDate: Record<string, number> = {};
     for (const t of activeTournaments) {
@@ -1961,7 +2083,7 @@ function buildChartData(expenses: any[], tournaments: any[], period: 'week' | 'm
     for (const e of expenses) {
       if (!e.date) continue;
       const idx = bucketOf(e.date);
-      if (idx !== null) spentByWeek[idx] += e.amount ?? 0;
+      if (idx !== null) spentByWeek[idx] += effectiveUsd(e);
     }
     for (const t of activeTournaments) {
       const iso = t.endDate ?? t.startDate;
@@ -1983,7 +2105,7 @@ function buildChartData(expenses: any[], tournaments: any[], period: 'week' | 'm
   for (const e of expenses) {
     if (!e.date || +e.date.slice(0, 4) !== y) continue;
     const mi = +e.date.slice(5, 7) - 1;
-    if (mi >= 0 && mi < monthCount) spentByMonth[mi] += e.amount ?? 0;
+    if (mi >= 0 && mi < monthCount) spentByMonth[mi] += effectiveUsd(e);
   }
   for (const t of activeTournaments) {
     const iso = t.endDate ?? t.startDate;
@@ -2225,8 +2347,9 @@ type HgMode = 'category' | 'timeline';
 
 interface HgBar { label: string; value: number; color?: string; sub?: string }
 
-function buildHgTimeline(expenses: any[], period: 'month' | 'year', monthOffset: number, yearOffset: number, monthAbbr = getMonthAbbr('en')): HgBar[] {
+function buildHgTimeline(expensesRaw: any[], period: 'month' | 'year', monthOffset: number, yearOffset: number, monthAbbr = getMonthAbbr('en')): HgBar[] {
   const now = new Date(); now.setHours(0, 0, 0, 0);
+  const expenses = effectiveExpenses(expensesRaw);
   if (period === 'month') {
     // Single pass: bucket by week-of-month index
     const target = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
@@ -2238,7 +2361,7 @@ function buildHgTimeline(expenses: any[], period: 'month' | 'year', monthOffset:
     for (const e of expenses) {
       if (!e.date || !e.date.startsWith(prefix)) continue;
       const idx = Math.floor((+e.date.slice(8, 10) - 1) / 7);
-      if (idx >= 0 && idx < weekCount) totals[idx] += e.amount ?? 0;
+      if (idx >= 0 && idx < weekCount) totals[idx] += effectiveUsd(e);
     }
     return totals.map((value, i) => ({
       label: `${i * 7 + 1}–${Math.min(i * 7 + 7, daysInMonth)}`,
@@ -2252,17 +2375,18 @@ function buildHgTimeline(expenses: any[], period: 'month' | 'year', monthOffset:
   for (const e of expenses) {
     if (!e.date || +e.date.slice(0, 4) !== y) continue;
     const mi = +e.date.slice(5, 7) - 1;
-    if (mi >= 0 && mi < monthCount) totals[mi] += e.amount ?? 0;
+    if (mi >= 0 && mi < monthCount) totals[mi] += effectiveUsd(e);
   }
   return totals.map((value, mi) => ({ label: monthAbbr[mi], value }));
 }
 
-function buildHgByCategory(expenses: any[]): HgBar[] {
+function buildHgByCategory(expensesRaw: any[]): HgBar[] {
+  const expenses = effectiveExpenses(expensesRaw);
   const grouped: Record<string, number> = {};
   for (const e of expenses) {
     const raw = (e.category ?? 'Other').trim().toLowerCase().replace(/\b\w/g, (c: string) => c.toUpperCase());
     const cat = groupCategory(raw);
-    grouped[cat] = (grouped[cat] ?? 0) + (e.amount ?? 0);
+    grouped[cat] = (grouped[cat] ?? 0) + effectiveUsd(e);
   }
   return Object.entries(grouped)
     .sort((a, b) => b[1] - a[1])
@@ -2514,11 +2638,12 @@ function normalizeCat(raw: string): string {
   return raw.trim().toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
 }
 
-function buildPieData(expenses: any[]) {
+function buildPieData(expensesRaw: any[]) {
+  const expenses = effectiveExpenses(expensesRaw);
   const grouped: Record<string, number> = {};
   for (const e of expenses) {
     const cat = groupCategory(normalizeCat(e.category ?? 'Other'));
-    grouped[cat] = (grouped[cat] ?? 0) + (e.amount ?? 0);
+    grouped[cat] = (grouped[cat] ?? 0) + effectiveUsd(e);
   }
   const sorted = Object.entries(grouped).sort((a, b) => b[1] - a[1]);
   const total = sorted.reduce((s, [, v]) => s + v, 0);
@@ -2583,17 +2708,18 @@ function CategoryBreakdown({ expenses, onSelectCategory }: {
   );
 }
 
-function TournamentBreakdown({ expenses, tournaments, onTap }: {
+function TournamentBreakdown({ expenses: expensesRaw, tournaments, onTap }: {
   expenses: any[]; tournaments: any[]; onTap: (t: any) => void;
 }) {
+  const expenses = effectiveExpenses(expensesRaw);
   const rows = useMemo(() => {
     const byTournament: Record<string, number> = {};
     const unlinked = { total: 0, count: 0 };
     for (const e of expenses) {
       if (e.tournamentId) {
-        byTournament[e.tournamentId] = (byTournament[e.tournamentId] ?? 0) + (e.amount ?? 0);
+        byTournament[e.tournamentId] = (byTournament[e.tournamentId] ?? 0) + effectiveUsd(e);
       } else {
-        unlinked.total += e.amount ?? 0;
+        unlinked.total += effectiveUsd(e);
         unlinked.count++;
       }
     }
@@ -2854,7 +2980,7 @@ function MonthlyFixedSection({ expenses }: { expenses: any[] }) {
       grouped[key] = { month: m, year: y, items: [], total: 0 };
     }
     grouped[key].items.push(e);
-    grouped[key].total += e.amount ?? 0;
+    grouped[key].total += effectiveUsd(e);
   }
 
   const sortedKeys = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
@@ -2939,6 +3065,197 @@ const mf = StyleSheet.create({
   },
 });
 
+// ─── Active-Tournament Budget Card ────────────────────────────────────────────
+// Shown only during a live tournament week (startDate <= today <= end, not
+// withdrawn). Running spend uses effective amounts (see effectiveUsd rule).
+
+function ActiveTournamentBudgetCard({ tournament, expenses, onTap }: {
+  tournament: any; expenses: any[]; onTap: () => void;
+}) {
+  const { t: tr } = useLanguage();
+  const tExpenses = expenses.filter((e: any) => e.tournamentId === tournament.id);
+  const spent = effectiveSum(tExpenses);
+  const singles = tournament.singlesPrizeMoney ?? 0;
+  const doubles = tournament.doublesPrizeMoney ?? 0;
+  const prize = (singles + doubles) > 0 ? singles + doubles : (tournament.prizeMoney ?? 0);
+  const net = prize - spent;
+
+  const start = parseLocalDate(tournament.startDate);
+  const end = tournamentEnd(tournament);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  let dayCurrent = 1, dayTotal = 7;
+  if (start && end) {
+    dayTotal = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
+    dayCurrent = Math.min(dayTotal, Math.max(1, Math.round((today.getTime() - start.getTime()) / 86400000) + 1));
+  }
+
+  const surfaceBg = SURFACE_BG[(tournament.surface as Surface)] ?? T.card;
+
+  return (
+    <TouchableOpacity style={[abc.card, { backgroundColor: surfaceBg }]} onPress={onTap} activeOpacity={0.85}>
+      <View style={abc.headerRow}>
+        <Text style={abc.label}>{tr('expenses.budgetTitle')}</Text>
+        <Text style={abc.days}>
+          {tr('expenses.budgetDayOf')} {dayCurrent} {tr('expenses.budgetDayOfSep')} {dayTotal}
+        </Text>
+      </View>
+      <Text style={abc.name} numberOfLines={1}>
+        {tournament.country ? countryFlag(tournament.country) + ' ' : ''}{tournament.name}
+      </Text>
+      <View style={abc.statsRow}>
+        <View style={abc.stat}>
+          <Text style={abc.statLabel}>{tr('expenses.spent')}</Text>
+          <Text style={[abc.statValue, { color: T.red }]}>{fmt(spent)}</Text>
+        </View>
+        {prize > 0 && (
+          <View style={abc.stat}>
+            <Text style={abc.statLabel}>{tr('expenses.prize')}</Text>
+            <Text style={[abc.statValue, { color: T.accent }]}>{fmt(prize)}</Text>
+          </View>
+        )}
+        <View style={abc.stat}>
+          <Text style={abc.statLabel}>{tr('expenses.net')}</Text>
+          <Text style={[abc.statValue, net >= 0 ? { color: T.green } : { color: T.red }]}>
+            {net >= 0 ? '+' : ''}{fmt(net)}
+          </Text>
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+const abc = StyleSheet.create({
+  card: { borderRadius: 16, padding: 16, marginBottom: 16 },
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  label: { fontSize: 11, fontWeight: '700', color: 'rgba(10,17,40,0.6)', letterSpacing: 0.6, textTransform: 'uppercase' },
+  days: { fontSize: 11, fontWeight: '600', color: 'rgba(10,17,40,0.6)' },
+  name: { fontSize: 16, fontWeight: '800', color: '#0A1128', marginBottom: 12 },
+  statsRow: { flexDirection: 'row', gap: 18 },
+  stat: { flex: 1 },
+  statLabel: { fontSize: 10, fontWeight: '600', color: 'rgba(10,17,40,0.55)', textTransform: 'uppercase', letterSpacing: 0.3, marginBottom: 2 },
+  statValue: { fontSize: 15, fontWeight: '800' },
+});
+
+// ─── Recent expenses (flat, cross-category) ───────────────────────────────────
+
+const RECENT_CAT_ICON: Record<string, string> = {
+  flights: '✈️', flight: '✈️', hotel: '🏨', meals: '🍽️', transport: '🚕',
+  'strings & grip': '🎾', 'stringing fee': '🎾', physio: '💆', academy: '🏫',
+  trainer: '🏋️', 'coach fee': '🧑‍🏫', 'coach flight': '✈️', 'coach hotel': '🏨',
+  'coach meals': '🍽️', other: '💳',
+};
+function recentCatIcon(cat: string): string {
+  return RECENT_CAT_ICON[(cat ?? '').toLowerCase()] ?? '💳';
+}
+
+function RecentExpensesRow({ expense, onPress }: { expense: any; onPress: () => void }) {
+  const { t: tr } = useLanguage();
+  const isReimbursed = expense.isReimbursed === true;
+  const showApprox = expense.currency && expense.currency !== 'USD' && expense.amountUsd != null;
+  return (
+    <TouchableOpacity style={rec.row} onPress={onPress} activeOpacity={0.75}>
+      <Text style={rec.icon}>{recentCatIcon(expense.category)}</Text>
+      <View style={rec.mid}>
+        <Text style={rec.title} numberOfLines={1}>{expense.merchant || expense.note || expense.category}</Text>
+        <Text style={rec.date}>{expense.date}</Text>
+      </View>
+      <View style={rec.right}>
+        <Text style={[rec.amt, isReimbursed && rec.amtStruck]}>{fmtRowAmount(expense)}</Text>
+        {showApprox && !isReimbursed && (
+          <Text style={rec.approx}>≈ {fmt(expense.amountUsd)}</Text>
+        )}
+        {isReimbursed && (
+          <View style={rec.badge}>
+            <Text style={rec.badgeText}>{tr('expense.reimbursed')}</Text>
+          </View>
+        )}
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+// Swipe-to-delete with a 5s undo window: the row disappears immediately, the
+// delete fires only after the snackbar's timeout expires unless cancelled.
+function RecentExpensesSection({ expenses, onOpen, onRequestDelete }: {
+  expenses: any[]; onOpen: (e: any) => void; onRequestDelete: (e: any) => void;
+}) {
+  const { t: tr } = useLanguage();
+  const recent = useMemo(
+    () => [...expenses].sort((a: any, b: any) => (b.date ?? '').localeCompare(a.date ?? '')).slice(0, 10),
+    [expenses]
+  );
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
+
+  function handleSwipeDelete(e: any) {
+    setHiddenIds(prev => new Set(prev).add(e.id));
+    onRequestDelete(e);
+  }
+
+  const visible = recent.filter((e: any) => !hiddenIds.has(e.id));
+  if (visible.length === 0 && hiddenIds.size === 0) return null;
+
+  return (
+    <View style={{ marginBottom: 16 }}>
+      <Text style={styles.sectionLabel}>{tr('expenses.recent')}</Text>
+      <GestureHandlerRootView>
+        <View style={rec.card}>
+          {visible.map((e: any, i: number) => (
+            <View key={e.id}>
+              {i > 0 && <View style={rec.divider} />}
+              <SwipeableRow actionLabel={tr('common.delete')} onAction={() => handleSwipeDelete(e)}>
+                <RecentExpensesRow expense={e} onPress={() => onOpen(e)} />
+              </SwipeableRow>
+            </View>
+          ))}
+        </View>
+      </GestureHandlerRootView>
+    </View>
+  );
+}
+
+const rec = StyleSheet.create({
+  card: { backgroundColor: T.card, borderRadius: 14, borderWidth: 1, borderColor: T.cardBorder, overflow: 'hidden' },
+  divider: { height: 1, backgroundColor: T.cardBorder },
+  row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12, gap: 10 },
+  icon: { fontSize: 18, width: 26, textAlign: 'center' },
+  mid: { flex: 1, marginRight: 8 },
+  title: { fontSize: 14, fontWeight: '600', color: T.textPrimary },
+  date: { fontSize: 11, color: T.textTertiary, marginTop: 2 },
+  right: { alignItems: 'flex-end' },
+  amt: { fontSize: 14, fontWeight: '700', color: T.textPrimary },
+  amtStruck: { textDecorationLine: 'line-through', color: T.textMuted },
+  approx: { fontSize: 11, color: T.textTertiary, marginTop: 1 },
+  badge: { backgroundColor: T.tealMuted, borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2, marginTop: 2 },
+  badgeText: { fontSize: 9, fontWeight: '700', color: T.teal, textTransform: 'uppercase' },
+});
+
+// Bottom snackbar with UNDO — shown while a swipe-delete is pending.
+function UndoSnackbar({ visible, onUndo }: { visible: boolean; onUndo: () => void }) {
+  const { t: tr } = useLanguage();
+  if (!visible) return null;
+  return (
+    <View style={snack.container} pointerEvents="box-none">
+      <View style={snack.bar}>
+        <Text style={snack.text}>{tr('expenses.deletedUndo')}</Text>
+        <TouchableOpacity onPress={onUndo} activeOpacity={0.7}>
+          <Text style={snack.undo}>{tr('expenses.undo')}</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+const snack = StyleSheet.create({
+  container: { position: 'absolute', left: 0, right: 0, bottom: 24, alignItems: 'center', paddingHorizontal: 20 },
+  bar: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: '#1E1E30', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 16,
+    width: '100%', borderWidth: 1, borderColor: T.cardBorder,
+  },
+  text: { fontSize: 13, fontWeight: '600', color: T.textPrimary },
+  undo: { fontSize: 13, fontWeight: '800', color: T.teal, marginLeft: 16 },
+});
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function ExpensesScreen() {
@@ -2946,6 +3263,7 @@ export default function ExpensesScreen() {
   const { data, isLoading } = useAppQuery({ tournaments: {}, expenses: {} });
   const { data: _prof } = useProfile();
   const [showAddForm, setShowAddForm] = useState(false);
+  const [autoScanOnAdd, setAutoScanOnAdd] = useState(false);
   const [showAddChoice, setShowAddChoice] = useState(false);
   const [showPrizeBreakdown, setShowPrizeBreakdown] = useState(false);
   const [selectedPrizeIds, setSelectedPrizeIds] = useState<Set<string>>(new Set());
@@ -2973,6 +3291,49 @@ export default function ExpensesScreen() {
   const demoCtx = useDemoData();
   const [drillCategory, setDrillCategory] = useState<{ cat: string; color: string } | null>(null);
   const [atpMatchHistory, setAtpMatchHistory] = useState<any[]>([]);
+
+  // ── Undo-snackbar delete (Recent list) ──
+  // The row is hidden immediately by RecentExpensesSection; the actual delete
+  // only fires 5s later unless cancelled. Only one pending delete at a time —
+  // starting a new one (or unmounting) flushes whatever was already pending.
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const pendingDeleteRef = useRef<{ id: string; timer: ReturnType<typeof setTimeout> } | null>(null);
+
+  function flushPendingDelete() {
+    const pending = pendingDeleteRef.current;
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    pendingDeleteRef.current = null;
+    setPendingDeleteId(null);
+    if (DEMO_MODE) { demoCtx?.deleteExpense(pending.id); }
+    else { apiDeleteExpense(pending.id).catch((e: any) => Alert.alert('Could not delete', e?.message ?? 'Please try again.')); }
+  }
+
+  function requestUndoableDelete(expense: any) {
+    flushPendingDelete(); // only one pending delete at a time
+    const timer = setTimeout(() => {
+      pendingDeleteRef.current = null;
+      setPendingDeleteId(null);
+      if (DEMO_MODE) { demoCtx?.deleteExpense(expense.id); }
+      else { apiDeleteExpense(expense.id).catch((e: any) => Alert.alert('Could not delete', e?.message ?? 'Please try again.')); }
+    }, 5000);
+    pendingDeleteRef.current = { id: expense.id, timer };
+    setPendingDeleteId(expense.id);
+  }
+
+  function undoPendingDelete() {
+    const pending = pendingDeleteRef.current;
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    pendingDeleteRef.current = null;
+    setPendingDeleteId(null);
+  }
+
+  // Fire any pending delete immediately on unmount — never silently drop it.
+  // Intentionally empty deps: this must run exactly once, on unmount only.
+  useEffect(() => () => flushPendingDelete(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []);
 
   useEffect(() => {
     if (DEMO_MODE) return;
@@ -3064,7 +3425,7 @@ export default function ExpensesScreen() {
     const t = allT.find((t: any) => t.id === openTournament);
     if (t) {
       const tExpenses = (data?.expenses ?? []).filter((e: any) => e.tournamentId === t.id);
-      const spent = tExpenses.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
+      const spent = effectiveSum(tExpenses);
       const singles = t.singlesPrizeMoney ?? 0;
       const doubles = t.doublesPrizeMoney ?? 0;
       const prize = singles + doubles;
@@ -3074,6 +3435,7 @@ export default function ExpensesScreen() {
 
   const tournaments = (data?.tournaments ?? []).filter((t: any) => !t.isWithdrawn);
   const expenses = data?.expenses ?? [];
+  const activeTournament = useMemo(() => findActiveTournament(tournaments), [tournaments]);
 
   // id → display name map — must live AFTER tournaments is declared
   const tournamentMap = useMemo(() => {
@@ -3088,12 +3450,12 @@ export default function ExpensesScreen() {
   // and detail handlers instead of re-filtering the full list per tournament.
   const expensesByTournament = useMemo(() => {
     const map = new Map<string, { list: any[]; total: number }>();
-    for (const e of expenses) {
+    for (const e of effectiveExpenses(expenses)) {
       if (!e.tournamentId) continue;
       let entry = map.get(e.tournamentId);
       if (!entry) { entry = { list: [], total: 0 }; map.set(e.tournamentId, entry); }
       entry.list.push(e);
-      entry.total += e.amount ?? 0;
+      entry.total += effectiveUsd(e);
     }
     return map;
   }, [expenses]);
@@ -3111,7 +3473,7 @@ export default function ExpensesScreen() {
   }, [monthOffset, lang]);
 
   const periodExpenses = expenses.filter((e: any) => e.date && e.date >= pStart && e.date <= pEnd);
-  const periodSpent = periodExpenses.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
+  const periodSpent = effectiveSum(periodExpenses);
   const periodPrizeMoney = tournaments.reduce((s: number, t: any) => {
     if (!t.startDate || t.startDate < pStart || t.startDate > pEnd) return s;
     return s + tPrize(t);
@@ -3128,7 +3490,7 @@ export default function ExpensesScreen() {
 
     // 1. Where your money goes — top category
     const catGrouped: Record<string, number> = {};
-    for (const e of expenses) catGrouped[e.category ?? 'Other'] = (catGrouped[e.category ?? 'Other'] ?? 0) + (e.amount ?? 0);
+    for (const e of effectiveExpenses(expenses)) catGrouped[e.category ?? 'Other'] = (catGrouped[e.category ?? 'Other'] ?? 0) + effectiveUsd(e);
     const topCat = Object.entries(catGrouped).sort((a, b) => b[1] - a[1])[0];
     const catTotal = Object.values(catGrouped).reduce((s, v) => s + v, 0);
     const topCatPct = topCat && catTotal > 0 ? Math.round((topCat[1] / catTotal) * 100) : 0;
@@ -3179,7 +3541,7 @@ export default function ExpensesScreen() {
     const weekStart = new Date(today); weekStart.setDate(today.getDate() - today.getDay() + 1);
     const weekEnd = new Date(weekStart); weekEnd.setDate(weekStart.getDate() + 6);
     const weekExpenses = expenses.filter((e: any) => { const d = parseLocalDate(e.date); return d && d >= weekStart && d <= weekEnd; });
-    const weekSpend = weekExpenses.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
+    const weekSpend = effectiveSum(weekExpenses);
     const weekLevel = weekSpend > 2000 ? 'High' : weekSpend > 800 ? 'Medium' : weekSpend > 0 ? 'Low' : 'None';
 
     // 5. Coach impact
@@ -3203,7 +3565,7 @@ export default function ExpensesScreen() {
     // 8-12. Points-based — read from scraped atpMatchHistory, not InstantDB tournaments
     const totalPoints = atpMatchHistory.reduce((s: number, m: any) => s + (m.pointsEarned ?? 0), 0);
     const hasPoints = totalPoints > 0;
-    const totalInvested = expenses.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
+    const totalInvested = effectiveSum(expenses);
     const costPP = hasPoints && totalInvested > 0 ? totalInvested / totalPoints : 0;
 
     // Best surface for points
@@ -3242,7 +3604,15 @@ export default function ExpensesScreen() {
             <TouchableOpacity style={styles.pasteButton} onPress={() => setShowPasteModal(true)} activeOpacity={0.8}>
               <Text style={styles.pasteIcon}>📋</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.addButton} onPress={() => setShowAddChoice(true)} activeOpacity={0.8}>
+            <TouchableOpacity
+              style={styles.addButton}
+              onPress={() => setShowAddChoice(true)}
+              onLongPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                setAutoScanOnAdd(true);
+                setShowAddForm(true);
+              }}
+              activeOpacity={0.8}>
               <Text style={styles.addIcon}>+</Text>
             </TouchableOpacity>
           </View>
@@ -3330,6 +3700,29 @@ export default function ExpensesScreen() {
           <LoadingLogo style={{ minHeight: 300 }} />
         ) : (
           <>
+            {/* ── Active-Tournament Budget Card ── */}
+            {activeTournament && (
+              <ActiveTournamentBudgetCard
+                tournament={activeTournament}
+                expenses={expenses}
+                onTap={() => {
+                  const tExp = expenses.filter((e: any) => e.tournamentId === activeTournament.id);
+                  const spent = effectiveSum(tExp);
+                  const singles = activeTournament.singlesPrizeMoney ?? 0;
+                  const doubles = activeTournament.doublesPrizeMoney ?? 0;
+                  const prize = singles + doubles;
+                  setDetailTournament({ ...activeTournament, spent, prize });
+                }}
+              />
+            )}
+
+            {/* ── Recent expenses (flat, cross-category) ── */}
+            <RecentExpensesSection
+              expenses={pendingDeleteId ? expenses.filter((e: any) => e.id !== pendingDeleteId) : expenses}
+              onOpen={(e) => setActionExpense(e)}
+              onRequestDelete={requestUndoableDelete}
+            />
+
             {/* ── Season Summary Bar ── */}
             <View style={styles.seasonBar}>
               <View style={styles.seasonStat}>
@@ -3364,7 +3757,7 @@ export default function ExpensesScreen() {
 
             <TournamentBreakdown expenses={periodExpenses} tournaments={tournaments} onTap={(t) => {
               const tExp = expenses.filter((e: any) => e.tournamentId === t.id);
-              const spent = tExp.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
+              const spent = effectiveSum(tExp);
               const singles = t.singlesPrizeMoney ?? 0;
               const doubles = t.doublesPrizeMoney ?? 0;
               const prize = singles + doubles;
@@ -3431,7 +3824,7 @@ export default function ExpensesScreen() {
           const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
           for (let m = 0; m < 12; m++) {
             const mStr = `${y}-${String(m + 1).padStart(2, '0')}`;
-            const total = expenses.filter((e: any) => e.date?.startsWith(mStr)).reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
+            const total = effectiveSum(expenses.filter((e: any) => e.date?.startsWith(mStr)));
             if (total > 0) monthRows.push({ label: MONTHS[m], idx: m, total });
           }
         }
@@ -3626,7 +4019,7 @@ export default function ExpensesScreen() {
                         const trn = tournaments.find((t: any) => t.id === id);
                         if (trn) {
                           const tExp = (data?.expenses ?? []).filter((e: any) => e.tournamentId === trn.id);
-                          const spent = tExp.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
+                          const spent = effectiveSum(tExp);
                           const singles = trn.singlesPrizeMoney ?? 0;
                           const doubles = trn.doublesPrizeMoney ?? 0;
                           const prize = singles + doubles;
@@ -3717,7 +4110,8 @@ export default function ExpensesScreen() {
       {showAddForm && (
         <AddExpenseModal
           tournaments={tournaments}
-          onClose={() => setShowAddForm(false)}
+          autoOpenScan={autoScanOnAdd}
+          onClose={() => { setShowAddForm(false); setAutoScanOnAdd(false); }}
         />
       )}
 
@@ -3783,7 +4177,7 @@ export default function ExpensesScreen() {
             return grouped === drillCategory.cat;
           })
           .sort((a: any, b: any) => (b.date ?? '').localeCompare(a.date ?? ''));
-        const catTotal = catExpenses.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
+        const catTotal = effectiveSum(catExpenses);
         const closeDrill = () => { setDrillCategory(null); setSelectedIds(new Set()); };
         return (
           <Modal transparent animationType="slide" onRequestClose={closeDrill}>
@@ -3837,7 +4231,12 @@ export default function ExpensesScreen() {
                             </Text>
                           ) : null}
                         </View>
-                        <Text style={drillStyles.rowAmt}>{fmtRowAmount(e)}</Text>
+                        <View style={{ alignItems: 'flex-end' }}>
+                          <Text style={drillStyles.rowAmt}>{fmtRowAmount(e)}</Text>
+                          {e.currency && e.currency !== 'USD' && e.amountUsd != null && (
+                            <Text style={{ fontSize: 11, color: T.textTertiary, marginTop: 1 }}>≈ {fmt(e.amountUsd)}</Text>
+                          )}
+                        </View>
                         {!selectMode && <Text style={{ color: T.textTertiary, fontSize: 16, marginLeft: 8 }}>›</Text>}
                       </TouchableOpacity>
                       </SwipeableRow>
@@ -3878,6 +4277,8 @@ export default function ExpensesScreen() {
       })()}
 
       <ScreenWalkthrough steps={EXPENSES_WALKTHROUGH} visible={isFirstVisit} onDismiss={markVisited} />
+
+      <UndoSnackbar visible={!!pendingDeleteId} onUndo={undoPendingDelete} />
     </SafeAreaView>
   );
 }

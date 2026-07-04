@@ -11,6 +11,11 @@ jobs:
     name: Scrape All Player Profiles
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # No continue-on-error anywhere in this job: a nonzero exit from any step
+    # (in particular tourly_scraper.py, which now exits nonzero if any phase
+    # errors or trips its liveness gate — see scraper_runs status) must fail
+    # the job so GitHub Actions surfaces it as red, not swallowed.
+    continue-on-error: false
 
     steps:
       - uses: actions/checkout@v4
@@ -21,15 +26,23 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
+        # `set -e` (bash default for multi-line `run:` blocks in Actions) already
+        # fails the step on the first nonzero command; kept explicit here for
+        # clarity/robustness in case the default shell is ever overridden.
+        shell: bash -e {0}
         run: |
           cd scraper
           pip install -r requirements.txt
           playwright install chromium --with-deps
 
-      - name: Run Tennis Abstract scraper (all players from player_profiles)
+      - name: Run Tourly scraper (ITF calendar, Challenger calendar, player profiles)
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        shell: bash -e {0}
+        # tourly_scraper.py exits 1 if any phase raised or its liveness gate
+        # (rows_found below threshold) tripped — no `|| true` / `|| echo` here,
+        # so that nonzero exit propagates and fails this step (and the job).
         run: |
           cd scraper
           python tourly_scraper.py

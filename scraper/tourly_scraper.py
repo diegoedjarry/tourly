@@ -230,6 +230,7 @@ class ITFTournamentScraper:
                 continue
             seen.add(tid)
             surface_raw = item.get("surfaceDesc") or item.get("surfaceCode") or ""
+            start_date = normalise_date(item.get("startDate"))
             tournaments.append({
                 "itf_id":            tid,
                 "name":              item.get("tournamentName") or item.get("name") or "",
@@ -237,9 +238,10 @@ class ITFTournamentScraper:
                 "country":           item.get("hostNation"),
                 "surface":           normalise_surface(surface_raw),
                 "category":          item.get("category"),
-                "start_date":        normalise_date(item.get("startDate")),
+                "start_date":        start_date,
                 "end_date":          normalise_date(item.get("endDate")),
                 "prize_money_total": parse_prize(item.get("prizeMoney")),
+                "season":            int(start_date[:4]) if start_date else None,
                 "is_auto_populated": True,
             })
         return [t for t in tournaments if t["name"] and t["start_date"]]
@@ -367,6 +369,7 @@ class ITFTournamentScraper:
                                 "start_date":        start_date,
                                 "end_date":          None,
                                 "prize_money_total": None,
+                                "season":            year,
                                 "is_auto_populated": True,
                             })
 
@@ -393,6 +396,17 @@ class ATPChallengerScraper:
 
     FormattedDate format: "5 - 10 January, 2026" or "29 December, 2025 - 4 January, 2026"
     ChallengerCategory is null for all entries; category is derived from prize money.
+
+    IMPORTANT — TFC vs prize fund:
+    The ATP calendar JSON only exposes `TotalFinancialCommitment` (TFC), which bundles
+    on-site prize money together with hospitality/bonus-pool obligations the tournament
+    owes ATP. TFC is NOT the prize fund shown to players (e.g. a Challenger 100 has a
+    TFC around $160,680 but an actual prize fund of ~$80,000). Storing TFC directly in
+    `prize_money_total` inflates the number the app displays to players.
+    Fix: classify the tournament's Challenger tier from TFC (thresholds below map TFC
+    ranges to tiers — these are wide enough to separate tiers even though TFC != prize
+    fund), then look up the *official prize fund* for that tier from `_TIER_PRIZE_FUND`
+    and store that instead. `category` continues to reflect the derived tier label.
     """
 
     _ATP_CH_API    = "https://www.atptour.com/en/-/tournaments/calendar/challenger"
@@ -411,7 +425,11 @@ class ATPChallengerScraper:
         "Referer": "https://www.atptour.com/en/tournaments?tourCodes=CH",
     }
 
-    # Prize thresholds → canonical category strings the app's getCircuit() recognises
+    # Thresholds on TotalFinancialCommitment (TFC) used ONLY to classify which
+    # Challenger tier a tournament belongs to — TFC includes hospitality/bonus-pool
+    # fees on top of prize money, so these thresholds are approximate boundaries
+    # between tiers, not the prize fund itself. See _TIER_PRIZE_FUND for the actual
+    # prize money to store.
     _PRIZE_TIERS = [
         (175_000, "Challenger 175"),
         (125_000, "Challenger 125"),
@@ -419,6 +437,24 @@ class ATPChallengerScraper:
         (75_000,  "Challenger 75"),
         (50_000,  "Challenger 50"),
     ]
+
+    # Official 2026 ATP Challenger Tour prize funds (on-site prize money) per
+    # category tier — this is what gets stored in prize_money_total, NOT the TFC.
+    # ASSUMPTION: atp-2026-rulebook.pdf §3.22 states Challenger prize money
+    # "increase[s] annually by 2.5% per each tournament category" but does not
+    # publish a base-figure table in extractable text on the page (verified by
+    # reading pages 33-35 of the rulebook directly — the section is a one-line
+    # policy statement, no dollar table). These figures are the task-provided
+    # standard 2026 approximations; verify against the official ATP Challenger
+    # Tour Regulations / Prize Money chart before relying on them for financial
+    # reporting.
+    _TIER_PRIZE_FUND = {
+        "Challenger 50":  40_000,
+        "Challenger 75":  60_000,
+        "Challenger 100": 80_000,
+        "Challenger 125": 120_000,
+        "Challenger 175": 220_000,
+    }
 
     # "5 - 10 January, 2026"  OR  "29 December, 2025 - 4 January, 2026"
     _DATE_RE = re.compile(
@@ -510,13 +546,17 @@ class ATPChallengerScraper:
                 city, country = location, None
 
             surface    = normalise_surface(item.get("Surface") or "")
-            prize_raw  = str(item.get("TotalFinancialCommitment") or item.get("PrizeMoneyDetails") or "")
-            prize      = parse_prize(prize_raw)
-            category   = self._normalise_category(prize_raw)
+            tfc_raw    = str(item.get("TotalFinancialCommitment") or item.get("PrizeMoneyDetails") or "")
+            category   = self._normalise_category(tfc_raw)
+            # Store the derived official prize fund for the tier, NOT the raw TFC
+            # (TFC includes hospitality/bonus-pool commitments — see class docstring).
+            prize      = self._TIER_PRIZE_FUND.get(category)
             start_date, end_date = self._parse_formatted_date(item.get("FormattedDate") or "")
 
             if not name or not start_date:
                 continue
+
+            season = int(start_date[:4])
 
             tournaments.append({
                 "itf_id":            atp_id,
@@ -528,6 +568,7 @@ class ATPChallengerScraper:
                 "start_date":        start_date,
                 "end_date":          end_date,
                 "prize_money_total": prize,
+                "season":            season,
                 "is_auto_populated": True,
             })
 
@@ -1263,9 +1304,17 @@ class TourlyDataIntegrator:
         if not url or not key:
             raise EnvironmentError("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set.")
         self.sb: Client = create_client(url, key)
+        # Kept for backwards-compat / quick inspection; per-run figures now live in
+        # scraper_runs rows (see start_run/finish_run) rather than this cumulative dict.
         self._stats = {"found": 0, "added": 0, "updated": 0}
 
     def upsert_tournament(self, data: dict) -> str:
+        """
+        Upsert a single tournament row. Upserts are keyed by itf_id (or name+start_date
+        as a fallback) and only ever INSERT or UPDATE the matched row — there is no
+        delete/purge path here, so past-season rows already in the table are never
+        touched by an unrelated scrape and are retained indefinitely.
+        """
         itf_id = data.get("itf_id") or ""
         if itf_id:
             existing = self.sb.table("itf_tournaments").select("id").eq("itf_id", itf_id).execute()
@@ -1283,15 +1332,19 @@ class TourlyDataIntegrator:
             self.sb.table("itf_tournaments").insert(data).execute()
             return "added"
 
-    def sync_tournaments(self, tournaments: list[dict]):
-        self._stats["found"] = len(tournaments)
+    def sync_tournaments(self, tournaments: list[dict]) -> dict:
+        """Upsert all tournaments and return this call's own found/added/updated counts."""
+        stats = {"found": len(tournaments), "added": 0, "updated": 0, "skipped": 0}
         for t in tournaments:
             action = self.upsert_tournament(t)
-            if action == "added":
-                self._stats["added"] += 1
-            elif action == "updated":
-                self._stats["updated"] += 1
-        print(f"✓  Tournaments synced — {self._stats['found']} found, {self._stats['added']} added, {self._stats['updated']} updated.")
+            if action in stats:
+                stats[action] += 1
+        # Keep cumulative _stats in sync too (informational only)
+        self._stats["found"]   += stats["found"]
+        self._stats["added"]   += stats["added"]
+        self._stats["updated"] += stats["updated"]
+        print(f"✓  Tournaments synced — {stats['found']} found, {stats['added']} added, {stats['updated']} updated.")
+        return stats
 
     def upsert_player_profile(self, data: dict):
         try:
@@ -1315,45 +1368,144 @@ class TourlyDataIntegrator:
         except Exception as e:
             print(f"⚠  Could not save player profile: {e}")
 
-    def log_run(self, status: str, error: Optional[str] = None):
+    # ── scraper_runs logging (liveness / observability) ──────────────────────
+    #
+    # scraper_runs schema (confirmed live):
+    #   id identity, phase text, status text in 'ok'|'low_rows'|'error',
+    #   rows_found int, rows_upserted int, error text,
+    #   started_at timestamptz default now(), finished_at timestamptz
+    #
+    # Each phase calls start_run() at the beginning and finish_run() at the end
+    # (success or failure) so a stalled/crashed phase still leaves a row with
+    # started_at set and finished_at null — visible as a stuck run.
+
+    def start_run(self, phase: str) -> Optional[int]:
         try:
-            self.sb.table("scraper_runs").insert({
-                "ran_at":              datetime.now(timezone.utc).isoformat(),
-                "tournaments_found":   self._stats["found"],
-                "tournaments_added":   self._stats["added"],
-                "tournaments_updated": self._stats["updated"],
-                "status":              status,
-                "error_message":       error,
+            res = self.sb.table("scraper_runs").insert({
+                "phase":      phase,
+                "status":     "ok",
+                "started_at": datetime.now(timezone.utc).isoformat(),
             }).execute()
-            print(f"📝  Run logged: {status}")
+            run_id = (res.data or [{}])[0].get("id")
+            print(f"📝  scraper_runs: started phase='{phase}' id={run_id}")
+            return run_id
         except Exception as e:
-            print(f"⚠  Could not write to scraper_runs (check API key permissions): {e}")
+            print(f"⚠  Could not create scraper_runs row for phase '{phase}': {e}")
+            return None
+
+    def finish_run(self, run_id: Optional[int], *, status: str,
+                    rows_found: int = 0, rows_upserted: int = 0,
+                    error: Optional[str] = None):
+        if run_id is None:
+            return
+        try:
+            self.sb.table("scraper_runs").update({
+                "status":        status,
+                "rows_found":    rows_found,
+                "rows_upserted": rows_upserted,
+                "error":         error,
+                "finished_at":   datetime.now(timezone.utc).isoformat(),
+            }).eq("id", run_id).execute()
+            print(f"📝  scraper_runs: finished id={run_id} status={status} "
+                  f"found={rows_found} upserted={rows_upserted}")
+        except Exception as e:
+            print(f"⚠  Could not update scraper_runs id={run_id}: {e}")
 
 
 # ── Phase runners ──────────────────────────────────────────────────────────────
+#
+# Liveness gate thresholds — chosen to match how each phase actually scopes its
+# fetch (read the scraper classes above for the exact windows):
+#   - ITF phase (_fetch_itf_via_browser) walks 12 forward months of the full
+#     calendar every run — a full-season-shaped fetch — so it should reliably
+#     return well over 30 tournaments; anything less signals the API/browser
+#     path silently broke (Incapsula block, layout change, etc).
+#   - Challenger phase hits /tournaments/calendar/challenger, which returns the
+#     ENTIRE current ATP Challenger season (not an incremental window) — same
+#     full-season threshold applies.
+# Both phases are full-calendar fetches, not incremental weekly windows, so the
+# lower "≥8 incremental" threshold from the task brief does not apply to either;
+# it's kept here for phases that might later scope to a short window.
+GATE_FULL_SEASON_MIN_ROWS  = 30
+GATE_INCREMENTAL_MIN_ROWS  = 8
 
-async def run_tournament_phase(integrator: TourlyDataIntegrator):
-    scraper     = ITFTournamentScraper()
-    tournaments = await scraper.scrape_calendar()
-    integrator.sync_tournaments(tournaments)
+
+async def run_tournament_phase(integrator: TourlyDataIntegrator) -> bool:
+    """Returns True if the phase's liveness gate passed (rows_found >= threshold)."""
+    run_id = integrator.start_run("itf_calendar")
+    try:
+        scraper     = ITFTournamentScraper()
+        tournaments = await scraper.scrape_calendar()
+        stats       = integrator.sync_tournaments(tournaments)
+        rows_found  = stats["found"]
+        rows_upsert = stats["added"] + stats["updated"]
+        gate_ok     = rows_found >= GATE_FULL_SEASON_MIN_ROWS
+        status      = "ok" if gate_ok else "low_rows"
+        if not gate_ok:
+            print(f"⚠  LOW ROWS: ITF calendar returned {rows_found} "
+                  f"(< {GATE_FULL_SEASON_MIN_ROWS} threshold)")
+        integrator.finish_run(run_id, status=status, rows_found=rows_found,
+                               rows_upserted=rows_upsert)
+        return gate_ok
+    except Exception as e:
+        integrator.finish_run(run_id, status="error", error=str(e))
+        raise
 
 
-async def run_challenger_phase(integrator: TourlyDataIntegrator):
+async def run_challenger_phase(integrator: TourlyDataIntegrator) -> bool:
     """Phase 1b — ATP Challenger calendar, stored in the same itf_tournaments table."""
-    scraper     = ATPChallengerScraper()
-    tournaments = await scraper.scrape_calendar()
-    integrator.sync_tournaments(tournaments)
+    run_id = integrator.start_run("challenger_calendar")
+    try:
+        scraper     = ATPChallengerScraper()
+        tournaments = await scraper.scrape_calendar()
+        stats       = integrator.sync_tournaments(tournaments)
+        rows_found  = stats["found"]
+        rows_upsert = stats["added"] + stats["updated"]
+        gate_ok     = rows_found >= GATE_FULL_SEASON_MIN_ROWS
+        status      = "ok" if gate_ok else "low_rows"
+        if not gate_ok:
+            print(f"⚠  LOW ROWS: Challenger calendar returned {rows_found} "
+                  f"(< {GATE_FULL_SEASON_MIN_ROWS} threshold)")
+        integrator.finish_run(run_id, status=status, rows_found=rows_found,
+                               rows_upserted=rows_upsert)
+        return gate_ok
+    except Exception as e:
+        integrator.finish_run(run_id, status="error", error=str(e))
+        raise
 
 
-async def run_player_phase(integrator: TourlyDataIntegrator, player_name: str):
-    scraper = TennisAbstractScraper()
-    profile = await scraper.scrape_player(player_name, store_name=player_name)
-    await asyncio.sleep(6)  # polite rate limit between players
+async def run_player_phase(integrator: TourlyDataIntegrator, player_name: str) -> bool:
+    """
+    Returns True if the phase's liveness gate passed. Reuses the existing
+    empty-match-history guard in upsert_player_profile (which preserves existing
+    data instead of overwriting with an empty scrape) — here we additionally
+    record that outcome as a 'low_rows' scraper_runs entry so it's visible
+    alongside the calendar phases rather than only as a console warning.
+    """
+    run_id  = integrator.start_run(f"player:{player_name}")
+    try:
+        scraper = TennisAbstractScraper()
+        profile = await scraper.scrape_player(player_name, store_name=player_name)
+        await asyncio.sleep(6)  # polite rate limit between players
 
-    if profile:
-        integrator.upsert_player_profile(profile)
-    else:
-        print(f"⚠  No data returned for '{player_name}' — profile not saved.")
+        if profile:
+            match_count = len(profile.get("match_history") or [])
+            integrator.upsert_player_profile(profile)
+            gate_ok = match_count > 0
+            status  = "ok" if gate_ok else "low_rows"
+            if not gate_ok:
+                print(f"⚠  LOW ROWS: '{player_name}' scrape returned empty "
+                      f"match_history — existing data preserved (see guard above).")
+            integrator.finish_run(run_id, status=status, rows_found=match_count,
+                                   rows_upserted=match_count)
+            return gate_ok
+        else:
+            print(f"⚠  No data returned for '{player_name}' — profile not saved.")
+            integrator.finish_run(run_id, status="low_rows", rows_found=0, rows_upserted=0)
+            return False
+    except Exception as e:
+        integrator.finish_run(run_id, status="error", error=str(e))
+        raise
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
@@ -1393,7 +1545,13 @@ async def fetch_players_to_scrape(supabase: Client) -> list[str]:
     return unique
 
 
-async def main():
+async def main() -> int:
+    """
+    Runs all phases unconditionally (a gate failure or exception in one phase
+    does not skip the others), then exits nonzero if ANY phase failed or tripped
+    its liveness gate — so GitHub Actions goes red and the run is investigated,
+    even though every phase that could still run, did.
+    """
     print("=" * 52)
     print("  TOURLY SCRAPER — SYNC ENGINE")
     print("=" * 52)
@@ -1402,26 +1560,25 @@ async def main():
         integrator = TourlyDataIntegrator()
     except EnvironmentError as e:
         print(f"❌  {e}")
-        return
+        return 1
 
-    status    = "success"
-    error_msg = None
+    any_failure = False
 
     print("\n> Phase 1: ITF Tournament Calendar (M15/M25)")
     try:
-        await run_tournament_phase(integrator)
+        ok = await run_tournament_phase(integrator)
+        any_failure = any_failure or not ok
     except Exception as e:
-        status    = "failed"
-        error_msg = f"Tournament scraper: {e}"
-        print(f"✗  {error_msg}")
+        print(f"✗  Tournament scraper: {e}")
+        any_failure = True
 
     print("\n> Phase 1b: ATP Challenger Calendar")
     try:
-        await run_challenger_phase(integrator)
+        ok = await run_challenger_phase(integrator)
+        any_failure = any_failure or not ok
     except Exception as e:
         print(f"✗  Challenger scraper: {e}")
-        if status == "success":
-            status = "partial"
+        any_failure = True
 
     player_name = os.getenv("PLAYER_NAME", "").strip()
 
@@ -1436,18 +1593,70 @@ async def main():
         for pname in profile_players:
             print(f"\n> Phase 2: Player Profile — {pname}")
             try:
-                await run_player_phase(integrator, pname)
+                ok = await run_player_phase(integrator, pname)
+                any_failure = any_failure or not ok
             except Exception as e:
                 print(f"✗  Player scraper ({pname}): {e}")
-                if status == "success":
-                    status = "partial"
+                any_failure = True
     else:
         print("\nℹ  No player names found — skipping player profile phase.")
         print("   Set atp_player_name in the app profile to enable this.")
 
-    integrator.log_run(status=status, error=error_msg)
+    if any_failure:
+        print("\n❌  Scraper run complete WITH FAILURES/LOW-ROW GATES — exiting nonzero.\n")
+        return 1
+
     print("\n✅  Scraper run complete.\n")
+    return 0
+
+
+def fix_prizes(integrator: TourlyDataIntegrator, dry_run: bool = True) -> int:
+    """
+    One-off repair for the TFC-vs-prize-fund bug: re-derives prize_money_total
+    for existing Challenger rows in itf_tournaments using the tier already
+    stored in `category` (e.g. "Challenger 100") mapped through
+    ATPChallengerScraper._TIER_PRIZE_FUND.
+
+    Only touches rows whose category starts with "Challenger " — ITF rows
+    (M15/M25) are untouched since their prize_money_total was never TFC-based.
+
+    NOT run automatically anywhere — invoke explicitly with:
+        python tourly_scraper.py --fix-prizes            # dry run, prints diffs
+        python tourly_scraper.py --fix-prizes --apply     # writes changes
+    Returns the number of rows that were (or would be) updated.
+    """
+    tier_fund = ATPChallengerScraper._TIER_PRIZE_FUND
+    res = integrator.sb.table("itf_tournaments") \
+        .select("id,name,category,prize_money_total") \
+        .like("category", "Challenger %") \
+        .execute()
+    rows = res.data or []
+    changed = 0
+    for row in rows:
+        category = row.get("category")
+        correct_prize = tier_fund.get(category)
+        if correct_prize is None:
+            continue
+        current_prize = row.get("prize_money_total")
+        if current_prize == correct_prize:
+            continue
+        changed += 1
+        action = "WOULD UPDATE" if dry_run else "UPDATING"
+        print(f"{action}  id={row['id']} name={row.get('name')!r} "
+              f"category={category} prize_money_total: {current_prize} -> {correct_prize}")
+        if not dry_run:
+            integrator.sb.table("itf_tournaments") \
+                .update({"prize_money_total": correct_prize}) \
+                .eq("id", row["id"]) \
+                .execute()
+    print(f"\n{'Would change' if dry_run else 'Changed'} {changed} of {len(rows)} Challenger rows.")
+    return changed
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    if "--fix-prizes" in sys.argv:
+        apply_changes = "--apply" in sys.argv
+        _integrator = TourlyDataIntegrator()
+        fix_prizes(_integrator, dry_run=not apply_changes)
+        sys.exit(0)
+    sys.exit(asyncio.run(main()))
