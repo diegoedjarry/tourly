@@ -21,6 +21,16 @@ const MAPPING = {
   'chart.bar.fill': 'bar-chart',
   'bell.fill': 'notifications',
   'gearshape.fill': 'settings',
+  'arrow.up.right.square': 'open-in-new',
+  'person': 'person',
+  'envelope': 'mail',
+  'phone': 'phone',
+  'xmark': 'close',
+  'magnifyingglass': 'search',
+  'line.3.horizontal.decrease': 'tune',
+  'plus.circle': 'add-circle',
+  'moon.zzz': 'hotel',
+  'figure.run': 'directions-run',
 } as const;
 
 /**

@@ -550,7 +550,12 @@ class ATPChallengerScraper:
             category   = self._normalise_category(tfc_raw)
             # Store the derived official prize fund for the tier, NOT the raw TFC
             # (TFC includes hospitality/bonus-pool commitments — see class docstring).
+            # Invariant: prize fund can never exceed TFC, so clamp — protects
+            # against the tier table's approximations overshooting (seen on 175s).
             prize      = self._TIER_PRIZE_FUND.get(category)
+            tfc_value  = parse_prize(tfc_raw)
+            if prize is not None and tfc_value is not None:
+                prize = min(prize, tfc_value)
             start_date, end_date = self._parse_formatted_date(item.get("FormattedDate") or "")
 
             if not name or not start_date:
@@ -1638,6 +1643,11 @@ def fix_prizes(integrator: TourlyDataIntegrator, dry_run: bool = True) -> int:
         if correct_prize is None:
             continue
         current_prize = row.get("prize_money_total")
+        # Invariant: prize fund <= TFC. The stored value is TFC (that's the bug),
+        # so never "correct" upward — if the tier table exceeds the stored TFC,
+        # the TFC is the better bound and the row is left alone (seen on 175s).
+        if current_prize is not None and correct_prize > current_prize:
+            continue
         if current_prize == correct_prize:
             continue
         changed += 1

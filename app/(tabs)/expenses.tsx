@@ -1812,7 +1812,14 @@ function PasteFromNotesModal({ tournaments, onClose }: {
       if (DEMO_MODE) {
         for (const item of toImport) {
           const isFixed = FIXED_CATS.has(item.category.toLowerCase());
-          const tId = isAuto && !isFixed ? matchTournamentByDate(item.date, tournaments) : (isAuto ? undefined : (tournamentId || undefined));
+          let tId: string | undefined;
+          if (isAuto && !isFixed) {
+            tId = matchTournamentByDate(item.date ?? undefined, tournaments);
+          } else if (isAuto) {
+            tId = undefined;
+          } else {
+            tId = tournamentId === '' ? undefined : tournamentId;
+          }
           demoCtx?.addExpense({
             id: genId(),
             tournamentId: tId,
@@ -1827,7 +1834,14 @@ function PasteFromNotesModal({ tournaments, onClose }: {
       } else {
         await Promise.all(toImport.map(item => {
           const isFixed = FIXED_CATS.has(item.category.toLowerCase());
-          const tId = isAuto && !isFixed ? matchTournamentByDate(item.date, tournaments) : (isAuto ? undefined : (tournamentId || undefined));
+          let tId: string | undefined;
+          if (isAuto && !isFixed) {
+            tId = matchTournamentByDate(item.date ?? undefined, tournaments);
+          } else if (isAuto) {
+            tId = undefined;
+          } else {
+            tId = tournamentId === '' ? undefined : tournamentId;
+          }
           return apiAddExpense({
             tournamentId: tId,
             category: item.category.toLowerCase(),
@@ -2347,7 +2361,7 @@ type HgMode = 'category' | 'timeline';
 
 interface HgBar { label: string; value: number; color?: string; sub?: string }
 
-function buildHgTimeline(expensesRaw: any[], period: 'month' | 'year', monthOffset: number, yearOffset: number, monthAbbr = getMonthAbbr('en')): HgBar[] {
+function buildHgTimeline(expensesRaw: any[], period: 'month' | 'year' | 'week', monthOffset: number, yearOffset: number, monthAbbr = getMonthAbbr('en')): HgBar[] {
   const now = new Date(); now.setHours(0, 0, 0, 0);
   const expenses = effectiveExpenses(expensesRaw);
   if (period === 'month') {
@@ -2404,7 +2418,7 @@ const HG_MODES: { key: HgMode; label: string }[] = [
 ];
 
 function ExpenseHistogram({ expenses, periodExpenses, period, monthOffset, yearOffset, onSelectCategory }: {
-  expenses: any[]; periodExpenses: any[]; period: 'month' | 'year'; monthOffset: number; yearOffset: number;
+  expenses: any[]; periodExpenses: any[]; period: 'month' | 'year' | 'week'; monthOffset: number; yearOffset: number;
   onSelectCategory: (cat: string, color: string) => void;
 }) {
   const { lang } = useLanguage();

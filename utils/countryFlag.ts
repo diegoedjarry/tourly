@@ -29,7 +29,7 @@ const NAME_TO_ISO2: Record<string, string> = {
   'south africa':'ZA','spain':'ES','sweden':'SE','switzerland':'CH','taiwan':'TW',
   'thailand':'TH','tunisia':'TN','turkey':'TR','turkiye':'TR','ukraine':'UA',
   'united arab emirates':'AE','usa':'US','united states':'US','uruguay':'UY',
-  'uzbekistan':'UZ','venezuela':'VE','vietnam':'VN','zimbabwe':'ZW','armenia':'AM',
+  'uzbekistan':'UZ','venezuela':'VE','vietnam':'VN','zimbabwe':'ZW',
 };
 
 function toEmoji(iso2: string): string {
