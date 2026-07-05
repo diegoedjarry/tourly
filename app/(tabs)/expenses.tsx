@@ -4194,16 +4194,20 @@ export default function ExpensesScreen() {
       )}
 
       {drillCategory && (() => {
-        // Full history for this category, not just the currently-selected
-        // period — tapping a chart slice/bar means "show me every expense in
-        // this category," regardless of whether the chart is on Week/Month/Year.
-        const catExpenses = expenses
+        // Scoped to whatever period the page is currently showing (the same
+        // periodExpenses the charts above are built from) — tapping a slice
+        // means "show me this period's expenses in this category," matching
+        // the Week/Month/Year toggle rather than the full all-time history.
+        const catExpenses = periodExpenses
           .filter((e: any) => {
             const grouped = groupCategory(normalizeCat(e.category ?? 'Other'));
             return grouped === drillCategory.cat;
           })
           .sort((a: any, b: any) => (b.date ?? '').localeCompare(a.date ?? ''));
         const catTotal = effectiveSum(catExpenses);
+        const periodLabel = period === 'month' ? currentMonthLabel
+          : period === 'year' ? String(new Date().getFullYear() + yearOffset)
+          : t('alerts.thisWeek');
         const closeDrill = () => { setDrillCategory(null); setSelectedIds(new Set()); };
         return (
           <Modal transparent animationType="slide" onRequestClose={closeDrill}>
@@ -4214,7 +4218,7 @@ export default function ExpensesScreen() {
                   <View style={[drillStyles.dot, { backgroundColor: drillCategory.color }]} />
                   <View style={{ flex: 1 }}>
                     <Text style={drillStyles.title}>{drillCategory.cat}</Text>
-                    <Text style={{ fontSize: 11, color: T.textTertiary, marginTop: 1 }}>{t('expenses.allTime')}</Text>
+                    <Text style={{ fontSize: 11, color: T.textTertiary, marginTop: 1 }}>{periodLabel}</Text>
                   </View>
                   <Text style={drillStyles.total}>{fmt(catTotal)}</Text>
                 </View>
