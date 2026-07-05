@@ -41,6 +41,7 @@ export interface Profile {
   language: string | null;
   onboarding_complete: boolean;
   ipin_number: string | null;
+  share_expense_data: boolean;
   created_at: string;
 }
 

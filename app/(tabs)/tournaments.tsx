@@ -37,6 +37,7 @@ import { countryFlag, nameToIso2 } from '@/utils/countryFlag';
 import { playerNameFilter } from '@/utils/text';
 import { SwipeableRow } from '@/components/ui/SwipeableRow';
 import { estimateTripCost } from '@/utils/trip-estimate';
+import { fetchTripCostEstimate, TripCostEstimate } from '@/utils/trip-ai';
 
 const TOURNAMENTS_WALKTHROUGH = [
   { icon: '➕', title: 'Add a Tournament', body: 'Tap + to add your first tournament. Tourly calculates all deadlines automatically from the start date.' },
@@ -600,6 +601,14 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
   const [editError,       setEditError]       = useState('');
   const demoCtx = useDemoData();
 
+  // AI trip-cost breakdown sheet — cached per tournament id so reopening
+  // doesn't refetch (server also caches for 14 days, this is just to avoid
+  // an extra round-trip while the sheet is open/closed repeatedly).
+  const [showAiBreakdown, setShowAiBreakdown] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiEstimates, setAiEstimates] = useState<Record<string, TripCostEstimate | null>>({});
+  const [aiErrored, setAiErrored] = useState<Record<string, boolean>>({});
+
   if (!tournament) return null;
 
   const surfaceBg   = SURFACE_BG[(editing ? editState?.surface : tournament.surface) as Surface]   ?? '#FAEEDA';
@@ -749,6 +758,21 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
     } catch (e: any) {
       Alert.alert('Could not save', e?.message ?? 'Please try again.');
     } finally { setSavingAction(null); }
+  }
+
+  async function openAiBreakdown(forceRefresh = false) {
+    setShowAiBreakdown(true);
+    const cached = aiEstimates[tournament.id];
+    if (cached && !forceRefresh) return;
+    setAiLoading(true);
+    setAiErrored(prev => ({ ...prev, [tournament.id]: false }));
+    const result = await fetchTripCostEstimate(tournament.id, forceRefresh);
+    setAiLoading(false);
+    if (result) {
+      setAiEstimates(prev => ({ ...prev, [tournament.id]: result }));
+    } else {
+      setAiErrored(prev => ({ ...prev, [tournament.id]: true }));
+    }
   }
 
   return (
@@ -1116,31 +1140,47 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
               })()}
 
               {/* Trip cost estimator — upcoming, not-yet-played tournaments only */}
-              {tripEstimate && (() => {
-                const basisLabel = tripEstimate.basis === 'country'
+              {group === 'upcoming' && (tripEstimate || !DEMO_MODE) && (() => {
+                const basisLabel = tripEstimate?.basis === 'country'
                   ? t('tournament.tripEstimateBasisCountry')
-                  : tripEstimate.basis === 'category'
+                  : tripEstimate?.basis === 'category'
                     ? t('tournament.tripEstimateBasisCategory')
                     : t('tournament.tripEstimateBasisOverall');
-                const tournamentWord = tripEstimate.sampleSize === 1
+                const tournamentWord = tripEstimate?.sampleSize === 1
                   ? t('tournament.estimatedTripCostTournament')
                   : t('tournament.estimatedTripCostTournaments');
                 return (
                   <>
                     <Text style={det.sectionLabel}>{t('tournament.estimatedTripCost')}</Text>
                     <View style={det.tripEstimateCard}>
-                      <IconSymbol name="paperplane.fill" size={18} color={T.amber} style={{ marginRight: 10 }} />
-                      <View style={{ flex: 1 }}>
-                        <Text style={det.tripEstimateAmount}>
-                          ~${Math.round(tripEstimate.estimate).toLocaleString()}
-                          <Text style={det.tripEstimateRange}>
-                            {'  '}({t('tournament.estimatedTripCostRangeLabel')} ${Math.round(tripEstimate.low).toLocaleString()}–${Math.round(tripEstimate.high).toLocaleString()})
-                          </Text>
-                        </Text>
-                        <Text style={det.tripEstimateMeta}>
-                          {t('tournament.estimatedTripCostBasedOnPast')} {tripEstimate.sampleSize} {tournamentWord} {basisLabel}
-                        </Text>
-                      </View>
+                      {tripEstimate ? (
+                        <>
+                          <IconSymbol name="paperplane.fill" size={18} color={T.amber} style={{ marginRight: 10 }} />
+                          <View style={{ flex: 1 }}>
+                            <Text style={det.tripEstimateAmount}>
+                              ~${Math.round(tripEstimate.estimate).toLocaleString()}
+                              <Text style={det.tripEstimateRange}>
+                                {'  '}({t('tournament.estimatedTripCostRangeLabel')} ${Math.round(tripEstimate.low).toLocaleString()}–${Math.round(tripEstimate.high).toLocaleString()})
+                              </Text>
+                            </Text>
+                            <Text style={det.tripEstimateMeta}>
+                              {t('tournament.estimatedTripCostBasedOnPast')} {tripEstimate.sampleSize} {tournamentWord} {basisLabel}
+                            </Text>
+                          </View>
+                        </>
+                      ) : (
+                        <View style={{ flex: 1 }} />
+                      )}
+                      {!DEMO_MODE && (
+                        <TouchableOpacity
+                          style={det.aiBreakdownBtn}
+                          onPress={() => openAiBreakdown(false)}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={det.aiBreakdownBtnText}>{t('tournament.aiBreakdown')}</Text>
+                          <Text style={det.aiBreakdownChevron}>›</Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
                   </>
                 );
@@ -1202,6 +1242,109 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
           onCancel={() => setShowWithdraw(false)}
           t={t}
         />
+      )}
+
+      {showAiBreakdown && (
+        <Modal transparent animationType="slide" onRequestClose={() => setShowAiBreakdown(false)}>
+          <Pressable style={det.aiSheetBackdrop} onPress={() => setShowAiBreakdown(false)} />
+          <View style={det.aiSheet}>
+            <View style={det.aiSheetHandle} />
+            <ScrollView style={det.aiSheetScroll} keyboardShouldPersistTaps="handled">
+              {aiLoading ? (
+                <View style={det.aiLoadingWrap}>
+                  <ActivityIndicator size="small" color={T.accent} />
+                  <Text style={det.aiLoadingText}>{t('tournament.aiBreakdownLoading')}</Text>
+                </View>
+              ) : aiErrored[tournament.id] || !aiEstimates[tournament.id] ? (
+                <View style={det.aiErrorWrap}>
+                  <Text style={det.aiErrorText}>{t('tournament.aiErrorMessage')}</Text>
+                </View>
+              ) : (() => {
+                const est = aiEstimates[tournament.id]!;
+                const tierChip = est.data_tier === 'personal_history'
+                  ? { label: t('tournament.aiTierPersonalHistory'), bg: T.accentMuted, color: T.accent }
+                  : est.data_tier === 'peer_aggregate'
+                    ? { label: t('tournament.aiTierPeerAggregate'), bg: T.tealMuted, color: T.teal }
+                    : { label: t('tournament.aiTierHeuristic'), bg: 'rgba(217, 119, 6, 0.16)', color: T.amber };
+                const confidenceLabel = est.confidence === 'high'
+                  ? t('tournament.aiConfidenceHigh')
+                  : est.confidence === 'medium'
+                    ? t('tournament.aiConfidenceMedium')
+                    : t('tournament.aiConfidenceLow');
+                const sampleUnit = est.data_tier === 'personal_history'
+                  ? t('tournament.aiSampleTrips')
+                  : t('tournament.aiSamplePlayers');
+                const categoryRows: { key: keyof typeof est.categories; icon: string; labelKey: any }[] = [
+                  { key: 'flight', icon: '✈️', labelKey: 'tournament.aiCategoryFlight' },
+                  { key: 'lodging', icon: '🏨', labelKey: 'tournament.aiCategoryLodging' },
+                  { key: 'food', icon: '🍽️', labelKey: 'tournament.aiCategoryFood' },
+                  { key: 'local_transport', icon: '🚕', labelKey: 'tournament.aiCategoryLocalTransport' },
+                  { key: 'entry_fee', icon: '🎾', labelKey: 'tournament.aiCategoryEntryFee' },
+                ];
+                return (
+                  <>
+                    <View style={det.aiSheetHeaderRow}>
+                      <Text style={det.aiSheetTitle}>{tournament.name}</Text>
+                      <View style={det.aiBadgeRow}>
+                        <View style={[det.aiTierChip, { backgroundColor: tierChip.bg }]}>
+                          <Text style={[det.aiTierChipText, { color: tierChip.color }]}>{tierChip.label}</Text>
+                        </View>
+                        <View style={det.aiConfidencePill}>
+                          <Text style={det.aiConfidencePillText}>{confidenceLabel}</Text>
+                        </View>
+                        {typeof est.sample_size === 'number' && (
+                          <Text style={det.aiSampleText}>{est.sample_size} {sampleUnit}</Text>
+                        )}
+                      </View>
+                    </View>
+
+                    {categoryRows.map(row => {
+                      const cat = est.categories[row.key];
+                      if (!cat) return null;
+                      return (
+                        <View key={row.key} style={det.aiCategoryRow}>
+                          <Text style={det.aiCategoryIcon}>{row.icon}</Text>
+                          <View style={{ flex: 1 }}>
+                            <Text style={det.aiCategoryLabel}>{t(row.labelKey)}</Text>
+                            <Text style={det.aiCategoryBasis}>{cat.basis}</Text>
+                          </View>
+                          <Text style={det.aiCategoryAmount}>${Math.round(cat.amount).toLocaleString()}</Text>
+                        </View>
+                      );
+                    })}
+
+                    <View style={det.aiTotalRow}>
+                      <Text style={det.aiTotalLabel}>{t('tournament.aiTotal')}</Text>
+                      <Text style={det.aiTotalAmount}>${Math.round(est.total).toLocaleString()}</Text>
+                    </View>
+
+                    {est.comparison_to_user_average && (
+                      <Text style={det.aiComparisonText}>{est.comparison_to_user_average}</Text>
+                    )}
+
+                    {est.caveats.length > 0 && (
+                      <View style={det.aiCaveatsWrap}>
+                        {est.caveats.map((c, i) => (
+                          <View key={i} style={det.aiCaveatRow}>
+                            <Text style={det.aiCaveatDot}>●</Text>
+                            <Text style={det.aiCaveatText}>{c}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+
+                    <View style={det.aiFooter}>
+                      <TouchableOpacity style={det.aiRefreshBtn} onPress={() => openAiBreakdown(true)} activeOpacity={0.7}>
+                        <Text style={det.aiRefreshBtnText}>{t('tournament.aiRefresh')}</Text>
+                      </TouchableOpacity>
+                      <Text style={det.aiDisclaimerText}>{t('tournament.aiDisclaimer')}</Text>
+                    </View>
+                  </>
+                );
+              })()}
+            </ScrollView>
+          </View>
+        </Modal>
       )}
     </Modal>
   );
@@ -2983,4 +3126,45 @@ const det = StyleSheet.create({
   tripEstimateAmount: { fontSize: 15, fontWeight: '700', color: T.amber },
   tripEstimateRange: { fontSize: 13, fontWeight: '500', color: T.textSecondary },
   tripEstimateMeta: { fontSize: 12, color: T.textTertiary, marginTop: 4, lineHeight: 16 },
+  aiBreakdownBtn: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', marginLeft: 8 },
+  aiBreakdownBtnText: { fontSize: 12, fontWeight: '700', color: T.accent },
+  aiBreakdownChevron: { fontSize: 16, fontWeight: '700', color: T.accent, marginLeft: 2 },
+  // AI breakdown bottom sheet
+  aiSheetBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' },
+  aiSheet: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    backgroundColor: T.card, borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    maxHeight: '85%', paddingBottom: 30,
+  },
+  aiSheetHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: '#3A3A5C', alignSelf: 'center', marginTop: 10, marginBottom: 14 },
+  aiSheetScroll: { paddingHorizontal: 20 },
+  aiSheetHeaderRow: { marginBottom: 14 },
+  aiSheetTitle: { fontSize: 17, fontWeight: '700', color: T.textPrimary, marginBottom: 8 },
+  aiBadgeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  aiTierChip: { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 },
+  aiTierChipText: { fontSize: 11, fontWeight: '700' },
+  aiConfidencePill: { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4, backgroundColor: T.cardBorder },
+  aiConfidencePillText: { fontSize: 11, fontWeight: '600', color: T.textSecondary },
+  aiSampleText: { fontSize: 12, color: T.textTertiary },
+  aiLoadingWrap: { alignItems: 'center', justifyContent: 'center', paddingVertical: 40, gap: 12 },
+  aiLoadingText: { fontSize: 13, color: T.textSecondary },
+  aiErrorWrap: { alignItems: 'center', justifyContent: 'center', paddingVertical: 40, paddingHorizontal: 12 },
+  aiErrorText: { fontSize: 14, color: T.textSecondary, textAlign: 'center', lineHeight: 20 },
+  aiCategoryRow: { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: T.cardBorder },
+  aiCategoryIcon: { fontSize: 18, marginRight: 12, marginTop: 1 },
+  aiCategoryLabel: { fontSize: 14, fontWeight: '600', color: T.textPrimary },
+  aiCategoryBasis: { fontSize: 12, color: T.textTertiary, marginTop: 2, lineHeight: 16 },
+  aiCategoryAmount: { fontSize: 14, fontWeight: '700', color: T.textPrimary, marginLeft: 12 },
+  aiTotalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14, marginTop: 4 },
+  aiTotalLabel: { fontSize: 15, fontWeight: '700', color: T.textPrimary },
+  aiTotalAmount: { fontSize: 18, fontWeight: '800', color: T.accent },
+  aiComparisonText: { fontSize: 13, color: T.textSecondary, lineHeight: 19, marginBottom: 12 },
+  aiCaveatsWrap: { marginBottom: 8 },
+  aiCaveatRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 6 },
+  aiCaveatDot: { fontSize: 8, color: T.amber, marginRight: 8, marginTop: 5 },
+  aiCaveatText: { flex: 1, fontSize: 12, color: T.textTertiary, lineHeight: 17 },
+  aiFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, paddingTop: 14, borderTopWidth: 1, borderTopColor: T.cardBorder },
+  aiRefreshBtn: { paddingVertical: 4, paddingRight: 8 },
+  aiRefreshBtnText: { fontSize: 13, fontWeight: '700', color: T.teal },
+  aiDisclaimerText: { fontSize: 11, color: T.textTertiary, flex: 1, textAlign: 'right', marginLeft: 12 },
 });

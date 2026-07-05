@@ -450,9 +450,25 @@ export default function SettingsScreen() {
           )}
         </View>}
 
-        {/* ── EXPORT DATA ── */}
+        {/* ── PRIVACY & DATA ── */}
         <AccordionHeader label={t('settings.exportData')} open={openSection === 'export'} onPress={() => toggleSection('export')} />
         {openSection === 'export' && <View style={s.card}>
+          <View style={s.row}>
+            <View style={{ flex: 1 }}>
+              <Text style={s.rowLabel}>{t('settings.shareAnonymizedCostData')}</Text>
+              <Text style={{ fontSize: 12, color: T.textSecondary, marginTop: 4, lineHeight: 17 }}>
+                {t('settings.shareAnonymizedCostDataDesc')}
+              </Text>
+            </View>
+            <Switch
+              value={p?.share_expense_data ?? false}
+              onValueChange={v => toggleNotif('share_expense_data', v)}
+              trackColor={{ false: T.cardBorder, true: T.teal }}
+              thumbColor={T.textPrimary}
+              style={{ marginLeft: 12 }}
+            />
+          </View>
+          <Sep />
           <TouchableOpacity
             style={s.row}
             activeOpacity={0.6}
@@ -863,7 +879,7 @@ export default function SettingsScreen() {
             <View style={s.modalCard}>
               <Text style={s.modalTitle}>Invite Coach / Agent</Text>
               <Text style={{ fontSize: 14, color: T.textSecondary, textAlign: 'center', marginBottom: 16 }}>
-                They'll get read-only access to your tournaments and expenses.
+                They&apos;ll get read-only access to your tournaments and expenses.
               </Text>
               <TextInput
                 style={s.modalInput}
