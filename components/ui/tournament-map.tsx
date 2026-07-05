@@ -41,12 +41,24 @@ function matchCity(candidate: string, countryCode?: string): [number, number] | 
   return fallback;
 }
 
+// Source data carries noise: "Berlin (Cancelled)", "Ithaca, NY", "Roehampton 2",
+// "yanagawa city", trailing spaces. Strip it so those still hit the city table.
+function cleanCityName(s: string): string {
+  return s
+    .replace(/\(.*?\)/g, '')
+    .replace(/,\s*[A-Z]{2}\s*$/i, '')
+    .replace(/,\s*$/, '')
+    .replace(/\s+\d+$/, '')
+    .replace(/\s+city$/i, '')
+    .trim();
+}
+
 function lookupCoords(city?: string, country?: string, name?: string): [number, number] | null {
   const countryCode = country && country.trim().length === 2 ? country.trim() : undefined;
 
-  // 1. Try explicit city field
+  // 1. Try explicit city field (cleaned first, raw as fallback)
   if (city) {
-    const hit = matchCity(city, countryCode);
+    const hit = matchCity(cleanCityName(city), countryCode) ?? matchCity(city, countryCode);
     if (hit) return hit;
   }
 
