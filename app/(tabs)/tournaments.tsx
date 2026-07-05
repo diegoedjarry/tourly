@@ -2373,6 +2373,7 @@ export default function TournamentsScreen() {
   ];
   const { data, isLoading } = useAppQuery({ tournaments: {} });
   const [activeFilter, setActiveFilter]   = useState<Filter>('all');
+  const [pastYear, setPastYear]           = useState<string | null>(null);
   const [showDiscovery, setShowDiscovery]  = useState(false);
   const [showAddForm, setShowAddForm]      = useState(false);
   const [detailId, setDetailId]           = useState<string | null>(null);
@@ -2612,6 +2613,32 @@ export default function TournamentsScreen() {
       }));
   }, [pastGroup, scrapedPastEntries, t]);
 
+  // Years with at least one past item, descending. 'unknown' weekKeys (no date)
+  // are attributed to the current year's bucket so they always have a home.
+  const currentYear = String(new Date().getFullYear());
+  const pastYears = useMemo(() => {
+    const years = new Set<string>();
+    for (const week of pastWeeksMerged) {
+      years.add(week.weekKey === 'unknown' ? currentYear : week.weekKey.slice(0, 4));
+    }
+    return Array.from(years).sort((a, b) => b.localeCompare(a));
+  }, [pastWeeksMerged, currentYear]);
+
+  // Effective selection: user's explicit pick if still valid, else current
+  // year (if it has items) else the most recent year that does.
+  const selectedPastYear = useMemo(() => {
+    if (pastYear && pastYears.includes(pastYear)) return pastYear;
+    if (pastYears.includes(currentYear)) return currentYear;
+    return pastYears[0] ?? currentYear;
+  }, [pastYear, pastYears, currentYear]);
+
+  const pastWeeksForYear = useMemo(
+    () => pastWeeksMerged.filter(week =>
+      (week.weekKey === 'unknown' ? currentYear : week.weekKey.slice(0, 4)) === selectedPastYear
+    ),
+    [pastWeeksMerged, selectedPastYear, currentYear]
+  );
+
   async function materializeAndOpen(entry: { name: string; startDate: string; endDate: string; surface: string | null }) {
     if (DEMO_MODE) return;
     const key = `${entry.name}|${entry.startDate}`;
@@ -2771,7 +2798,22 @@ export default function TournamentsScreen() {
           pastWeeksMerged.length > 0 && (
           <>
             <Text style={styles.sectionLabel}>{t('tournaments.past').toUpperCase()}</Text>
-            {pastWeeksMerged.map(week => (
+            <View style={styles.yearPillRow}>
+              {pastYears.map(year => {
+                const isSelected = year === selectedPastYear;
+                const label = year === currentYear ? t('tournaments.thisYear') : year;
+                return (
+                  <TouchableOpacity key={year}
+                    style={[styles.yearPill, isSelected ? styles.yearPillActive : styles.yearPillInactive]}
+                    onPress={() => setPastYear(year)} activeOpacity={0.7}>
+                    <Text style={[styles.yearPillText, isSelected ? styles.yearPillTextActive : styles.yearPillTextInactive]}>
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            {pastWeeksForYear.map(week => (
               <View key={week.weekKey}>
                 <Text style={styles.weekLabel}>{week.weekLabel}</Text>
                 {week.items.map(({ kind, item }) => kind === 'own' ? (
@@ -2938,6 +2980,13 @@ const styles = StyleSheet.create({
   filterChipText: { fontSize: 13, fontWeight: '600' },
   filterChipTextActive: { color: T.textPrimary },
   filterChipTextInactive: { color: T.textTertiary },
+  yearPillRow: { flexDirection: 'row', gap: 8, marginBottom: 12, flexWrap: 'wrap' },
+  yearPill: { borderRadius: 20, paddingHorizontal: 14, paddingVertical: 6, borderWidth: 1 },
+  yearPillActive: { backgroundColor: T.accent, borderColor: T.accent },
+  yearPillInactive: { backgroundColor: T.card, borderColor: T.cardBorder },
+  yearPillText: { fontSize: 13, fontWeight: '600' },
+  yearPillTextActive: { color: '#FFFFFF' },
+  yearPillTextInactive: { color: T.textTertiary },
   sectionLabel: { fontSize: 11, fontWeight: '600', color: T.textTertiary, letterSpacing: 0.8, marginBottom: 10, marginTop: 4 },
   weekLabel: { fontSize: 13, fontWeight: '700', color: T.textSecondary, marginBottom: 8, marginTop: 12, paddingLeft: 2 },
   selectBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, paddingHorizontal: 4 },

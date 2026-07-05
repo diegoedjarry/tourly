@@ -2729,16 +2729,20 @@ function CategoryBreakdown({ expenses, onSelectCategory }: {
 function TournamentBreakdown({ expenses: expensesRaw, tournaments, onTap }: {
   expenses: any[]; tournaments: any[]; onTap: (t: any) => void;
 }) {
+  const { t } = useLanguage();
+  const [showGeneral, setShowGeneral] = useState(false);
   const expenses = effectiveExpenses(expensesRaw);
   const rows = useMemo(() => {
     const byTournament: Record<string, number> = {};
     const unlinked = { total: 0, count: 0 };
+    const unlinkedExpenses: any[] = [];
     for (const e of expenses) {
       if (e.tournamentId) {
         byTournament[e.tournamentId] = (byTournament[e.tournamentId] ?? 0) + effectiveUsd(e);
       } else {
         unlinked.total += effectiveUsd(e);
         unlinked.count++;
+        unlinkedExpenses.push(e);
       }
     }
     const mapped = Object.entries(byTournament)
@@ -2748,8 +2752,26 @@ function TournamentBreakdown({ expenses: expensesRaw, tournaments, onTap }: {
       })
       .filter(Boolean)
       .sort((a: any, b: any) => (b.startDate ?? '').localeCompare(a.startDate ?? ''));
-    return { mapped: mapped as any[], unlinked };
+    return { mapped: mapped as any[], unlinked, unlinkedExpenses };
   }, [expenses, tournaments]);
+
+  // Group the unlinked expenses by category for the drill sheet: each group
+  // subtotal descending, expenses newest-first within a group — mirrors the
+  // ordering conventions of buildPieData/drillCategory elsewhere in this file.
+  const generalGroups = useMemo(() => {
+    const byCat: Record<string, any[]> = {};
+    for (const e of rows.unlinkedExpenses) {
+      const cat = groupCategory(normalizeCat(e.category ?? 'Other'));
+      (byCat[cat] ??= []).push(e);
+    }
+    return Object.entries(byCat)
+      .map(([cat, items]) => ({
+        cat,
+        total: items.reduce((s, e) => s + effectiveUsd(e), 0),
+        items: [...items].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? '')),
+      }))
+      .sort((a, b) => b.total - a.total);
+  }, [rows.unlinkedExpenses]);
 
   if (rows.mapped.length === 0 && rows.unlinked.count === 0) return null;
 
@@ -2771,17 +2793,71 @@ function TournamentBreakdown({ expenses: expensesRaw, tournaments, onTap }: {
         );
       })}
       {rows.unlinked.count > 0 && (
-        <View style={tb.row}>
+        <TouchableOpacity style={tb.row} activeOpacity={0.7} onPress={() => setShowGeneral(true)}>
           <View style={tb.rowLeft}>
             <Text style={tb.rowName}>General expenses</Text>
             <Text style={tb.rowDate}>{rows.unlinked.count} item{rows.unlinked.count !== 1 ? 's' : ''}</Text>
           </View>
           <Text style={tb.rowAmount}>${Math.round(rows.unlinked.total).toLocaleString()}</Text>
-        </View>
+        </TouchableOpacity>
       )}
+
+      {showGeneral && (() => {
+        const closeSheet = () => setShowGeneral(false);
+        return (
+          <Modal transparent animationType="slide" onRequestClose={closeSheet}>
+            <Pressable style={drillStyles.backdrop} onPress={closeSheet}>
+              <Pressable style={drillStyles.sheet} onPress={() => {}}>
+                <View style={drillStyles.handle} />
+                <View style={drillStyles.header}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={drillStyles.title}>{t('expenses.generalExpenses')}</Text>
+                  </View>
+                  <Text style={drillStyles.total}>${Math.round(rows.unlinked.total).toLocaleString()}</Text>
+                </View>
+                <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+                  {generalGroups.length === 0 ? (
+                    <Text style={drillStyles.empty}>No expenses in this category.</Text>
+                  ) : generalGroups.map((g) => (
+                    <View key={g.cat}>
+                      <View style={tbGeneral.groupHeader}>
+                        <Text style={tbGeneral.groupHeaderLabel}>{g.cat}</Text>
+                        <Text style={tbGeneral.groupHeaderTotal}>{fmt(g.total)}</Text>
+                      </View>
+                      {g.items.map((e: any, i: number) => (
+                        <View key={e.id ?? i} style={drillStyles.row}>
+                          <View style={{ flex: 1, marginRight: 12 }}>
+                            <Text style={drillStyles.rowNote} numberOfLines={1}>{e.note || e.merchant || t('expenses.noDescription')}</Text>
+                            <Text style={drillStyles.rowDate}>{e.date}</Text>
+                          </View>
+                          <View style={{ alignItems: 'flex-end' }}>
+                            <Text style={drillStyles.rowAmt}>{fmtRowAmount(e)}</Text>
+                            {e.currency && e.currency !== 'USD' && e.amountUsd != null && (
+                              <Text style={{ fontSize: 11, color: T.textTertiary, marginTop: 1 }}>≈ {fmt(e.amountUsd)}</Text>
+                            )}
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  ))}
+                </ScrollView>
+                <TouchableOpacity style={drillStyles.closeBtn} onPress={closeSheet} activeOpacity={0.7}>
+                  <Text style={drillStyles.closeBtnText}>{t('common.close')}</Text>
+                </TouchableOpacity>
+              </Pressable>
+            </Pressable>
+          </Modal>
+        );
+      })()}
     </View>
   );
 }
+
+const tbGeneral = StyleSheet.create({
+  groupHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 14, paddingBottom: 6 },
+  groupHeaderLabel: { fontSize: 12, fontWeight: '700', color: T.textTertiary, letterSpacing: 0.4, textTransform: 'uppercase' },
+  groupHeaderTotal: { fontSize: 12, fontWeight: '700', color: T.textTertiary },
+});
 
 const tb = StyleSheet.create({
   card: { backgroundColor: T.card, borderRadius: 16, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: T.cardBorder },

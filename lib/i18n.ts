@@ -372,6 +372,8 @@ const strings = {
   'expenses.recent': { en: 'Recent', es: 'Recientes' },
   'expenses.deletedUndo': { en: 'Deleted — UNDO', es: 'Eliminado — DESHACER' },
   'expenses.undo': { en: 'UNDO', es: 'DESHACER' },
+  'expenses.generalExpenses': { en: 'General Expenses', es: 'Gastos Generales' },
+  'expenses.noDescription': { en: 'No description', es: 'Sin descripción' },
   'expense.reimbursed': { en: 'Reimbursed', es: 'Reembolsado' },
   'expense.reimbursedToggle': { en: 'This expense is reimbursed', es: 'Este gasto está reembolsado' },
   'expense.splitCost': { en: 'Split cost…', es: 'Dividir costo…' },
@@ -414,6 +416,7 @@ const strings = {
   'tournaments.nameRequired': { en: 'Tournament name is required.', es: 'El nombre del torneo es obligatorio.' },
   'tournaments.dateRequired': { en: 'Start date is required.', es: 'La fecha de inicio es obligatoria.' },
   'tournaments.noDate': { en: 'No date', es: 'Sin fecha' },
+  'tournaments.thisYear': { en: 'This Year', es: 'Este Año' },
 
   // Tournament detail
   'tournament.status': { en: 'STATUS', es: 'ESTADO' },
