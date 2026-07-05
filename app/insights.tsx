@@ -9,14 +9,13 @@ import {
 import { Text } from '@/components/ui/text';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import Svg, { Path } from 'react-native-svg';
+import Svg from 'react-native-svg';
 import { useAppQuery } from '@/hooks/useAppQuery';
 import { T } from '@/constants/theme';
 import { useLanguage } from '@/hooks/useLanguage';
 import { getMonthAbbr } from '@/lib/i18n';
 import { supabase } from '@/lib/supabase';
 import { LoadingLogo, LoadingFade } from '@/components/ui/LoadingLogo';
-import { RankingChart } from '@/components/ui/RankingChart';
 import { countryFlag } from '@/utils/countryFlag';
 
 type Surface = 'clay' | 'hard' | 'grass';
@@ -74,6 +73,25 @@ function getPrize(t: any): number {
   return split > 0 ? split : (t.prizeMoney ?? 0);
 }
 
+// Single source of truth for effective spend on this screen: USD-normalized
+// amount, scaled by the user's ownership share. Reimbursed expenses are
+// excluded entirely — callers filter them out before summing (see
+// effectiveExpenses / effectiveSum below). Mirrors the rule used in
+// app/(tabs)/expenses.tsx.
+function effectiveUsd(e: any): number {
+  const base = e?.amountUsd ?? e?.amount ?? 0;
+  const pct = e?.sharePct ?? 100;
+  return base * (pct / 100);
+}
+
+function effectiveExpenses(expenses: any[]): any[] {
+  return expenses.filter((e: any) => e?.isReimbursed !== true);
+}
+
+function effectiveSum(expenses: any[]): number {
+  return effectiveExpenses(expenses).reduce((s: number, e: any) => s + effectiveUsd(e), 0);
+}
+
 // ─── Shared wrapper ──────────────────────────────────────────────────────────
 
 function DetailScreen({ title, children }: { title: string; children: React.ReactNode }) {
@@ -101,10 +119,12 @@ function WhereMoneyGoes({ expenses, tournaments }: { expenses: any[]; tournament
   const [expandedCat, setExpandedCat] = useState<string | null>(null);
   const { t, lang } = useLanguage();
 
+  const effExpenses = useMemo(() => effectiveExpenses(expenses), [expenses]);
+
   const grouped: Record<string, number> = {};
-  for (const e of expenses) {
+  for (const e of effExpenses) {
     const cat = e.category ?? 'Other';
-    grouped[cat] = (grouped[cat] ?? 0) + (e.amount ?? 0);
+    grouped[cat] = (grouped[cat] ?? 0) + effectiveUsd(e);
   }
   const sorted = Object.entries(grouped).sort((a, b) => b[1] - a[1]);
   const total = sorted.reduce((s, [, v]) => s + v, 0);
@@ -119,7 +139,7 @@ function WhereMoneyGoes({ expenses, tournaments }: { expenses: any[]; tournament
         {sorted.map(([cat, val]) => {
           const pct = total > 0 ? (val / total) * 100 : 0;
           const color = catColor(cat);
-          const catExpenses = expenses
+          const catExpenses = effExpenses
             .filter((e: any) => (e.category ?? 'Other') === cat)
             .sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''));
 
@@ -163,7 +183,7 @@ function WhereMoneyGoes({ expenses, tournaments }: { expenses: any[]; tournament
                             ].filter(Boolean).join(' · ')}
                           </Text>
                         </View>
-                        <Text style={ds.barDetailAmount}>{fmtFull(e.amount ?? 0)}</Text>
+                        <Text style={ds.barDetailAmount}>{fmtFull(effectiveUsd(e))}</Text>
                       </View>
                     );
                   })}
@@ -193,16 +213,16 @@ function CostBySurface({ tournaments, expenses }: { tournaments: any[]; expenses
     });
     const count = ts.length;
     const totalSpent = ts.reduce((sum: number, t: any) => {
-      return sum + expenses.filter((e: any) => e.tournamentId === t.id).reduce((s2: number, e: any) => s2 + (e.amount ?? 0), 0);
+      return sum + effectiveSum(expenses.filter((e: any) => e.tournamentId === t.id));
     }, 0);
     const totalPrize = ts.reduce((sum: number, t: any) => sum + getPrize(t), 0);
     return { surface: s, count, avgSpent: count > 0 ? totalSpent / count : 0, avgPrize: count > 0 ? totalPrize / count : 0 };
-  }).filter(d => d.count > 0);
+  }).filter(d => d.count >= 3);
 
   return (
     <DetailScreen title="Cost By Surface">
       {data.length === 0 ? (
-        <Text style={ds.emptyText}>No tournament data yet. Add tournaments with surface info to see insights.</Text>
+        <Text style={ds.emptyText}>Need at least 3 tournaments on a surface to show a reliable comparison. Keep logging tournaments and expenses.</Text>
       ) : data.map(d => {
         const sc = SURFACE_COLORS[d.surface];
         const surfaceTournaments = tournaments.filter((t: any) => {
@@ -228,7 +248,7 @@ function CostBySurface({ tournaments, expenses }: { tournaments: any[]; expenses
                     {expandedSurface === d.surface ? '▼' : '▶'}
                   </Text>
                 </View>
-                <Text style={ds.surfaceCount}>{d.count} tournament{d.count !== 1 ? 's' : ''}</Text>
+                <Text style={ds.surfaceCount}>({d.count} trips)</Text>
               </View>
             </View>
             <View style={ds.surfaceStats}>
@@ -245,7 +265,7 @@ function CostBySurface({ tournaments, expenses }: { tournaments: any[]; expenses
             {expandedSurface === d.surface && (
               <View style={ds.nestedList}>
                 {surfaceTournaments.map((t: any, idx: number) => {
-                  const spent = expenses.filter((e: any) => e.tournamentId === t.id).reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
+                  const spent = effectiveSum(expenses.filter((e: any) => e.tournamentId === t.id));
                   const prize = getPrize(t);
                   return (
                     <TouchableOpacity
@@ -299,9 +319,7 @@ function CostByCountry({ tournaments, expenses }: { tournaments: any[]; expenses
       let totalSpent = 0, totalPrize = 0, totalDays = 0;
 
       const enriched = ts.map((t: any) => {
-        const spent = expenses
-          .filter((e: any) => e.tournamentId === t.id)
-          .reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
+        const spent = effectiveSum(expenses.filter((e: any) => e.tournamentId === t.id));
         const prize = getPrize(t);
         const days = tournamentDays(t);
         totalSpent += spent;
@@ -320,15 +338,16 @@ function CostByCountry({ tournaments, expenses }: { tournaments: any[]; expenses
         perDay: totalDays > 0 ? totalSpent / totalDays : 0,
         tournaments: enriched,
       };
-    // Primary sort: cost per day (apples-to-apples across trips of different lengths)
-    }).sort((a, b) => b.perDay - a.perDay);
+    // Primary sort: cost per day (apples-to-apples across trips of different lengths).
+    // n >= 3 gate: a single trip's $/day is noise, not a country comparison.
+    }).filter(d => d.count >= 3).sort((a, b) => b.perDay - a.perDay);
   }, [tournaments, expenses]);
 
   return (
     <DetailScreen title="Cost By Country">
       <Text style={[ds.subLabel, { marginBottom: 12 }]}>Sorted by cost/day — the comparable number between trips of different lengths</Text>
       {data.length === 0 ? (
-        <Text style={ds.emptyText}>No tournament data yet. Add tournaments with country info to see insights.</Text>
+        <Text style={ds.emptyText}>Need at least 3 tournaments in a country to show a reliable comparison. Keep logging tournaments and expenses.</Text>
       ) : data.map(d => (
         <TouchableOpacity
           key={d.country}
@@ -348,7 +367,7 @@ function CostByCountry({ tournaments, expenses }: { tournaments: any[]; expenses
                 </Text>
               </View>
               <Text style={ds.surfaceCount}>
-                {d.count} tournament{d.count !== 1 ? 's' : ''} · {d.totalDays} days
+                ({d.count} trips · {d.totalDays} days)
               </Text>
             </View>
           </View>
@@ -404,7 +423,7 @@ function TournamentCosts({ tournaments, expenses }: { tournaments: any[]; expens
   const ranked = tournaments
     .filter((t: any) => !t.isWithdrawn)
     .map((t: any) => {
-      const spent = expenses.filter((e: any) => e.tournamentId === t.id).reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
+      const spent = effectiveSum(expenses.filter((e: any) => e.tournamentId === t.id));
       return { ...t, spent, prize: getPrize(t) };
     })
     .filter(t => t.spent > 0)
@@ -438,226 +457,6 @@ function TournamentCosts({ tournaments, expenses }: { tournaments: any[]; expens
   );
 }
 
-// ─── 4. Season Heatmap ───────────────────────────────────────────────────────
-
-function SeasonHeatmap({ expenses, tournaments }: { expenses: any[]; tournaments: any[] }) {
-  const { width } = useWindowDimensions();
-  const now = new Date();
-  const [selectedYear, setSelectedYear] = useState(now.getFullYear());
-  const [selectedWeek, setSelectedWeek] = useState<number | null>(null);
-
-  const GAP = 3;
-  const CELL = Math.floor((width - 40 - 11 * GAP) / 12);
-  const MONTHS = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
-  const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-  // Build Monday-start weeks for the selected year, grouped by month
-  const { monthWeeks, weekData } = useMemo(() => {
-    // Find the first Monday on or before Jan 1
-    const jan1 = new Date(selectedYear, 0, 1);
-    const jan1Day = jan1.getDay(); // 0=Sun
-    const firstMonday = new Date(selectedYear, 0, 1 - ((jan1Day + 6) % 7));
-
-    // Generate all Monday-start weeks that have at least one day in this year
-    const allWeeks: { start: Date; end: Date; month: number; weekIndex: number }[] = [];
-    let weekIndex = 0;
-    let monday = new Date(firstMonday);
-    while (monday.getFullYear() <= selectedYear) {
-      const sunday = new Date(monday);
-      sunday.setDate(sunday.getDate() + 6);
-      // A week belongs to the month of its Monday
-      const weekMonth = monday.getMonth();
-      const weekYear = monday.getFullYear();
-      // Only include if the Monday is in the selected year
-      if (weekYear === selectedYear) {
-        allWeeks.push({ start: new Date(monday), end: sunday, month: weekMonth, weekIndex });
-        weekIndex++;
-      }
-      monday.setDate(monday.getDate() + 7);
-    }
-
-    // Group weeks by month
-    const grouped: { start: Date; end: Date; month: number; weekIndex: number }[][] = Array.from({ length: 12 }, () => []);
-    for (const w of allWeeks) {
-      grouped[w.month].push(w);
-    }
-
-    // Calculate spending per week
-    const spendByWeek: Record<number, number> = {};
-    const tournamentsByWeek: Record<number, any[]> = {};
-    for (const w of allWeeks) {
-      spendByWeek[w.weekIndex] = 0;
-      tournamentsByWeek[w.weekIndex] = [];
-    }
-
-    for (const e of expenses) {
-      const d = parseLocalDate(e.date);
-      if (!d || d.getFullYear() !== selectedYear) continue;
-      // Find which week this date falls into
-      for (const w of allWeeks) {
-        if (d >= w.start && d <= w.end) {
-          spendByWeek[w.weekIndex] += e.amount ?? 0;
-          break;
-        }
-      }
-    }
-
-    // Map tournaments to weeks by startDate
-    for (const t of tournaments) {
-      const d = parseLocalDate(t.startDate);
-      if (!d || d.getFullYear() !== selectedYear) continue;
-      for (const w of allWeeks) {
-        if (d >= w.start && d <= w.end) {
-          if (!tournamentsByWeek[w.weekIndex]) tournamentsByWeek[w.weekIndex] = [];
-          tournamentsByWeek[w.weekIndex].push(t);
-          break;
-        }
-      }
-    }
-
-    return {
-      monthWeeks: grouped,
-      weekData: { allWeeks, spendByWeek, tournamentsByWeek },
-    };
-  }, [expenses, tournaments, selectedYear]);
-
-  // Calculate thresholds from non-zero spending
-  const { lowThreshold, highThreshold } = useMemo(() => {
-    const nonZero = Object.values(weekData.spendByWeek).filter(s => s > 0).sort((a, b) => a - b);
-    if (nonZero.length === 0) return { lowThreshold: 1, highThreshold: 2 };
-    const third = Math.ceil(nonZero.length / 3);
-    return {
-      lowThreshold: nonZero[Math.min(third, nonZero.length - 1)],
-      highThreshold: nonZero[Math.min(third * 2, nonZero.length - 1)],
-    };
-  }, [weekData.spendByWeek]);
-
-  // Current week index
-  const currentWeekIndex = useMemo(() => {
-    if (selectedYear !== now.getFullYear()) return -1;
-    for (const w of weekData.allWeeks) {
-      if (now >= w.start && now <= w.end) return w.weekIndex;
-    }
-    return -1;
-  }, [selectedYear, weekData.allWeeks]);
-
-  function weekColor(spend: number): string {
-    if (spend === 0) return T.card;
-    if (spend <= lowThreshold) return T.accentMuted;
-    if (spend <= highThreshold) return T.accent;
-    return T.red;
-  }
-
-  // Detail for selected week
-  const selectedDetail = useMemo(() => {
-    if (selectedWeek === null) return null;
-    const w = weekData.allWeeks.find(w => w.weekIndex === selectedWeek);
-    if (!w) return null;
-    const spend = weekData.spendByWeek[selectedWeek] ?? 0;
-    const tourns = weekData.tournamentsByWeek[selectedWeek] ?? [];
-    const startStr = `${MONTH_NAMES[w.start.getMonth()]} ${w.start.getDate()}`;
-    const endStr = `${MONTH_NAMES[w.end.getMonth()]} ${w.end.getDate()}`;
-    return { dateRange: `${startStr} — ${endStr}`, spend, tournaments: tourns };
-  }, [selectedWeek, weekData]);
-
-  const maxRows = Math.max(...monthWeeks.map(mw => mw.length), 1);
-
-  return (
-    <DetailScreen title="Season Heatmap">
-      {/* Year navigation */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 20, paddingVertical: 8 }}>
-        <TouchableOpacity onPress={() => { setSelectedYear(y => y - 1); setSelectedWeek(null); }} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
-          <Text style={{ fontSize: 28, color: T.accent, fontWeight: '300' }}>{'‹'}</Text>
-        </TouchableOpacity>
-        <View style={{ backgroundColor: T.cardBorder, borderRadius: 22, paddingHorizontal: 24, paddingVertical: 8 }}>
-          <Text style={{ fontSize: 16, fontWeight: '700', color: T.textPrimary }}>{selectedYear}</Text>
-        </View>
-        {selectedYear < now.getFullYear() ? (
-          <TouchableOpacity onPress={() => { setSelectedYear(y => y + 1); setSelectedWeek(null); }} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ fontSize: 28, color: T.accent, fontWeight: '300' }}>{'›'}</Text>
-          </TouchableOpacity>
-        ) : <View style={{ width: 44 }} />}
-      </View>
-
-      <Text style={[ds.subLabel, { textAlign: 'center', marginBottom: 16 }]}>Weekly spending intensity</Text>
-
-      {/* Month headers */}
-      <View style={{ flexDirection: 'row', gap: GAP, marginBottom: 6, paddingHorizontal: 0 }}>
-        {MONTHS.map((m, i) => (
-          <View key={i} style={{ width: CELL, alignItems: 'center' }}>
-            <Text style={{ fontSize: 10, fontWeight: '600', color: T.textTertiary, letterSpacing: 0.5 }}>{m}</Text>
-          </View>
-        ))}
-      </View>
-
-      {/* Grid: 12 columns (months) x maxRows rows (weeks) */}
-      {Array.from({ length: maxRows }).map((_, rowIdx) => (
-        <View key={rowIdx} style={{ flexDirection: 'row', gap: GAP, marginBottom: GAP }}>
-          {monthWeeks.map((mw, monthIdx) => {
-            const week = mw[rowIdx];
-            if (!week) {
-              return <View key={monthIdx} style={{ width: CELL, height: CELL }} />;
-            }
-            const spend = weekData.spendByWeek[week.weekIndex] ?? 0;
-            const isCurrent = week.weekIndex === currentWeekIndex;
-            const isSelected = week.weekIndex === selectedWeek;
-            return (
-              <TouchableOpacity
-                key={monthIdx}
-                activeOpacity={0.7}
-                onPress={() => setSelectedWeek(prev => prev === week.weekIndex ? null : week.weekIndex)}
-                style={{
-                  width: CELL,
-                  height: CELL,
-                  borderRadius: 3,
-                  backgroundColor: weekColor(spend),
-                  borderWidth: isCurrent ? 1.5 : isSelected ? 1.5 : 0,
-                  borderColor: isCurrent ? T.accent : isSelected ? T.textPrimary : 'transparent',
-                }}
-              />
-            );
-          })}
-        </View>
-      ))}
-
-      {/* Legend */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 16, marginTop: 20 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <View style={{ width: 12, height: 12, borderRadius: 3, backgroundColor: T.card }} />
-          <Text style={{ fontSize: 12, color: T.textSecondary }}>No data</Text>
-        </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <View style={{ width: 12, height: 12, borderRadius: 3, backgroundColor: T.accentMuted }} />
-          <Text style={{ fontSize: 12, color: T.textSecondary }}>Low</Text>
-        </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <View style={{ width: 12, height: 12, borderRadius: 3, backgroundColor: T.accent }} />
-          <Text style={{ fontSize: 12, color: T.textSecondary }}>Medium</Text>
-        </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <View style={{ width: 12, height: 12, borderRadius: 3, backgroundColor: T.red }} />
-          <Text style={{ fontSize: 12, color: T.textSecondary }}>High</Text>
-        </View>
-      </View>
-
-      {/* Selected week detail card */}
-      {selectedDetail && (
-        <View style={{ backgroundColor: T.card, borderRadius: 14, padding: 16, marginTop: 20, borderLeftWidth: 3, borderLeftColor: T.accent }}>
-          <Text style={{ fontSize: 14, fontWeight: '700', color: T.textPrimary }}>{selectedDetail.dateRange}</Text>
-          {selectedDetail.tournaments.length > 0 && (
-            <Text style={{ fontSize: 13, color: T.textSecondary, marginTop: 6 }}>
-              {selectedDetail.tournaments.map((t: any) => t.name).join(', ')}
-            </Text>
-          )}
-          <Text style={{ fontSize: 15, fontWeight: '700', color: selectedDetail.spend > 0 ? T.textPrimary : T.textTertiary, marginTop: 8 }}>
-            {selectedDetail.spend > 0 ? fmtFull(selectedDetail.spend) : 'No expenses'}
-          </Text>
-        </View>
-      )}
-    </DetailScreen>
-  );
-}
-
 // ─── 5. Coach Impact ─────────────────────────────────────────────────────────
 
 function CoachImpact({ tournaments, expenses }: { tournaments: any[]; expenses: any[] }) {
@@ -669,7 +468,7 @@ function CoachImpact({ tournaments, expenses }: { tournaments: any[]; expenses: 
     const tExp = expenses.filter((e: any) => e.tournamentId === t.id);
     if (tExp.length === 0) continue;
     const hasCoachExp = tExp.some((e: any) => e.isCoachExpense);
-    const total = tExp.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
+    const total = effectiveSum(tExp);
     if (hasCoachExp || t.traveledWithCoach) {
       withCoach.push({ ...t, totalSpent: total });
     } else {
@@ -766,8 +565,9 @@ function CoachImpact({ tournaments, expenses }: { tournaments: any[]; expenses: 
 // ─── 6. Biggest Expenses ─────────────────────────────────────────────────────
 
 function BiggestExpenses({ expenses, tournaments }: { expenses: any[]; tournaments: any[] }) {
-  const total = expenses.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
-  const sorted = [...expenses].sort((a, b) => (b.amount ?? 0) - (a.amount ?? 0)).slice(0, 10);
+  const eff = effectiveExpenses(expenses);
+  const total = effectiveSum(expenses);
+  const sorted = [...eff].sort((a, b) => effectiveUsd(b) - effectiveUsd(a)).slice(0, 10);
   const tMap = new Map(tournaments.map((t: any) => [t.id, t]));
 
   return (
@@ -783,7 +583,7 @@ function BiggestExpenses({ expenses, tournaments }: { expenses: any[]; tournamen
                 <Text style={ds.listRowTitle}>{e.category ?? 'Other'}</Text>
                 <Text style={ds.listRowSub}>{t ? t.name : 'General'}{e.date ? ` · ${(() => { const [,m,d] = e.date.split('-'); const MO = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return `${+d} ${MO[+m-1]}`; })()}` : ''}{e.note ? ` · ${e.note}` : ''}</Text>
               </View>
-              <Text style={ds.listRowAmount}>{fmtFull(e.amount ?? 0)}</Text>
+              <Text style={ds.listRowAmount}>{fmtFull(effectiveUsd(e))}</Text>
             </View>
           );
         })}
@@ -792,110 +592,119 @@ function BiggestExpenses({ expenses, tournaments }: { expenses: any[]; tournamen
   );
 }
 
-// ─── 7. Tracking Streak ──────────────────────────────────────────────────────
+// ─── 8. Points per Dollar (efficiency) ───────────────────────────────────────
+// Replaces the old Cost Per Point screen: inverted framing (points per $1,000
+// invested), ranked per tournament — a scheduling tool, not a report card.
 
-function TrackingStreak({ tournaments, expenses }: { tournaments: any[]; expenses: any[] }) {
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const past = tournaments
-    .filter((t: any) => {
-      if (t.isWithdrawn) return false;
-      const d = parseLocalDate(t.startDate);
-      return d && d <= today;
-    })
-    .sort((a: any, b: any) => (b.startDate ?? '').localeCompare(a.startDate ?? ''));
-
-  const tracked = past.map((t: any) => ({
-    ...t,
-    hasExpenses: expenses.some((e: any) => e.tournamentId === t.id),
-  }));
-
-  let streak = 0;
-  for (const t of tracked) {
-    if (t.hasExpenses) streak++;
-    else break;
+// Match a scraped match-history entry to one of the user's tournament records:
+// dates within 10 days AND a meaningful word shared between the names (tier
+// prefixes like M15/M25/CH stripped first). Conservative on purpose — an
+// unmatched entry degrades to a "points only" row rather than a wrong pairing.
+function matchHistoryToTournament(h: any, tournaments: any[]): any | null {
+  const hDate = parseLocalDate(h.date);
+  if (!hDate) return null;
+  const stripTier = (s: string) =>
+    (s ?? '').toLowerCase().replace(/\b(m15|m25|m50|m100|ch|wtt|challenger)\b/g, '').trim();
+  const hName = stripTier(h.tournamentName ?? '');
+  const hWords = new Set(hName.split(/[^a-zà-ÿ]+/).filter((w: string) => w.length >= 4));
+  for (const t of tournaments) {
+    const tDate = parseLocalDate(t.startDate);
+    if (!tDate) continue;
+    if (Math.abs(tDate.getTime() - hDate.getTime()) > 10 * 86400000) continue;
+    const tName = stripTier(t.name ?? '');
+    if (!tName || !hName) continue;
+    if (tName.includes(hName) || hName.includes(tName)) return t;
+    const tWords = tName.split(/[^a-zà-ÿ]+/).filter((w: string) => w.length >= 4);
+    if (tWords.some((w: string) => hWords.has(w))) return t;
   }
-
-  const messages = [
-    { min: 0, text: 'Start tracking expenses for your tournaments to build your streak!' },
-    { min: 1, text: 'Great start! Keep logging expenses for every tournament.' },
-    { min: 3, text: 'Nice consistency! You\'re building a financial edge.' },
-    { min: 5, text: 'Strong streak! Your data is becoming really valuable.' },
-    { min: 8, text: 'Incredible discipline! Most players don\'t track like this.' },
-    { min: 12, text: 'Elite tracking! You have complete financial visibility.' },
-  ];
-  const msg = [...messages].reverse().find(m => streak >= m.min)?.text ?? messages[0].text;
-
-  return (
-    <DetailScreen title="Tracking Streak">
-      <View style={{ alignItems: 'center', marginTop: 32 }}>
-        <Text style={{ fontSize: 48 }}>🔥</Text>
-        <Text style={{ fontSize: 56, fontWeight: '800', color: T.textPrimary, marginTop: 8 }}>{streak}</Text>
-        <Text style={{ fontSize: 15, color: T.textSecondary, marginTop: 4 }}>consecutive tournaments tracked</Text>
-      </View>
-      <View style={{ marginTop: 32 }}>
-        {tracked.map((t, i) => (
-          <View key={t.id} style={[ds.miniRow, { paddingVertical: 12 }]}>
-            <Text style={{ fontSize: 16, marginRight: 10 }}>{t.hasExpenses ? '✅' : '—'}</Text>
-            <Text style={[ds.miniRowTitle, { flex: 1, color: t.hasExpenses ? T.textPrimary : T.textTertiary }]}>
-              {countryFlag(t.country)} {t.name}
-            </Text>
-          </View>
-        ))}
-      </View>
-      <View style={[ds.insightBox, { marginTop: 24 }]}>
-        <Text style={ds.insightText}>{msg}</Text>
-      </View>
-    </DetailScreen>
-  );
+  return null;
 }
 
-// ─── 8. Cost Per Point ───────────────────────────────────────────────────────
-
-function CostPerPoint({ expenses, atpMatchHistory }: { expenses: any[]; atpMatchHistory: any[] }) {
+function PointsPerDollar({ expenses, tournaments, atpMatchHistory }: {
+  expenses: any[]; tournaments: any[]; atpMatchHistory: any[];
+}) {
+  const router = useRouter();
   const totalPoints = atpMatchHistory.reduce((s: number, m: any) => s + (m.pointsEarned ?? 0), 0);
-  const totalSpent = expenses.reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
+  const totalSpent = effectiveSum(expenses);
+
+  const { ranked, pointsOnly } = useMemo(() => {
+    const ranked: any[] = [];
+    const pointsOnly: any[] = [];
+    for (const h of atpMatchHistory) {
+      const pts = h.pointsEarned ?? 0;
+      if (pts <= 0) continue;
+      const t = matchHistoryToTournament(h, tournaments);
+      const cost = t ? effectiveSum(expenses.filter((e: any) => e.tournamentId === t.id)) : 0;
+      if (t && cost > 0) {
+        ranked.push({ id: t.id, name: t.name, country: t.country, date: h.date, pts, cost, per1k: pts / (cost / 1000) });
+      } else {
+        pointsOnly.push({ name: h.tournamentName, date: h.date, pts });
+      }
+    }
+    ranked.sort((a, b) => b.per1k - a.per1k);
+    return { ranked: ranked.slice(0, 12), pointsOnly: pointsOnly.slice(0, 12 - Math.min(ranked.length, 12)) };
+  }, [atpMatchHistory, tournaments, expenses]);
 
   if (totalPoints === 0) {
     return (
-      <DetailScreen title="Cost Per Point">
+      <DetailScreen title="Points per $1k">
         <View style={{ alignItems: 'center', marginTop: 40 }}>
           <Text style={{ fontSize: 48 }}>📊</Text>
           <Text style={{ fontSize: 18, fontWeight: '700', color: T.textPrimary, marginTop: 16 }}>Log match results to unlock</Text>
           <Text style={{ fontSize: 14, color: T.textSecondary, marginTop: 8, textAlign: 'center', lineHeight: 20, paddingHorizontal: 20 }}>
-            Enter your match results and points earned in the tournament detail screen to see your cost per ranking point.
+            Once your match results are in, you&apos;ll see which tournaments earn you ranking points at the lowest cost.
           </Text>
         </View>
       </DetailScreen>
     );
   }
 
-  const costPerPoint = totalSpent > 0 ? totalSpent / totalPoints : 0;
+  const seasonPer1k = totalSpent > 0 ? totalPoints / (totalSpent / 1000) : 0;
+  const best = ranked[0];
 
   return (
-    <DetailScreen title="Cost Per Point">
+    <DetailScreen title="Points per $1k">
       <View style={{ alignItems: 'center', marginTop: 16 }}>
-        <Text style={{ fontSize: 42, fontWeight: '800', color: T.textPrimary }}>{fmtFull(costPerPoint)}</Text>
-        <Text style={{ fontSize: 15, color: T.textSecondary, marginTop: 4 }}>per ranking point</Text>
+        <Text style={{ fontSize: 42, fontWeight: '800', color: T.textPrimary }}>{seasonPer1k.toFixed(1)} pts</Text>
+        <Text style={{ fontSize: 15, color: T.textSecondary, marginTop: 4 }}>per $1,000 invested</Text>
       </View>
       <View style={[ds.insightBox, { marginTop: 24 }]}>
         <Text style={ds.insightText}>
-          You are spending {fmtFull(costPerPoint)} for every ranking point you earn. The average Futures player spends approximately $800–$1,200 per point.
+          {best
+            ? `Your most efficient event was ${best.name}: ${best.per1k.toFixed(1)} pts per $1k vs. your season average of ${seasonPer1k.toFixed(1)}. More weeks like that one climb the ranking cheapest.`
+            : `You've earned ${totalPoints} points on ${fmtFull(totalSpent)} invested this season. Link expenses to tournaments to see which events earn points cheapest.`}
         </Text>
       </View>
-      <View style={{ marginTop: 24 }}>
-        <View style={ds.statRow}>
-          <Text style={ds.statLabel}>Total points earned</Text>
-          <Text style={ds.statValue}>{totalPoints}</Text>
+      {ranked.length > 0 && (
+        <View style={{ marginTop: 24 }}>
+          <Text style={ds.subLabel}>Ranked by efficiency — best first</Text>
+          {ranked.map((r, i) => (
+            <TouchableOpacity key={r.id + r.date} style={ds.listRow} activeOpacity={0.7}
+              onPress={() => router.push({ pathname: '/(tabs)/expenses', params: { openTournament: r.id } })}>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: T.textTertiary, width: 24 }}>{i + 1}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={ds.listRowTitle}>{countryFlag(r.country)} {r.name}</Text>
+                <Text style={ds.listRowSub}>{r.pts} pts · {fmtFull(r.cost)}</Text>
+              </View>
+              <Text style={[ds.listRowAmount, { color: T.accent }]}>{r.per1k.toFixed(1)} /$1k</Text>
+            </TouchableOpacity>
+          ))}
         </View>
-        <View style={ds.statRow}>
-          <Text style={ds.statLabel}>Total invested</Text>
-          <Text style={ds.statValue}>{fmtFull(totalSpent)}</Text>
+      )}
+      {pointsOnly.length > 0 && (
+        <View style={{ marginTop: 20 }}>
+          <Text style={ds.subLabel}>Points earned, no expenses linked</Text>
+          {pointsOnly.map((r, i) => (
+            <View key={`${r.name}-${i}`} style={ds.listRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={[ds.listRowTitle, { color: T.textSecondary }]}>{r.name}</Text>
+                <Text style={ds.listRowSub}>{r.date}</Text>
+              </View>
+              <Text style={[ds.listRowAmount, { color: T.textTertiary }]}>{r.pts} pts</Text>
+            </View>
+          ))}
         </View>
-        <View style={ds.statRow}>
-          <Text style={ds.statLabel}>Tournaments with results</Text>
-          <Text style={ds.statValue}>{atpMatchHistory.length}</Text>
-        </View>
-      </View>
+      )}
     </DetailScreen>
   );
 }
@@ -1005,154 +814,6 @@ function PointsBySurface({ tournaments, atpMatchHistory }: { tournaments: any[];
   );
 }
 
-// ─── 10. Points vs Investment ────────────────────────────────────────────────
-
-function PointsVsInvestment({ tournaments, expenses }: { tournaments: any[]; expenses: any[] }) {
-  const { width } = useWindowDimensions();
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-
-  const past = tournaments
-    .filter((t: any) => { const d = parseLocalDate(t.startDate); return d && d <= today && !t.isWithdrawn; })
-    .sort((a: any, b: any) => (a.startDate ?? '').localeCompare(b.startDate ?? ''));
-
-  const hasPoints = past.some((t: any) => (t.pointsEarned ?? 0) > 0);
-  if (!hasPoints) {
-    return (
-      <DetailScreen title="Points vs Investment">
-        <View style={{ alignItems: 'center', marginTop: 40 }}>
-          <Text style={{ fontSize: 48 }}>📉</Text>
-          <Text style={{ fontSize: 18, fontWeight: '700', color: T.textPrimary, marginTop: 16 }}>Log results to unlock</Text>
-          <Text style={{ fontSize: 14, color: T.textSecondary, marginTop: 8, textAlign: 'center' }}>
-            Enter match results to see your points vs investment trend over the season.
-          </Text>
-        </View>
-      </DetailScreen>
-    );
-  }
-
-  let cumPoints = 0, cumExpenses = 0;
-  const dataPoints = past.map((t: any) => {
-    cumPoints += t.pointsEarned ?? 0;
-    cumExpenses += expenses.filter((e: any) => e.tournamentId === t.id).reduce((s: number, e: any) => s + (e.amount ?? 0), 0);
-    return { label: t.name?.substring(0, 8) ?? '', cumPoints, cumExpenses };
-  });
-
-  const chartW = width - 80;
-  const chartH = 200;
-  const maxPts = Math.max(...dataPoints.map(d => d.cumPoints), 1);
-  const maxExp = Math.max(...dataPoints.map(d => d.cumExpenses), 1);
-
-  function pointsPath() {
-    return dataPoints.map((d, i) => {
-      const x = dataPoints.length === 1 ? chartW / 2 : (i / (dataPoints.length - 1)) * chartW;
-      const y = chartH - (d.cumPoints / maxPts) * (chartH - 20);
-      return `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`;
-    }).join(' ');
-  }
-
-  function expPath() {
-    return dataPoints.map((d, i) => {
-      const x = dataPoints.length === 1 ? chartW / 2 : (i / (dataPoints.length - 1)) * chartW;
-      const y = chartH - (d.cumExpenses / maxExp) * (chartH - 20);
-      return `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`;
-    }).join(' ');
-  }
-
-  return (
-    <DetailScreen title="Points vs Investment">
-      <View style={{ marginTop: 16, alignItems: 'center' }}>
-        <Svg width={chartW} height={chartH}>
-          <Path d={pointsPath()} stroke={T.green} strokeWidth={2.5} fill="none" strokeLinecap="round" />
-          <Path d={expPath()} stroke={T.accent} strokeWidth={2.5} fill="none" strokeLinecap="round" />
-        </Svg>
-      </View>
-      <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 24, marginTop: 16 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <View style={{ width: 12, height: 3, backgroundColor: T.green, borderRadius: 2 }} />
-          <Text style={{ fontSize: 12, color: T.textSecondary }}>Ranking Points</Text>
-        </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <View style={{ width: 12, height: 3, backgroundColor: T.accent, borderRadius: 2 }} />
-          <Text style={{ fontSize: 12, color: T.textSecondary }}>Expenses</Text>
-        </View>
-      </View>
-      <View style={[ds.insightBox, { marginTop: 24 }]}>
-        <Text style={ds.insightText}>
-          {cumPoints > 0 && cumExpenses > 0
-            ? `You've earned ${cumPoints} points while investing ${fmtFull(cumExpenses)}. That's ${fmtFull(cumExpenses / cumPoints)} per point over the season.`
-            : 'Keep logging results to build a clearer picture of your investment efficiency.'}
-        </Text>
-      </View>
-    </DetailScreen>
-  );
-}
-
-// ─── 12. Cost to Gain 10 Spots ───────────────────────────────────────────────
-
-function CostToGain10({ tournaments, expenses }: { tournaments: any[]; expenses: any[] }) {
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const past = tournaments.filter((t: any) => {
-    const d = parseLocalDate(t.startDate);
-    return d && d <= today && !t.isWithdrawn && (t.pointsEarned ?? 0) > 0;
-  });
-
-  if (past.length < 5) {
-    return (
-      <DetailScreen title="Cost to Gain 10 Spots">
-        <View style={{ alignItems: 'center', marginTop: 40 }}>
-          <Text style={{ fontSize: 48 }}>🎯</Text>
-          <Text style={{ fontSize: 18, fontWeight: '700', color: T.textPrimary, marginTop: 16 }}>Need more data</Text>
-          <Text style={{ fontSize: 14, color: T.textSecondary, marginTop: 8, textAlign: 'center', lineHeight: 20 }}>
-            Need at least 5 tournaments with match results to estimate your cost to gain ranking positions.
-          </Text>
-        </View>
-      </DetailScreen>
-    );
-  }
-
-  const totalPoints = past.reduce((s: number, t: any) => s + (t.pointsEarned ?? 0), 0);
-  const totalSpent = past.reduce((s: number, t: any) => {
-    return s + expenses.filter((e: any) => e.tournamentId === t.id).reduce((s2: number, e: any) => s2 + (e.amount ?? 0), 0);
-  }, 0);
-  const costPerPoint = totalSpent / totalPoints;
-  const estimatedPointsFor10 = Math.ceil(totalPoints / past.length) * 3;
-  const estimatedCost = costPerPoint * estimatedPointsFor10;
-  const avgPtsPerTournament = totalPoints / past.length;
-  const tournamentsNeeded = Math.ceil(estimatedPointsFor10 / avgPtsPerTournament);
-
-  return (
-    <DetailScreen title="Cost to Gain 10 Spots">
-      <View style={{ alignItems: 'center', marginTop: 16 }}>
-        <Text style={{ fontSize: 42, fontWeight: '800', color: T.textPrimary }}>Est. {fmtFull(estimatedCost)}</Text>
-        <Text style={{ fontSize: 15, color: T.textSecondary, marginTop: 4 }}>to gain 10 ranking positions</Text>
-      </View>
-      <View style={{ marginTop: 32 }}>
-        <View style={ds.statRow}>
-          <Text style={ds.statLabel}>Your avg cost per point</Text>
-          <Text style={ds.statValue}>{fmtFull(costPerPoint)}</Text>
-        </View>
-        <View style={ds.statRow}>
-          <Text style={ds.statLabel}>Est. points needed</Text>
-          <Text style={ds.statValue}>{estimatedPointsFor10}</Text>
-        </View>
-        <View style={ds.statRow}>
-          <Text style={ds.statLabel}>Est. tournaments needed</Text>
-          <Text style={ds.statValue}>{tournamentsNeeded}</Text>
-        </View>
-        <View style={ds.statRow}>
-          <Text style={ds.statLabel}>Avg points per tournament</Text>
-          <Text style={ds.statValue}>{avgPtsPerTournament.toFixed(1)}</Text>
-        </View>
-      </View>
-      <View style={[ds.insightBox, { marginTop: 24 }]}>
-        <Text style={ds.insightText}>
-          Based on your {past.length} tournaments with results, you earn an average of {avgPtsPerTournament.toFixed(1)} points per tournament at a cost of {fmtFull(costPerPoint)} per point. You'd need approximately {tournamentsNeeded} more tournaments to climb 10 spots.
-        </Text>
-      </View>
-    </DetailScreen>
-  );
-}
-
 // ─── Main screen ─────────────────────────────────────────────────────────────
 
 export default function InsightsScreen() {
@@ -1162,16 +823,14 @@ export default function InsightsScreen() {
   const expenses = data?.expenses ?? [];
 
   const [atpMatchHistory, setAtpMatchHistory] = useState<any[] | null>(null);
-  const [rankingEvolution, setRankingEvolution] = useState<any[]>([]);
 
-  const ATP_TYPES = ['cost-per-point', 'points-by-surface'];
+  const ATP_TYPES = ['cost-per-point', 'points-per-dollar', 'points-by-surface'];
   const needsAtp = ATP_TYPES.includes(type ?? '');
 
   useEffect(() => {
     if (!needsAtp) return;
     // Reset synchronously so LoadingLogo renders from the very first frame.
     setAtpMatchHistory(null);
-    setRankingEvolution([]);
     let cancelled = false;
 
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -1180,13 +839,12 @@ export default function InsightsScreen() {
         .then(({ data: prof }) => {
           if (cancelled || !prof?.atp_player_name) { if (!cancelled) setAtpMatchHistory([]); return; }
           const nameParts = prof.atp_player_name.trim().split(/\s+/).slice(0, 2).join(' ');
-          supabase.from('player_profiles').select('match_history, ranking_evolution')
+          supabase.from('player_profiles').select('match_history')
             .ilike('player_name', `%${nameParts}%`)
             .order('last_updated', { ascending: false }).limit(1)
             .then(({ data: rows }) => {
               if (cancelled) return;
               setAtpMatchHistory(rows?.[0]?.match_history ?? []);
-              setRankingEvolution(rows?.[0]?.ranking_evolution ?? []);
             }, () => { if (!cancelled) setAtpMatchHistory([]); });
         }, () => { if (!cancelled) setAtpMatchHistory([]); });
     });
@@ -1203,14 +861,12 @@ export default function InsightsScreen() {
     case 'cost-by-surface':     return <CostBySurface tournaments={tournaments} expenses={expenses} />;
     case 'cost-by-country':    return <CostByCountry tournaments={tournaments} expenses={expenses} />;
     case 'tournament-costs':    return <TournamentCosts tournaments={tournaments} expenses={expenses} />;
-    case 'season-heatmap':      return <SeasonHeatmap expenses={expenses} tournaments={tournaments} />;
     case 'coach-impact':        return <CoachImpact tournaments={tournaments} expenses={expenses} />;
     case 'biggest-expenses':    return <BiggestExpenses expenses={expenses} tournaments={tournaments} />;
-    case 'tracking-streak':     return <TrackingStreak tournaments={tournaments} expenses={expenses} />;
-    case 'cost-per-point':      return <LoadingFade isLoading={false}><CostPerPoint expenses={expenses} atpMatchHistory={safeAtp} /></LoadingFade>;
+    // 'cost-per-point' kept as an alias so any old links still resolve
+    case 'cost-per-point':
+    case 'points-per-dollar':   return <LoadingFade isLoading={false}><PointsPerDollar expenses={expenses} tournaments={tournaments} atpMatchHistory={safeAtp} /></LoadingFade>;
     case 'points-by-surface':   return <LoadingFade isLoading={false}><PointsBySurface tournaments={tournaments} atpMatchHistory={safeAtp} /></LoadingFade>;
-    case 'points-vs-investment':return <PointsVsInvestment tournaments={tournaments} expenses={expenses} />;
-    case 'cost-to-gain-10':     return <CostToGain10 tournaments={tournaments} expenses={expenses} />;
     default:
       return (
         <DetailScreen title="Insight">

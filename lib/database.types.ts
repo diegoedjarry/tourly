@@ -50,3 +50,16 @@ export interface Expense {
   fixed_month: string | null;  // 'YYYY-MM'
   created_at: string;
 }
+
+export interface Income {
+  id: string;
+  user_id: string;
+  source: string | null;
+  type: 'sponsor' | 'federation' | 'stipend' | 'other';
+  amount: number;
+  currency: string;
+  amount_usd: number | null;
+  date: string;             // YYYY-MM-DD
+  note: string | null;
+  created_at: string;
+}

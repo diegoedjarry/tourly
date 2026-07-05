@@ -165,3 +165,52 @@ export async function apiDeleteTournament(id: string) {
   if (error) { rollback(); throw error; }
   queryClient.invalidateQueries({ queryKey: ['tournaments'] });
 }
+
+export async function apiAddIncome(data: Record<string, any>) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+  const optimistic = { ...toSnake(data), id: tempId(), user_id: user.id, created_at: new Date().toISOString() };
+  const rollback = optimisticInsert(['income'], optimistic);
+  if (await isOffline()) {
+    await enqueue({ table: 'income', action: 'insert', data, userId: user.id });
+    notifyQueued();
+    return optimistic;
+  }
+  const { data: row, error } = await supabase
+    .from('income')
+    .insert({ ...toSnake(data), user_id: user.id })
+    .select()
+    .single();
+  if (error) { rollback(); throw error; }
+  replaceRow(['income'], optimistic.id, row);
+  queryClient.invalidateQueries({ queryKey: ['income'] });
+  return row;
+}
+
+export async function apiUpdateIncome(id: string, updates: Record<string, any>) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+  const rollback = optimisticMerge(['income'], id, toSnake(updates));
+  if (await isOffline()) {
+    await enqueue({ table: 'income', action: 'update', data: updates, matchId: id, userId: user.id });
+    notifyQueued();
+    return;
+  }
+  const { error } = await supabase.from('income').update(toSnake(updates)).eq('id', id);
+  if (error) { rollback(); throw error; }
+  queryClient.invalidateQueries({ queryKey: ['income'] });
+}
+
+export async function apiDeleteIncome(id: string) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+  const rollback = optimisticRemove(['income'], id);
+  if (await isOffline()) {
+    await enqueue({ table: 'income', action: 'delete', matchId: id, userId: user.id });
+    notifyQueued();
+    return;
+  }
+  const { error } = await supabase.from('income').delete().eq('id', id);
+  if (error) { rollback(); throw error; }
+  queryClient.invalidateQueries({ queryKey: ['income'] });
+}
