@@ -24,7 +24,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useAppQuery } from '@/hooks/useAppQuery';
-import { apiAddExpense, apiUpdateExpense, apiDeleteExpense, apiPatchTournament, apiAddTournament } from '@/lib/api';
+import { apiAddExpense, apiUpdateExpense, apiDeleteExpense, apiPatchTournament, apiAddTournament, apiAddIncome, apiDeleteIncome } from '@/lib/api';
+import { useIncome } from '@/hooks/useIncome';
+import { useQueryClient } from '@tanstack/react-query';
+import { CashFlowChart } from '@/components/ui/CashFlowChart';
+import { CostLadder } from '@/components/ui/CostLadder';
+import { RunwayCard } from '@/components/ui/RunwayCard';
 import { DatePickerField } from '@/components/ui/date-picker-field';
 import { T } from '@/constants/theme';
 import { DEMO_MODE } from '@/config/demo';
@@ -1934,7 +1939,7 @@ function PasteFromNotesModal({ tournaments, onClose }: {
               <View style={form.section}>
                 <Text style={form.sectionLabel}>PASTE YOUR NOTES</Text>
                 <Text style={pn.hint}>
-                  Paste anything — one expense per line. Amounts like $350, "350 USD", or standalone numbers work. Dates and categories are auto-detected.
+                  Paste anything — one expense per line. Amounts like $350, &quot;350 USD&quot;, or standalone numbers work. Dates and categories are auto-detected.
                 </Text>
                 <TextInput
                   style={pn.textArea}
@@ -2048,609 +2053,6 @@ function tPrize(t: any): number {
   // Fall back to legacy prizeMoney for records created before the singles/doubles split
   return split > 0 ? split : (t.prizeMoney ?? 0);
 }
-
-function buildChartData(expensesRaw: any[], tournaments: any[], period: 'week' | 'month' | 'year', monthOffset = 0, yearOffset = 0, monthAbbr = getMonthAbbr('en')) {
-  const now = new Date(); now.setHours(0, 0, 0, 0);
-  const expenses = effectiveExpenses(expensesRaw);
-  // Withdrawn tournaments never contribute prize money — consistent across all periods
-  const activeTournaments = tournaments.filter((t: any) => !t.isWithdrawn);
-
-  if (period === 'week') {
-    const dow = now.getDay();
-    const mon = new Date(now);
-    mon.setDate(now.getDate() - (dow === 0 ? 6 : dow - 1));
-    const daysToShow = dow === 0 ? 7 : dow;
-    const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    // Single pass: bucket spent/earned by exact ISO date
-    const spentByDate: Record<string, number> = {};
-    for (const e of expenses) {
-      if (!e.date) continue;
-      spentByDate[e.date] = (spentByDate[e.date] ?? 0) + effectiveUsd(e);
-    }
-    const earnedByDate: Record<string, number> = {};
-    for (const t of activeTournaments) {
-      const iso = t.endDate ?? t.startDate;
-      if (!iso) continue;
-      earnedByDate[iso] = (earnedByDate[iso] ?? 0) + tPrize(t);
-    }
-    return Array.from({ length: daysToShow }, (_, i) => {
-      const d = new Date(mon); d.setDate(mon.getDate() + i);
-      const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      return { value: (spentByDate[iso] ?? 0) - (earnedByDate[iso] ?? 0), label: labels[i] };
-    });
-  }
-
-  if (period === 'month') {
-    const target = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
-    const y = target.getFullYear(), m = target.getMonth();
-    const daysInMonth = new Date(y, m + 1, 0).getDate();
-    const isPast = monthOffset < 0;
-    const todayD = isPast ? daysInMonth : now.getDate();
-    const prefix = `${y}-${String(m + 1).padStart(2, '0')}-`;
-    // Single pass: bucket by week-of-month index (day 1–7 → 0, 8–14 → 1, …)
-    const weekCount = Math.ceil(Math.min(daysInMonth, todayD) / 7);
-    const spentByWeek = new Array(weekCount).fill(0);
-    const earnedByWeek = new Array(weekCount).fill(0);
-    const bucketOf = (iso: string): number | null => {
-      if (!iso.startsWith(prefix)) return null;
-      const day = +iso.slice(8, 10);
-      if (day > todayD) return null;
-      const idx = Math.floor((day - 1) / 7);
-      return idx < weekCount ? idx : null;
-    };
-    for (const e of expenses) {
-      if (!e.date) continue;
-      const idx = bucketOf(e.date);
-      if (idx !== null) spentByWeek[idx] += effectiveUsd(e);
-    }
-    for (const t of activeTournaments) {
-      const iso = t.endDate ?? t.startDate;
-      if (!iso) continue;
-      const idx = bucketOf(iso);
-      if (idx !== null) earnedByWeek[idx] += tPrize(t);
-    }
-    return spentByWeek.map((spent, i) => ({
-      value: spent - earnedByWeek[i],
-      label: `${monthAbbr[m]} ${i * 7 + 1}`,
-    }));
-  }
-
-  // year — one bucket per calendar month, single pass
-  const y = now.getFullYear() + yearOffset;
-  const monthCount = yearOffset < 0 ? 12 : now.getMonth() + 1;
-  const spentByMonth = new Array(monthCount).fill(0);
-  const earnedByMonth = new Array(monthCount).fill(0);
-  for (const e of expenses) {
-    if (!e.date || +e.date.slice(0, 4) !== y) continue;
-    const mi = +e.date.slice(5, 7) - 1;
-    if (mi >= 0 && mi < monthCount) spentByMonth[mi] += effectiveUsd(e);
-  }
-  for (const t of activeTournaments) {
-    const iso = t.endDate ?? t.startDate;
-    if (!iso || +iso.slice(0, 4) !== y) continue;
-    const mi = +iso.slice(5, 7) - 1;
-    if (mi >= 0 && mi < monthCount) earnedByMonth[mi] += tPrize(t);
-  }
-  return spentByMonth.map((spent, mi) => ({ value: spent - earnedByMonth[mi], label: monthAbbr[mi] }));
-}
-
-function catmullRomPath(pts: { x: number; y: number }[]): string {
-  if (pts.length < 2) return '';
-  let d = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
-  for (let i = 0; i < pts.length - 1; i++) {
-    const p0 = pts[Math.max(i - 1, 0)];
-    const p1 = pts[i];
-    const p2 = pts[i + 1];
-    const p3 = pts[Math.min(i + 2, pts.length - 1)];
-    const cp1x = p1.x + (p2.x - p0.x) / 6;
-    const cp1y = p1.y + (p2.y - p0.y) / 6;
-    const cp2x = p2.x - (p3.x - p1.x) / 6;
-    const cp2y = p2.y - (p3.y - p1.y) / 6;
-    d += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)} ${cp2x.toFixed(1)} ${cp2y.toFixed(1)} ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
-  }
-  return d;
-}
-
-const LC_H = 130;
-const LC_PAD = { t: 10, b: 28, l: 2, r: 2 };
-
-function SpendingLineChart({ expenses, tournaments, period, onPeriodChange, monthOffset, onMonthOffsetChange, yearOffset, onYearOffsetChange }: { expenses: any[]; tournaments: any[]; period: 'week' | 'month' | 'year'; onPeriodChange: (p: 'week' | 'month' | 'year') => void; monthOffset: number; onMonthOffsetChange: (o: number) => void; yearOffset: number; onYearOffsetChange: (o: number) => void }) {
-  const { lang, t } = useLanguage();
-  const { width: windowWidth } = useWindowDimensions();
-  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
-  const [cardWidth, setCardWidth] = useState(windowWidth - 40);
-
-  const data = useMemo(() => buildChartData(expenses, tournaments, period, monthOffset, yearOffset, getMonthAbbr(lang)), [expenses, tournaments, period, monthOffset, yearOffset, lang]);
-  const hasData = data.length >= 2;
-
-  const W = cardWidth - 32;
-  const H = LC_H;
-  const chartW = W - LC_PAD.l - LC_PAD.r;
-  const chartH = H - LC_PAD.t - LC_PAD.b;
-  const zeroY  = LC_PAD.t + chartH / 2;
-
-  const maxAbs = hasData ? Math.max(...data.map(d => Math.abs(d.value)), 1) : 1;
-  const cap    = maxAbs * 1.3;
-
-  const pts = data.map((d, i) => ({
-    x: LC_PAD.l + (data.length === 1 ? chartW / 2 : (i / (data.length - 1)) * chartW),
-    y: zeroY - (d.value / cap) * (chartH / 2),
-    value: d.value,
-  }));
-
-  const ptsRef = useRef(pts);
-  ptsRef.current = pts;
-
-  const linePath = catmullRomPath(pts);
-  const areaPath = hasData
-    ? linePath + ` L ${pts[pts.length - 1].x.toFixed(1)} ${zeroY.toFixed(1)} L ${pts[0].x.toFixed(1)} ${zeroY.toFixed(1)} Z`
-    : '';
-
-  const totalRaw = data.reduce((s, d) => s + d.value, 0);
-  const isProfitable = totalRaw < 0;
-  const displayNet = -totalRaw;
-
-  function findClosest(touchX: number) {
-    const currentPts = ptsRef.current;
-    let closest = 0, minDist = Infinity;
-    currentPts.forEach((p, i) => { const d = Math.abs(p.x - touchX); if (d < minDist) { minDist = d; closest = i; } });
-    return closest;
-  }
-
-  const monthOffsetRef = useRef(monthOffset);
-  monthOffsetRef.current = monthOffset;
-  const periodRef = useRef(period);
-  periodRef.current = period;
-  const swipedRef = useRef(false);
-
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: (_, gs) => Math.abs(gs.dx) > 10 && Math.abs(gs.dy) < 10,
-      onPanResponderGrant: (evt) => { swipedRef.current = false; setSelectedIdx(findClosest(evt.nativeEvent.locationX)); },
-      onPanResponderMove: (evt, gs) => {
-        if (periodRef.current === 'month' && Math.abs(gs.dx) > 50 && !swipedRef.current) {
-          swipedRef.current = true;
-          onMonthOffsetChange(monthOffsetRef.current + (gs.dx < 0 ? -1 : 1));
-          setSelectedIdx(null);
-        } else if (!swipedRef.current) {
-          setSelectedIdx(findClosest(evt.nativeEvent.locationX));
-        }
-      },
-      onPanResponderRelease: () => { swipedRef.current = false; setSelectedIdx(null); },
-    })
-  ).current;
-
-  const MK: Array<Parameters<typeof t>[0]> = ['month.january','month.february','month.march','month.april','month.may','month.june','month.july','month.august','month.september','month.october','month.november','month.december'];
-  const monthLabel = useMemo(() => {
-    const now = new Date();
-    const selectedYear = now.getFullYear() + yearOffset;
-    const baseMonth = yearOffset === 0 ? now.getMonth() : 0;
-    const d = new Date(selectedYear, baseMonth + monthOffset, 1);
-    return t(MK[d.getMonth()]);
-  }, [monthOffset, yearOffset, t]);
-
-  return (
-    <View style={lc.card} onLayout={e => setCardWidth(e.nativeEvent.layout.width)}>
-
-      {/* Period toggle */}
-      <View style={lc.toggle}>
-        {(['week', 'month', 'year'] as const).map(p => (
-          <TouchableOpacity key={p} style={[lc.pill, period === p && lc.pillActive]}
-            onPress={() => { onPeriodChange(p); setSelectedIdx(null); }} activeOpacity={0.7}>
-            <Text style={[lc.pillText, period === p && lc.pillTextActive]}>
-              {p.charAt(0).toUpperCase() + p.slice(1)}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {/* Month navigation — only in month mode */}
-      {period === 'month' && (
-        <View style={lc.monthNav}>
-          <TouchableOpacity onPress={() => onMonthOffsetChange(monthOffset - 1)} activeOpacity={0.7} style={lc.monthArrow}>
-            <Text style={lc.monthArrowText}>‹</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => monthOffset !== 0 && onMonthOffsetChange(0)} activeOpacity={monthOffset === 0 ? 1 : 0.7}>
-            <Text style={[lc.monthLabel, monthOffset === 0 && lc.monthLabelCurrent]}>{monthLabel}</Text>
-          </TouchableOpacity>
-          {monthOffset < 0 ? (
-            <TouchableOpacity onPress={() => onMonthOffsetChange(monthOffset + 1)} activeOpacity={0.7} style={lc.monthArrow}>
-              <Text style={lc.monthArrowText}>›</Text>
-            </TouchableOpacity>
-          ) : <View style={lc.monthArrow} />}
-        </View>
-      )}
-
-      {/* Total net */}
-      <Text style={[lc.netAmount, isProfitable ? lc.netGreen : lc.netPurple]}>
-        {displayNet >= 0 ? '+' : ''}{fmt(displayNet)}
-      </Text>
-
-      {hasData ? (
-        <View style={{ height: H, position: 'relative' }} {...panResponder.panHandlers}>
-          <Svg width={W} height={H}>
-            <Defs>
-              <ClipPath id="lc-above">
-                <Rect x={0} y={0} width={W} height={zeroY} />
-              </ClipPath>
-              <ClipPath id="lc-below">
-                <Rect x={0} y={zeroY} width={W} height={H - zeroY} />
-              </ClipPath>
-            </Defs>
-
-            {/* Zero reference line */}
-            <SvgLine x1={0} y1={zeroY} x2={W} y2={zeroY} stroke={T.textMuted} strokeWidth={1} strokeDasharray="5 4" />
-
-            {/* Area fills */}
-            <Path d={areaPath} fill={T.teal} opacity={0.13} clipPath="url(#lc-above)" />
-            <Path d={areaPath} fill={T.green} opacity={0.13} clipPath="url(#lc-below)" />
-
-            {/* Colored line segments */}
-            <Path d={linePath} stroke={T.teal} strokeWidth={2.5} fill="none" clipPath="url(#lc-above)" strokeLinecap="round" strokeLinejoin="round" />
-            <Path d={linePath} stroke={T.green} strokeWidth={2.5} fill="none" clipPath="url(#lc-below)" strokeLinecap="round" strokeLinejoin="round" />
-
-            {/* Selected point */}
-            {selectedIdx !== null && (
-              <>
-                <SvgLine x1={pts[selectedIdx].x} y1={LC_PAD.t} x2={pts[selectedIdx].x} y2={H - LC_PAD.b}
-                  stroke={T.textMuted} strokeWidth={1} strokeDasharray="3 3" />
-                <Circle cx={pts[selectedIdx].x} cy={pts[selectedIdx].y} r={5}
-                  fill={pts[selectedIdx].value <= 0 ? T.green : T.teal} />
-              </>
-            )}
-          </Svg>
-
-          {/* Floating tooltip */}
-          {selectedIdx !== null && (() => {
-            const pt   = pts[selectedIdx];
-            const raw  = data[selectedIdx].value;
-            const disp = -raw;
-            const tx   = Math.max(2, Math.min(W - 82, pt.x - 38));
-            const ty   = Math.max(2, pt.y - 42);
-            return (
-              <View style={[lc.tooltip, { left: tx, top: ty }]} pointerEvents="none">
-                <Text style={[lc.tooltipText, raw <= 0 ? lc.netGreen : lc.netPurple]}>
-                  {disp >= 0 ? '+' : ''}{fmt(disp)}
-                </Text>
-              </View>
-            );
-          })()}
-        </View>
-      ) : (
-        <View style={lc.empty}>
-          <Text style={lc.emptyText}>No data for this {period}</Text>
-        </View>
-      )}
-
-      {/* X-axis labels */}
-      {hasData && (
-        <View style={lc.xAxis}>
-          {data.map((d, i) => (
-            <Text key={i} style={[lc.xLabel, i === data.length - 1 && lc.xLabelToday]}>{d.label}</Text>
-          ))}
-        </View>
-      )}
-    </View>
-  );
-}
-
-const lc = StyleSheet.create({
-  card:          { backgroundColor: T.card, borderRadius: 16, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: T.cardBorder },
-  toggle:        { flexDirection: 'row', gap: 8, marginBottom: 10 },
-  pill:          { paddingHorizontal: 14, paddingVertical: 5, borderRadius: 20 },
-  pillActive:    { backgroundColor: T.cardBorder },
-  pillText:      { fontSize: 13, fontWeight: '600', color: T.textTertiary },
-  pillTextActive:{ color: T.textPrimary },
-  netAmount:     { fontSize: 28, fontWeight: '700', marginBottom: 6 },
-  netGreen:      { color: T.green },
-  netPurple:     { color: T.teal },
-  xAxis:         { flexDirection: 'row', justifyContent: 'space-between', marginTop: 2 },
-  xLabel:        { fontSize: 9, color: T.textTertiary, textAlign: 'center', flex: 1 },
-  xLabelToday:   { color: T.textPrimary, fontWeight: '700' },
-  tooltip:       { position: 'absolute', backgroundColor: T.bg, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5, borderWidth: 1, borderColor: T.cardBorder },
-  tooltipText:   { fontSize: 13, fontWeight: '700' },
-  empty:         { height: 110, alignItems: 'center', justifyContent: 'center' },
-  emptyText:     { fontSize: 13, color: T.textTertiary },
-  monthNav:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
-  monthArrow:    { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
-  monthArrowText:{ fontSize: 24, color: T.teal, fontWeight: '300' },
-  monthLabel:    { fontSize: 14, fontWeight: '600', color: T.textSecondary },
-  monthLabelCurrent: { color: T.textPrimary },
-});
-
-// ─── Expense Histogram ───────────────────────────────────────────────────────
-
-type HgMode = 'category' | 'timeline';
-
-interface HgBar { label: string; value: number; color?: string; sub?: string }
-
-function buildHgTimeline(expensesRaw: any[], period: 'month' | 'year' | 'week', monthOffset: number, yearOffset: number, monthAbbr = getMonthAbbr('en')): HgBar[] {
-  const now = new Date(); now.setHours(0, 0, 0, 0);
-  const expenses = effectiveExpenses(expensesRaw);
-  if (period === 'month') {
-    // Single pass: bucket by week-of-month index
-    const target = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
-    const y = target.getFullYear(), m = target.getMonth();
-    const daysInMonth = new Date(y, m + 1, 0).getDate();
-    const prefix = `${y}-${String(m + 1).padStart(2, '0')}-`;
-    const weekCount = Math.ceil(daysInMonth / 7);
-    const totals = new Array(weekCount).fill(0);
-    for (const e of expenses) {
-      if (!e.date || !e.date.startsWith(prefix)) continue;
-      const idx = Math.floor((+e.date.slice(8, 10) - 1) / 7);
-      if (idx >= 0 && idx < weekCount) totals[idx] += effectiveUsd(e);
-    }
-    return totals.map((value, i) => ({
-      label: `${i * 7 + 1}–${Math.min(i * 7 + 7, daysInMonth)}`,
-      value,
-    }));
-  }
-  // Single pass: bucket by calendar month
-  const y = now.getFullYear() + yearOffset;
-  const monthCount = yearOffset < 0 ? 12 : now.getMonth() + 1;
-  const totals = new Array(monthCount).fill(0);
-  for (const e of expenses) {
-    if (!e.date || +e.date.slice(0, 4) !== y) continue;
-    const mi = +e.date.slice(5, 7) - 1;
-    if (mi >= 0 && mi < monthCount) totals[mi] += effectiveUsd(e);
-  }
-  return totals.map((value, mi) => ({ label: monthAbbr[mi], value }));
-}
-
-function buildHgByCategory(expensesRaw: any[]): HgBar[] {
-  const expenses = effectiveExpenses(expensesRaw);
-  const grouped: Record<string, number> = {};
-  for (const e of expenses) {
-    const raw = (e.category ?? 'Other').trim().toLowerCase().replace(/\b\w/g, (c: string) => c.toUpperCase());
-    const cat = groupCategory(raw);
-    grouped[cat] = (grouped[cat] ?? 0) + effectiveUsd(e);
-  }
-  return Object.entries(grouped)
-    .sort((a, b) => b[1] - a[1])
-    .map(([cat, val]) => ({
-      label: cat,
-      value: val,
-      color: CAT_PIE_COLORS[cat.toLowerCase()],
-    }));
-}
-
-
-const HG_MODES: { key: HgMode; label: string }[] = [
-  { key: 'category', label: 'Category' },
-  { key: 'timeline', label: 'Timeline' },
-];
-
-function ExpenseHistogram({ expenses, periodExpenses, period, monthOffset, yearOffset, onSelectCategory }: {
-  expenses: any[]; periodExpenses: any[]; period: 'month' | 'year' | 'week'; monthOffset: number; yearOffset: number;
-  onSelectCategory: (cat: string, color: string) => void;
-}) {
-  const { lang } = useLanguage();
-  const { width: windowWidth } = useWindowDimensions();
-  const [cardWidth, setCardWidth] = useState(windowWidth - 40);
-  const [activeIdx, setActiveIdx] = useState<number | null>(null);
-  const [mode, setMode] = useState<HgMode>('category');
-
-  const data = useMemo(() => {
-    if (mode === 'timeline') return buildHgTimeline(expenses, period, monthOffset, yearOffset, getMonthAbbr(lang));
-    return buildHgByCategory(periodExpenses);
-  }, [expenses, periodExpenses, period, monthOffset, yearOffset, mode, lang]);
-
-  const totalSpent = data.reduce((s, d) => s + d.value, 0);
-  const maxVal = Math.max(...data.map(d => d.value), 1);
-
-  const PAD = { t: 8, b: 0, l: 0, r: 0 };
-  const W = cardWidth - 32;
-  const isHorizontal = mode !== 'timeline';
-
-  // Horizontal bars (each / category)
-  const ROW_H = 32;
-  const hBarH = isHorizontal ? Math.max(80, data.length * ROW_H + PAD.t) : 0;
-
-  // Vertical bars (timeline)
-  const V_H = 120;
-  const chartH_v = V_H - PAD.t - 22;
-  const gap_v = 6;
-  const barW_v = data.length > 0 ? Math.max(4, (W - gap_v * (data.length - 1)) / data.length) : 10;
-
-  const panDataRef = useRef(data);
-  panDataRef.current = data;
-  const barGeomRef = useRef({ barW: barW_v, gap: gap_v });
-  barGeomRef.current = { barW: barW_v, gap: gap_v };
-
-  function findVBar(touchX: number): number {
-    const { barW, gap } = barGeomRef.current;
-    const step = barW + gap;
-    const idx = Math.floor(touchX / step);
-    return Math.max(0, Math.min(panDataRef.current.length - 1, idx));
-  }
-
-  const vPanResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: (evt) => setActiveIdx(findVBar(evt.nativeEvent.locationX)),
-      onPanResponderMove: (evt) => setActiveIdx(findVBar(evt.nativeEvent.locationX)),
-      onPanResponderRelease: () => setActiveIdx(null),
-    }),
-  ).current;
-
-  // Reset active index on mode change
-  useEffect(() => { setActiveIdx(null); }, [mode]);
-
-  if (data.length === 0 && mode !== 'timeline') return null;
-
-  const activeBar = activeIdx !== null && activeIdx < data.length ? data[activeIdx] : null;
-
-  return (
-    <View style={hg.card} onLayout={e => setCardWidth(e.nativeEvent.layout.width)}>
-      {/* Toggle row */}
-      <View style={hg.toggleRow}>
-        {HG_MODES.map(m => (
-          <TouchableOpacity key={m.key} style={[hg.togglePill, mode === m.key && hg.togglePillActive]}
-            onPress={() => setMode(m.key)} activeOpacity={0.7}>
-            <Text style={[hg.toggleText, mode === m.key && hg.toggleTextActive]}>{m.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {/* Header */}
-      <View style={hg.headerRow}>
-        <Text style={hg.title}>
-          {mode === 'category' ? 'By category' : 'Over time'}
-        </Text>
-        {activeBar && activeBar.value > 0 ? (
-          <View style={hg.tooltipPill}>
-            <Text style={hg.tooltipLabel} numberOfLines={1}>{activeBar.label}</Text>
-            <Text style={hg.tooltipValue}>${Math.round(activeBar.value).toLocaleString()}</Text>
-          </View>
-        ) : (
-          <Text style={hg.totalValue}>${Math.round(totalSpent).toLocaleString()}</Text>
-        )}
-      </View>
-
-      {isHorizontal ? (
-        /* ── Horizontal bar chart (each / category) ── */
-        <View style={{ marginTop: 4 }}>
-          {data.map((d, i) => {
-            const pct = maxVal > 0 ? (d.value / maxVal) * 100 : 0;
-            const barColor = d.color ?? PIE_FALLBACK[i % PIE_FALLBACK.length];
-            const isActive = activeIdx === i;
-            return (
-              <TouchableOpacity key={i} style={hg.hRow} activeOpacity={0.7}
-                onPressIn={() => setActiveIdx(i)} onPressOut={() => setActiveIdx(null)}
-                onPress={() => {
-                  const cat = d.label;
-                  const color = d.color ?? PIE_FALLBACK[i % PIE_FALLBACK.length];
-                  onSelectCategory(cat, color);
-                }}>
-                <View style={hg.hLabelCol}>
-                  <Text style={[hg.hLabel, isActive && { color: T.teal }]} numberOfLines={1}>{d.label}</Text>
-                </View>
-                <View style={hg.hBarTrack}>
-                  <View style={[hg.hBarFill, {
-                    width: `${Math.max(pct, 2)}%`,
-                    backgroundColor: barColor,
-                    opacity: activeIdx !== null ? (isActive ? 1 : 0.35) : 0.85,
-                  }]} />
-                </View>
-                <Text style={[hg.hAmt, isActive && { color: T.teal }]}>${Math.round(d.value).toLocaleString()}</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-      ) : (
-        /* ── Vertical bar chart (timeline) ── */
-        <>
-          <View style={{ height: V_H, position: 'relative' }} {...vPanResponder.panHandlers}>
-            <Svg width={W} height={V_H}>
-              {data.map((d, i) => {
-                const barH = maxVal > 0 ? (d.value / maxVal) * chartH_v : 0;
-                const x = i * (barW_v + gap_v);
-                const y = PAD.t + chartH_v - barH;
-                const isActive = activeIdx === i;
-                const opacity = activeIdx !== null ? (isActive ? 1 : 0.35) : (d.value > 0 ? 0.85 : 0.2);
-                return (
-                  <Rect key={i}
-                    x={x} y={d.value > 0 ? y : PAD.t + chartH_v - 2}
-                    width={barW_v} height={d.value > 0 ? barH : 2}
-                    rx={barW_v > 10 ? 4 : 2} ry={barW_v > 10 ? 4 : 2}
-                    fill={isActive ? T.teal : T.accent} opacity={opacity}
-                  />
-                );
-              })}
-              <SvgLine x1={0} y1={PAD.t + chartH_v} x2={W} y2={PAD.t + chartH_v} stroke={T.cardBorder} strokeWidth={1} />
-            </Svg>
-          </View>
-          <View style={hg.xAxis}>
-            {data.map((d, i) => (
-              <Text key={i} style={[hg.xLabel, activeIdx === i && hg.xLabelActive]}>{d.label}</Text>
-            ))}
-          </View>
-        </>
-      )}
-    </View>
-  );
-}
-
-const hg = StyleSheet.create({
-  card: {
-    backgroundColor: T.card, borderRadius: 16, padding: 16,
-    marginBottom: 16, borderWidth: 1, borderColor: T.cardBorder,
-  },
-  toggleRow: {
-    flexDirection: 'row', gap: 6, marginBottom: 14,
-  },
-  togglePill: {
-    paddingHorizontal: 14, paddingVertical: 5, borderRadius: 20,
-  },
-  togglePillActive: {
-    backgroundColor: T.cardBorder,
-  },
-  toggleText: {
-    fontSize: 12, fontWeight: '600', color: T.textTertiary,
-  },
-  toggleTextActive: {
-    color: T.textPrimary,
-  },
-  headerRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  title: {
-    fontSize: 11, fontWeight: '600', color: T.textTertiary,
-    letterSpacing: 0.6, textTransform: 'uppercase',
-  },
-  totalValue: {
-    fontSize: 18, fontWeight: '700', color: T.textPrimary,
-  },
-  tooltipPill: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: T.accentMuted, borderRadius: 10,
-    paddingHorizontal: 10, paddingVertical: 4, maxWidth: '55%',
-  },
-  tooltipLabel: {
-    fontSize: 12, fontWeight: '500', color: T.textSecondary, flexShrink: 1,
-  },
-  tooltipValue: {
-    fontSize: 14, fontWeight: '700', color: T.teal,
-  },
-  // Horizontal bars
-  hRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    paddingVertical: 5,
-  },
-  hLabelCol: {
-    width: 80,
-  },
-  hLabel: {
-    fontSize: 12, fontWeight: '600', color: T.textSecondary,
-  },
-  hSub: {
-    fontSize: 10, color: T.textTertiary, marginTop: 1,
-  },
-  hBarTrack: {
-    flex: 1, height: 14, borderRadius: 7,
-    backgroundColor: T.cardBorder, overflow: 'hidden',
-  },
-  hBarFill: {
-    height: '100%', borderRadius: 7,
-  },
-  hAmt: {
-    fontSize: 12, fontWeight: '700', color: T.textPrimary,
-    width: 56, textAlign: 'right',
-  },
-  // Vertical bars (timeline)
-  xAxis: {
-    flexDirection: 'row', justifyContent: 'space-around', marginTop: 4,
-  },
-  xLabel: {
-    fontSize: 9, color: T.textTertiary, textAlign: 'center', flex: 1,
-  },
-  xLabelActive: {
-    color: T.teal, fontWeight: '700',
-  },
-});
 
 function normalizeCat(raw: string): string {
   return raw.trim().toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
@@ -3359,6 +2761,7 @@ export default function ExpensesScreen() {
   const { lang, t } = useLanguage();
   const { data, isLoading } = useAppQuery({ tournaments: {}, expenses: {} });
   const { data: _prof } = useProfile();
+  const queryClient = useQueryClient();
   const [showAddForm, setShowAddForm] = useState(false);
   const [autoScanOnAdd, setAutoScanOnAdd] = useState(false);
   const [showAddChoice, setShowAddChoice] = useState(false);
@@ -3387,6 +2790,17 @@ export default function ExpensesScreen() {
   const [deleting, setDeleting] = useState(false);
   const demoCtx = useDemoData();
   const [drillCategory, setDrillCategory] = useState<{ cat: string; color: string } | null>(null);
+  // ── Financial sections state (cash-flow hero, budget runway, income ledger) ──
+  const [donutOpen, setDonutOpen] = useState(false);
+  const [runwayNetMode, setRunwayNetMode] = useState(false);
+  const [showIncomeSheet, setShowIncomeSheet] = useState(false);
+  const [incomeType, setIncomeType] = useState<'sponsor' | 'federation' | 'stipend' | 'other'>('sponsor');
+  const [incomeSource, setIncomeSource] = useState('');
+  const [incomeAmount, setIncomeAmount] = useState('');
+  const [incomeDate, setIncomeDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [incomeSaving, setIncomeSaving] = useState(false);
+  const [showBudgetSheet, setShowBudgetSheet] = useState(false);
+  const [budgetInput, setBudgetInput] = useState('');
   const [atpMatchHistory, setAtpMatchHistory] = useState<any[]>([]);
 
   // ── Undo-snackbar delete (Recent list) ──
@@ -3575,7 +2989,136 @@ export default function ExpensesScreen() {
     if (!t.startDate || t.startDate < pStart || t.startDate > pEnd) return s;
     return s + tPrize(t);
   }, 0);
-  const periodNet = periodPrizeMoney - periodSpent;
+
+  // ── Income ledger (sponsors / federation / stipends) ──
+  const { data: incomeRows } = useIncome();
+  const income = useMemo(() => incomeRows ?? [], [incomeRows]);
+  const incomeUsd = (i: any) => i.amountUsd ?? i.amount ?? 0;
+  const periodIncomeTotal = income.reduce((s: number, i: any) =>
+    i.date && i.date >= pStart && i.date <= pEnd ? s + incomeUsd(i) : s, 0);
+
+  // Net now includes non-prize income — prize alone understates a sponsored player's position.
+  const periodNet = periodPrizeMoney + periodIncomeTotal - periodSpent;
+
+  // ── Cash-flow hero data: monthly spend vs inflow + cumulative net ──
+  // Year period → the selected year's 12 months; month period → rolling
+  // 6 months ending at the selected month, so the hero always has context.
+  const cashFlow = useMemo(() => {
+    const now = new Date();
+    const windows: { y: number; m: number }[] = [];
+    if (period === 'month') {
+      const end = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
+      for (let i = 5; i >= 0; i--) {
+        const d = new Date(end.getFullYear(), end.getMonth() - i, 1);
+        windows.push({ y: d.getFullYear(), m: d.getMonth() });
+      }
+    } else {
+      const y = now.getFullYear() + yearOffset;
+      for (let m = 0; m < 12; m++) windows.push({ y, m });
+    }
+    const abbr = getMonthAbbr(lang);
+    let cum = 0;
+    const netSeries: number[] = [];
+    const months = windows.map(({ y, m }) => {
+      const mStr = `${y}-${String(m + 1).padStart(2, '0')}`;
+      const spend = effectiveSum(expenses.filter((e: any) => e.date?.startsWith(mStr)));
+      const prize = tournaments.reduce((s: number, t: any) => t.startDate?.startsWith(mStr) ? s + tPrize(t) : s, 0);
+      const inc = income.reduce((s: number, i: any) => i.date?.startsWith(mStr) ? s + incomeUsd(i) : s, 0);
+      cum += prize + inc - spend;
+      netSeries.push(cum);
+      return { label: abbr[m], spend, inflow: prize + inc, y, m };
+    });
+    return { months, netSeries };
+  }, [expenses, tournaments, income, period, monthOffset, yearOffset, lang]);
+
+  // ── Tournament cost ladder rows (period-scoped, category-stacked) ──
+  const ladderRows = useMemo(() => {
+    const byT = new Map<string, Record<string, number>>();
+    for (const e of effectiveExpenses(periodExpenses)) {
+      if (!e.tournamentId) continue;
+      const cat = groupCategory(normalizeCat(e.category ?? 'Other'));
+      const b = byT.get(e.tournamentId) ?? {};
+      b[cat] = (b[cat] ?? 0) + effectiveUsd(e);
+      byT.set(e.tournamentId, b);
+    }
+    const rows: any[] = [];
+    for (const [id, cats] of byT.entries()) {
+      const trn = tournaments.find((x: any) => x.id === id);
+      if (!trn) continue;
+      const segments = Object.entries(cats).sort((a, b) => b[1] - a[1]).map(([label, value], i) => ({
+        label, value,
+        color: CAT_PIE_COLORS[label.toLowerCase()] ?? PIE_FALLBACK[i % PIE_FALLBACK.length],
+      }));
+      rows.push({
+        id, name: trn.name,
+        flag: trn.country ? countryFlag(trn.country) : undefined,
+        total: segments.reduce((s, x) => s + x.value, 0),
+        segments,
+      });
+    }
+    return rows;
+  }, [periodExpenses, tournaments]);
+
+  // ── Budget runway (calendar-year scope; projection only for the current year) ──
+  const annualBudget = _prof?.annual_budget ?? 0;
+  const runway = useMemo(() => {
+    const y = new Date().getFullYear() + yearOffset;
+    const yStr = `${y}-`;
+    const spent = effectiveSum(expenses.filter((e: any) => e.date?.startsWith(yStr)));
+    const prize = tournaments.reduce((s: number, t: any) => t.startDate?.startsWith(yStr) ? s + tPrize(t) : s, 0);
+    const inc = income.reduce((s: number, i: any) => i.date?.startsWith(yStr) ? s + incomeUsd(i) : s, 0);
+    const inflow = prize + inc;
+    let cumS = 0, cumN = 0;
+    const seriesGross: { x: number; actual: number }[] = [{ x: 0, actual: 0 }];
+    const seriesNet: { x: number; actual: number }[] = [{ x: 0, actual: 0 }];
+    for (let m = 0; m < 12; m++) {
+      const mStr = `${y}-${String(m + 1).padStart(2, '0')}`;
+      const mSpend = effectiveSum(expenses.filter((e: any) => e.date?.startsWith(mStr)));
+      const mPrize = tournaments.reduce((s: number, t: any) => t.startDate?.startsWith(mStr) ? s + tPrize(t) : s, 0);
+      const mInc = income.reduce((s: number, i: any) => i.date?.startsWith(mStr) ? s + incomeUsd(i) : s, 0);
+      cumS += mSpend;
+      cumN += mSpend - mPrize - mInc;
+      seriesGross.push({ x: (m + 1) / 12, actual: cumS });
+      seriesNet.push({ x: (m + 1) / 12, actual: Math.max(0, cumN) });
+    }
+    // Projection: trailing 28-day burn, current year only.
+    let projectedEndDate: string | null = null;
+    if (yearOffset === 0 && annualBudget > 0) {
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const cutoff = new Date(today.getTime() - 28 * 86400000);
+      const cutIso = cutoff.toISOString().slice(0, 10);
+      const todayIso = today.toISOString().slice(0, 10);
+      const recentSpend = effectiveSum(expenses.filter((e: any) => e.date && e.date >= cutIso && e.date <= todayIso));
+      const recentInflow = income.reduce((s: number, i: any) => i.date && i.date >= cutIso && i.date <= todayIso ? s + incomeUsd(i) : s, 0);
+      const burnPerDay = (runwayNetMode ? Math.max(0, recentSpend - recentInflow) : recentSpend) / 28;
+      const remaining = annualBudget - (runwayNetMode ? spent - inflow : spent);
+      if (burnPerDay > 0 && remaining > 0) {
+        const runout = new Date(today.getTime() + (remaining / burnPerDay) * 86400000);
+        if (runout.getFullYear() === y) {
+          const MO = getMonthAbbr(lang);
+          projectedEndDate = `${MO[runout.getMonth()]} ${runout.getDate()}`;
+        }
+        // Runs past Dec 31 → on pace, leave null
+      }
+    }
+    return { spent, inflow, series: runwayNetMode ? seriesNet : seriesGross, projectedEndDate };
+  }, [expenses, tournaments, income, yearOffset, runwayNetMode, annualBudget, lang]);
+
+  // Income aggregates for the ledger card
+  const incomeByType = useMemo(() => {
+    const y = `${new Date().getFullYear() + yearOffset}-`;
+    const map: Record<string, number> = {};
+    let total = 0;
+    for (const i of income) {
+      if (!i.date?.startsWith(y)) continue;
+      map[i.type] = (map[i.type] ?? 0) + incomeUsd(i);
+      total += incomeUsd(i);
+    }
+    return { map, total };
+  }, [income, yearOffset]);
+  const sponsorCoveragePct = incomeByType.map['sponsor'] > 0 && runway.spent > 0
+    ? Math.min(100, Math.round((incomeByType.map['sponsor'] / runway.spent) * 100))
+    : 0;
 
   // ── Compute summary card data for FINANCIAL INSIGHTS grid ──
   const insightCards = useMemo(() => {
@@ -3585,14 +3128,8 @@ export default function ExpensesScreen() {
       return d && d <= today && !t.isWithdrawn;
     });
 
-    // 1. Where your money goes — top category
-    const catGrouped: Record<string, number> = {};
-    for (const e of effectiveExpenses(expenses)) catGrouped[e.category ?? 'Other'] = (catGrouped[e.category ?? 'Other'] ?? 0) + effectiveUsd(e);
-    const topCat = Object.entries(catGrouped).sort((a, b) => b[1] - a[1])[0];
-    const catTotal = Object.values(catGrouped).reduce((s, v) => s + v, 0);
-    const topCatPct = topCat && catTotal > 0 ? Math.round((topCat[1] / catTotal) * 100) : 0;
-
-    // 2. Cost by surface — cheapest surface
+    // 1. Cost by surface — cheapest surface
+    // (the old "where your money goes" card was folded into the donut header)
     const surfaceAvgs: { s: string; avg: number }[] = [];
     for (const surf of ['clay', 'hard', 'grass']) {
       const ts = pastT.filter((t: any) => t.surface === surf);
@@ -3631,15 +3168,18 @@ export default function ExpensesScreen() {
     countryAvgs.sort((a, b) => b.perDay - a.perDay);
     const mostExpensiveCountry = countryAvgs[0];
 
-    // 3. Tournament costs — count
-    const trackedCount = tournaments.filter((t: any) => !t.isWithdrawn && expensesByTournament.has(t.id)).length;
+    // 3. Tournament costs — average cost per tracked tournament (a count is not an insight)
+    const trackedTotals = tournaments
+      .filter((t: any) => !t.isWithdrawn && expensesByTournament.has(t.id))
+      .map((t: any) => expensesByTournament.get(t.id)!.total)
+      .filter((v: number) => v > 0);
+    const avgPerTournament = trackedTotals.length > 0
+      ? trackedTotals.reduce((s: number, v: number) => s + v, 0) / trackedTotals.length
+      : 0;
 
-    // 4. Season heatmap — this week's spend level
-    const weekStart = new Date(today); weekStart.setDate(today.getDate() - today.getDay() + 1);
-    const weekEnd = new Date(weekStart); weekEnd.setDate(weekStart.getDate() + 6);
-    const weekExpenses = expenses.filter((e: any) => { const d = parseLocalDate(e.date); return d && d >= weekStart && d <= weekEnd; });
-    const weekSpend = effectiveSum(weekExpenses);
-    const weekLevel = weekSpend > 2000 ? 'High' : weekSpend > 800 ? 'Medium' : weekSpend > 0 ? 'Low' : 'None';
+    // 3b. Biggest single expense (headline for the biggest-expenses screen)
+    const topExpense = effectiveExpenses(expenses)
+      .reduce((best: number, e: any) => Math.max(best, effectiveUsd(e)), 0);
 
     // 5. Coach impact
     let withCoachTotal = 0, withCoachCount = 0, soloTotal = 0, soloCount = 0;
@@ -3651,19 +3191,10 @@ export default function ExpensesScreen() {
     }
     const coachDiff = withCoachCount > 0 && soloCount > 0 ? (withCoachTotal / withCoachCount) - (soloTotal / soloCount) : 0;
 
-    // 7. Tracking streak
-    const sortedPast = [...pastT].sort((a: any, b: any) => (b.startDate ?? '').localeCompare(a.startDate ?? ''));
-    let streak = 0;
-    for (const t of sortedPast) {
-      if (expensesByTournament.has(t.id)) streak++;
-      else break;
-    }
-
-    // 8-12. Points-based — read from scraped atpMatchHistory, not InstantDB tournaments
+    // Points-based — read from scraped atpMatchHistory, not InstantDB tournaments
     const totalPoints = atpMatchHistory.reduce((s: number, m: any) => s + (m.pointsEarned ?? 0), 0);
     const hasPoints = totalPoints > 0;
     const totalInvested = effectiveSum(expenses);
-    const costPP = hasPoints && totalInvested > 0 ? totalInvested / totalPoints : 0;
 
     // Best surface for points
     let bestSurf = '';
@@ -3675,14 +3206,15 @@ export default function ExpensesScreen() {
       if (avg > bestAvg) { bestAvg = avg; bestSurf = surf.charAt(0).toUpperCase() + surf.slice(1); }
     }
 
+    const per1k = hasPoints && totalInvested > 0 ? totalPoints / (totalInvested / 1000) : 0;
     return [
-      { type: 'where-money-goes', label: t('expenses.whereMoneyGoes'), value: topCat ? `${topCat[0]} · ${topCatPct}%` : t('expenses.needMoreData') },
       { type: 'cost-by-surface', label: t('expenses.costBySurface'), value: cheapest ? `${cheapest.s} · $${Math.round(cheapest.avg)} avg` : t('expenses.needMoreData') },
       { type: 'cost-by-country', label: t('expenses.costByCountry'), value: mostExpensiveCountry ? `${mostExpensiveCountry.c} · $${Math.round(mostExpensiveCountry.perDay)}/day` : t('expenses.needMoreData') },
-      { type: 'tournament-costs', label: t('expenses.tournamentCosts'), value: `${trackedCount} tournament${trackedCount !== 1 ? 's' : ''}` },
+      { type: 'tournament-costs', label: t('expenses.tournamentCosts'), value: avgPerTournament > 0 ? `$${Math.round(avgPerTournament)} avg` : t('expenses.needMoreData') },
       { type: 'coach-impact', label: t('expenses.coachImpact'), value: coachDiff !== 0 ? `${coachDiff > 0 ? '+' : ''}$${Math.abs(Math.round(coachDiff))}` : t('expenses.needMoreData') },
-      { type: 'cost-per-point', label: t('expenses.pointsVsInvestment'), value: hasPoints ? `$${Math.round(costPP)} / pt` : t('expenses.logToUnlock') },
+      { type: 'points-per-dollar', label: t('expenses.pointsPer1k'), value: hasPoints ? `${per1k.toFixed(1)} pts/$1k` : t('expenses.logToUnlock') },
       { type: 'points-by-surface', label: t('expenses.pointsBySurface'), value: bestSurf ? `${bestSurf} · ${bestAvg.toFixed(0)} pts avg` : t('expenses.logToUnlock') },
+      { type: 'biggest-expenses', label: t('expenses.biggestExpenses'), value: topExpense > 0 ? fmt(topExpense) : t('expenses.needMoreData') },
     ];
   }, [tournaments, expenses, expensesByTournament, atpMatchHistory]);
 
@@ -3820,7 +3352,10 @@ export default function ExpensesScreen() {
               onRequestDelete={requestUndoableDelete}
             />
 
-            {/* ── Season Summary Bar ── */}
+            {/* ══ SECTION: CASH FLOW ══ */}
+            <Text style={styles.sectionLabel}>{t('expenses.sectionCashFlow')}</Text>
+
+            {/* ── Season Summary Bar (hero header) ── */}
             <View style={styles.seasonBar}>
               <View style={styles.seasonStat}>
                 <Text style={styles.seasonStatLabel}>{t('expenses.played')}</Text>
@@ -3846,11 +3381,127 @@ export default function ExpensesScreen() {
               </View>
             </View>
 
-            <ExpenseHistogram expenses={expenses} periodExpenses={periodExpenses} period={period} monthOffset={monthOffset} yearOffset={yearOffset}
-              onSelectCategory={(cat, color) => setDrillCategory({ cat, color })} />
+            {/* ── Cash-flow hero: monthly spend vs inflow + cumulative net ── */}
+            <CashFlowChart
+              months={cashFlow.months}
+              netSeries={cashFlow.netSeries}
+              labels={{ spend: t('expenses.spent'), inflow: t('expenses.cashInflow'), net: t('expenses.net') }}
+              emptyLabel={t('expenses.noCashData')}
+              onBarPress={period === 'year' ? (idx) => {
+                setSpentMonth(cashFlow.months[idx].m);
+                setSelectedSpentIds(new Set());
+                setShowSpentBreakdown(true);
+              } : undefined}
+            />
 
-            <CategoryBreakdown expenses={periodExpenses}
-              onSelectCategory={(cat, color) => setDrillCategory({ cat, color })} />
+            {/* ── Category donut: one tap deeper, never side-by-side with the hero ── */}
+            <TouchableOpacity style={styles.catToggleRow} onPress={() => setDonutOpen(o => !o)} activeOpacity={0.7}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.catToggleTitle}>{t('expenses.byCategory')}</Text>
+                {(() => {
+                  const { total, slices } = buildPieData(periodExpenses);
+                  if (!slices.length || total <= 0) return null;
+                  const top = slices.reduce((a, b) => (b.value > a.value ? b : a), slices[0]);
+                  return (
+                    <Text style={styles.catToggleSub}>
+                      {top.label} · {Math.round((top.value / total) * 100)}% {t('expenses.ofSpend')}
+                    </Text>
+                  );
+                })()}
+              </View>
+              <Text style={styles.catToggleChevron}>{donutOpen ? '▾' : '▸'}</Text>
+            </TouchableOpacity>
+            {donutOpen && (
+              <CategoryBreakdown expenses={periodExpenses}
+                onSelectCategory={(cat, color) => setDrillCategory({ cat, color })} />
+            )}
+
+            {/* ══ SECTION: BUDGET ══ */}
+            <Text style={styles.sectionLabel}>{t('expenses.sectionBudget')}</Text>
+
+            {annualBudget > 0 ? (
+              <RunwayCard
+                budget={annualBudget}
+                spent={runway.spent}
+                inflow={runway.inflow}
+                netMode={runwayNetMode}
+                onToggleNetMode={() => setRunwayNetMode(v => !v)}
+                projectedEndDate={runway.projectedEndDate}
+                seasonEndLabel={String(new Date().getFullYear() + yearOffset)}
+                series={runway.series}
+                labels={{
+                  remaining: t('expenses.budgetRemaining'),
+                  gross: t('expenses.gross'),
+                  net: t('expenses.net'),
+                  projected: t('expenses.projectedRunout'),
+                  onPace: t('expenses.onPace'),
+                  overBudget: t('expenses.overBudget'),
+                }}
+                onPress={() => { setBudgetInput(String(annualBudget)); setShowBudgetSheet(true); }}
+              />
+            ) : (
+              <TouchableOpacity style={styles.setBudgetRow} activeOpacity={0.7}
+                onPress={() => { setBudgetInput(''); setShowBudgetSheet(true); }}>
+                <Text style={styles.setBudgetText}>🎯 {t('expenses.setBudget')}</Text>
+                <Text style={styles.catToggleChevron}>›</Text>
+              </TouchableOpacity>
+            )}
+
+            {/* ── Income ledger (sponsors / federation / stipends) ── */}
+            <View style={styles.incomeCard}>
+              <View style={styles.incomeHeader}>
+                <Text style={styles.catToggleTitle}>{t('expenses.income')}</Text>
+                <Text style={styles.incomeTotal}>{incomeByType.total > 0 ? `+${fmt(incomeByType.total)}` : '—'}</Text>
+                <TouchableOpacity style={styles.incomeAddBtn} activeOpacity={0.8}
+                  onPress={() => setShowIncomeSheet(true)}>
+                  <Text style={styles.incomeAddText}>+ {t('expenses.addIncome')}</Text>
+                </TouchableOpacity>
+              </View>
+              {income
+                .filter((i: any) => i.date?.startsWith(String(new Date().getFullYear() + yearOffset)))
+                .sort((a: any, b: any) => (b.date ?? '').localeCompare(a.date ?? ''))
+                .slice(0, 5)
+                .map((i: any) => (
+                  <TouchableOpacity key={i.id} style={styles.incomeRow} activeOpacity={0.7}
+                    onLongPress={() => {
+                      Alert.alert(t('expenses.income'), i.source ?? '', [
+                        { text: t('common.cancel'), style: 'cancel' },
+                        { text: t('common.delete'), style: 'destructive', onPress: () => apiDeleteIncome(i.id).catch(() => {}) },
+                      ]);
+                    }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.incomeRowTitle} numberOfLines={1}>
+                        {i.source || t(`expenses.income_${i.type}` as any)}
+                      </Text>
+                      <Text style={styles.incomeRowSub}>{t(`expenses.income_${i.type}` as any)} · {i.date}</Text>
+                    </View>
+                    <Text style={styles.incomeRowAmt}>+{fmt(incomeUsd(i))}</Text>
+                  </TouchableOpacity>
+                ))}
+              {sponsorCoveragePct > 0 && (
+                <Text style={styles.sponsorRoi}>
+                  {t('expenses.sponsorCover1')} {sponsorCoveragePct}% {t('expenses.sponsorCover2')}
+                </Text>
+              )}
+            </View>
+
+            {/* ── Monthly Fixed Expenses ── */}
+            <MonthlyFixedSection expenses={expenses} />
+
+            {/* ══ SECTION: TOURNAMENTS ══ */}
+            <Text style={styles.sectionLabel}>{t('expenses.sectionTournaments')}</Text>
+
+            {/* ── Cost ladder: comparable stacked bars, most expensive first ── */}
+            {ladderRows.length > 0 && (
+              <CostLadder rows={ladderRows} maxRows={5}
+                seeAllLabel={t('expenses.seeAll')}
+                onRowPress={(id) => {
+                  const trn = tournaments.find((x: any) => x.id === id);
+                  if (!trn) return;
+                  const tExp = expenses.filter((e: any) => e.tournamentId === id);
+                  setDetailTournament({ ...trn, spent: effectiveSum(tExp), prize: (trn.singlesPrizeMoney ?? 0) + (trn.doublesPrizeMoney ?? 0) });
+                }} />
+            )}
 
             <TournamentBreakdown expenses={periodExpenses} tournaments={tournaments} onTap={(t) => {
               const tExp = expenses.filter((e: any) => e.tournamentId === t.id);
@@ -3860,9 +3511,6 @@ export default function ExpensesScreen() {
               const prize = singles + doubles;
               setDetailTournament({ ...t, spent, prize });
             }} />
-
-            {/* ── Monthly Fixed Expenses ── */}
-            <MonthlyFixedSection expenses={expenses} />
 
             {/* ── Financial Insights Grid ── */}
             <Text style={styles.sectionLabel}>{t('expenses.financialInsights')}</Text>
@@ -3879,6 +3527,116 @@ export default function ExpensesScreen() {
         )}
 
       </ScrollView>
+
+      {/* ── Season budget sheet ── */}
+      {showBudgetSheet && (
+        <Modal transparent animationType="slide" onRequestClose={() => setShowBudgetSheet(false)}>
+          <Pressable style={styles.choiceBackdrop} onPress={() => setShowBudgetSheet(false)}>
+            <Pressable style={styles.choiceSheet} onPress={() => {}}>
+              <View style={styles.choiceHandle} />
+              <Text style={{ fontSize: 16, fontWeight: '700', color: T.textPrimary, textAlign: 'center', marginBottom: 12 }}>
+                {t('expenses.setBudget')}
+              </Text>
+              <TextInput
+                style={styles.budgetInput}
+                keyboardType="numeric"
+                placeholder="15000"
+                placeholderTextColor={T.textMuted}
+                value={budgetInput}
+                onChangeText={setBudgetInput}
+                autoFocus
+              />
+              <Text style={{ fontSize: 11, color: T.textTertiary, textAlign: 'center', marginTop: 6 }}>USD</Text>
+              <TouchableOpacity
+                style={[styles.budgetSaveBtn, !(parseFloat(budgetInput.replace(',', '.')) > 0) && { opacity: 0.5 }]}
+                disabled={!(parseFloat(budgetInput.replace(',', '.')) > 0)}
+                activeOpacity={0.8}
+                onPress={async () => {
+                  const n = parseFloat(budgetInput.replace(',', '.'));
+                  if (!(n > 0) || !_prof?.id) { setShowBudgetSheet(false); return; }
+                  setShowBudgetSheet(false);
+                  const { error } = await supabase.from('profiles').update({ annual_budget: n }).eq('id', _prof.id);
+                  if (!error) queryClient.invalidateQueries();
+                }}>
+                <Text style={{ fontSize: 15, fontWeight: '700', color: '#FFFFFF' }}>{t('common.save')}</Text>
+              </TouchableOpacity>
+            </Pressable>
+          </Pressable>
+        </Modal>
+      )}
+
+      {/* ── Add income sheet ── */}
+      {showIncomeSheet && (
+        <Modal transparent animationType="slide" onRequestClose={() => setShowIncomeSheet(false)}>
+          <Pressable style={styles.choiceBackdrop} onPress={() => setShowIncomeSheet(false)}>
+            <Pressable style={styles.choiceSheet} onPress={() => {}}>
+              <View style={styles.choiceHandle} />
+              <Text style={{ fontSize: 16, fontWeight: '700', color: T.textPrimary, textAlign: 'center', marginBottom: 14 }}>
+                {t('expenses.addIncome')}
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 6, marginBottom: 12 }}>
+                {(['sponsor', 'federation', 'stipend', 'other'] as const).map(k => (
+                  <TouchableOpacity key={k} activeOpacity={0.7}
+                    style={[styles.incomeTypeChip, incomeType === k && styles.incomeTypeChipActive]}
+                    onPress={() => setIncomeType(k)}>
+                    <Text style={[styles.incomeTypeChipText, incomeType === k && { color: '#FFFFFF' }]}>
+                      {t(`expenses.income_${k}` as any)}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <TextInput
+                style={styles.budgetInput}
+                placeholder={t('expenses.incomeSourcePh')}
+                placeholderTextColor={T.textMuted}
+                value={incomeSource}
+                onChangeText={setIncomeSource}
+              />
+              <TextInput
+                style={[styles.budgetInput, { marginTop: 8 }]}
+                keyboardType="numeric"
+                placeholder="500"
+                placeholderTextColor={T.textMuted}
+                value={incomeAmount}
+                onChangeText={setIncomeAmount}
+              />
+              <Text style={{ fontSize: 11, color: T.textTertiary, textAlign: 'center', marginTop: 6 }}>USD</Text>
+              <View style={{ marginTop: 8 }}>
+                <DatePickerField value={incomeDate} onChange={setIncomeDate} />
+              </View>
+              <TouchableOpacity
+                style={[styles.budgetSaveBtn, (incomeSaving || !(parseFloat(incomeAmount.replace(',', '.')) > 0)) && { opacity: 0.5 }]}
+                disabled={incomeSaving || !(parseFloat(incomeAmount.replace(',', '.')) > 0)}
+                activeOpacity={0.8}
+                onPress={async () => {
+                  const amt = parseFloat(incomeAmount.replace(',', '.'));
+                  if (!(amt > 0)) return;
+                  setIncomeSaving(true);
+                  try {
+                    await apiAddIncome({
+                      type: incomeType,
+                      source: incomeSource.trim() || null,
+                      amount: amt,
+                      currency: 'USD',
+                      amountUsd: amt,
+                      date: incomeDate,
+                      note: null,
+                    });
+                    setShowIncomeSheet(false);
+                    setIncomeSource(''); setIncomeAmount('');
+                    setIncomeDate(new Date().toISOString().slice(0, 10));
+                  } catch {
+                    // optimistic layer handles rollback; keep the sheet open so the user can retry
+                  } finally {
+                    setIncomeSaving(false);
+                  }
+                }}>
+                <Text style={{ fontSize: 15, fontWeight: '700', color: '#FFFFFF' }}>{t('common.save')}</Text>
+              </TouchableOpacity>
+            </Pressable>
+          </Pressable>
+        </Modal>
+      )}
 
       {/* ── Add choice sheet ── */}
       {/* ── Spent Breakdown Modal ── */}
@@ -4450,6 +4208,54 @@ const styles = StyleSheet.create({
   seasonStatLabel: { fontSize: 10, fontWeight: '600', color: T.textTertiary, letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 3 },
   seasonStatValue: { fontSize: 14, fontWeight: '700', color: T.textPrimary },
   seasonDivider: { width: 1, height: 22, backgroundColor: T.cardBorder },
+  // ── Financial sections (cash-flow donut toggle, budget, income) ──
+  catToggleRow: {
+    flexDirection: 'row', alignItems: 'center', backgroundColor: T.card,
+    borderRadius: 14, borderWidth: 1, borderColor: T.cardBorder,
+    paddingHorizontal: 16, paddingVertical: 14, marginBottom: 16,
+  },
+  catToggleTitle: { fontSize: 14, fontWeight: '700', color: T.textPrimary },
+  catToggleSub: { fontSize: 12, color: T.textTertiary, marginTop: 2 },
+  catToggleChevron: { fontSize: 16, color: T.textMuted, marginLeft: 8 },
+  setBudgetRow: {
+    flexDirection: 'row', alignItems: 'center', backgroundColor: T.card,
+    borderRadius: 14, borderWidth: 1, borderColor: 'rgba(91,91,214,0.4)', borderStyle: 'dashed',
+    paddingHorizontal: 16, paddingVertical: 16, marginBottom: 16,
+  },
+  setBudgetText: { flex: 1, fontSize: 14, fontWeight: '600', color: T.accent },
+  incomeCard: {
+    backgroundColor: T.card, borderRadius: 14, borderWidth: 1, borderColor: T.cardBorder,
+    padding: 16, marginBottom: 16,
+  },
+  incomeHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
+  incomeTotal: { flex: 1, fontSize: 14, fontWeight: '700', color: T.green },
+  incomeAddBtn: {
+    backgroundColor: 'rgba(91,91,214,0.15)', borderRadius: 16,
+    paddingHorizontal: 10, paddingVertical: 5,
+  },
+  incomeAddText: { fontSize: 12, fontWeight: '600', color: T.accent },
+  incomeRow: {
+    flexDirection: 'row', alignItems: 'center', paddingVertical: 10,
+    borderTopWidth: 1, borderTopColor: T.cardBorder, marginTop: 6,
+  },
+  incomeRowTitle: { fontSize: 13, fontWeight: '600', color: T.textPrimary },
+  incomeRowSub: { fontSize: 11, color: T.textTertiary, marginTop: 1, textTransform: 'capitalize' },
+  incomeRowAmt: { fontSize: 13, fontWeight: '700', color: T.green },
+  sponsorRoi: { fontSize: 12, color: T.textSecondary, marginTop: 10, fontStyle: 'italic' },
+  incomeTypeChip: {
+    flex: 1, borderRadius: 16, paddingVertical: 7, alignItems: 'center',
+    borderWidth: 1, borderColor: T.cardBorder, backgroundColor: T.bg,
+  },
+  incomeTypeChipActive: { backgroundColor: T.accent, borderColor: T.accent },
+  incomeTypeChipText: { fontSize: 11, fontWeight: '600', color: T.textSecondary },
+  budgetInput: {
+    backgroundColor: T.bg, borderRadius: 12, borderWidth: 1, borderColor: T.cardBorder,
+    color: T.textPrimary, fontSize: 16, paddingHorizontal: 14, paddingVertical: 12,
+  },
+  budgetSaveBtn: {
+    backgroundColor: T.accent, borderRadius: 12, alignItems: 'center',
+    paddingVertical: 13, marginTop: 14,
+  },
   insightGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
   insightCard: {
     flexBasis: '47%', flexGrow: 1, backgroundColor: T.card, borderRadius: 12,
