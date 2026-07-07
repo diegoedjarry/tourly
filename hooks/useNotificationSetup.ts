@@ -55,7 +55,13 @@ export function useNotificationSetup() {
     let sub: { remove: () => void } | undefined;
     import('expo-notifications').then(Notifications => {
       sub = Notifications.addNotificationResponseReceivedListener(response => {
-        const tournamentId = response.notification.request.content.data?.tournamentId as string | undefined;
+        const data = response.notification.request.content.data as Record<string, unknown> | undefined;
+        // Profile-matched "new tournament" notifications land on the calendar.
+        if (data?.target === 'calendar') {
+          router.navigate('/(tabs)/calendar');
+          return;
+        }
+        const tournamentId = data?.tournamentId as string | undefined;
         if (tournamentId) {
           router.navigate({
             pathname: '/(tabs)/tournaments',

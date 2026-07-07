@@ -773,6 +773,7 @@ const strings = {
   'settings.shareAnonymizedCostDataDesc': { en: 'Help other players estimate trip costs. Your expenses are only used in anonymous city averages (minimum 5 players) and never shown individually.', es: 'Ayuda a otros jugadores a estimar costos de viajes. Tus gastos solo se usan en promedios anónimos por ciudad (mínimo 5 jugadores) y nunca se muestran individualmente.' },
   'settings.taxReportEmpty': { en: 'No expenses or prize money recorded for this year yet.', es: 'Aún no hay gastos ni premios registrados para este año.' },
   'settings.taxReportChooseYear': { en: 'Choose a year for your tax report.', es: 'Elige un año para tu informe fiscal.' },
+  'settings.scraperAuto': { en: 'AUTO · WEEKLY', es: 'AUTO · SEMANAL' },
 
   // Auth extra
   'auth.missingFields': { en: 'Missing fields', es: 'Campos faltantes' },

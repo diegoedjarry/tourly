@@ -44,7 +44,7 @@ function WelcomeScreen({ onNext, onBack }: { onNext: () => void; onBack: () => v
       <View style={s.centered}>
         <TourlyLogo width={240} height={64} />
         <View style={{ marginTop: 40, alignItems: 'center', gap: 8 }}>
-          <Text style={s.tagline1}>"Every city, every court, every dollar."</Text>
+          <Text style={s.tagline1}>&ldquo;Every city, every court, every dollar.&rdquo;</Text>
           <Text style={s.tagline2}>Take control of your tour.</Text>
         </View>
       </View>
@@ -405,7 +405,7 @@ function ReadyScreen({ onAddTournament, onExplore }: { onAddTournament: () => vo
     <SafeAreaView style={s.safe}>
       <View style={[s.centered, { paddingHorizontal: 32 }]}>
         <Text style={{ fontSize: 72, color: MINT, fontWeight: '800', marginBottom: 16 }}>✓</Text>
-        <Text style={s.featureTitle}>You're All Set</Text>
+        <Text style={s.featureTitle}>You&apos;re All Set</Text>
         <Text style={s.featureDesc}>
           Add your first tournament to get started. Tourly will calculate all deadlines automatically.
         </Text>
@@ -442,27 +442,33 @@ export default function WalkthroughScreen() {
 
   const steps: React.ReactNode[] = [
     <WelcomeScreen
+      key="welcome"
       onNext={() => setStep(1)}
       onBack={handleBackToLogin}
     />,
     <ProblemScreen
+      key="problem"
       onNext={() => setStep(2)}
       onBack={() => setStep(0)}
     />,
     <FeaturesCarousel
+      key="features"
       startIndex={0}
       onNext={() => setStep(3)}
       onBack={() => setStep(1)}
     />,
     <ProfileSetupScreen
+      key="profile"
       onNext={() => setStep(4)}
       onBack={() => setStep(2)}
     />,
     <NotificationsScreen
+      key="notifications"
       onNext={() => setStep(5)}
       onBack={() => setStep(3)}
     />,
     <ReadyScreen
+      key="ready"
       onAddTournament={async () => {
         await finishOnboarding();
         router.replace('/(tabs)/tournaments');

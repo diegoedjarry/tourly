@@ -158,7 +158,7 @@ function CashFlowChartInner({ months, netSeries, labels, onBarPress, emptyLabel,
                 <Circle cx={last.x} cy={last.y} r={4} fill={T.accent} />
                 <SvgText
                   x={nearRightEdge ? last.x - 7 : last.x + 7}
-                  y={Math.max(PAD.t + 9, last.y - 8)}
+                  y={Math.min(H - PAD.b - 4, Math.max(PAD.t + 9, last.y - 8))}
                   fontSize={11}
                   fontWeight="bold"
                   fill={T.accent}

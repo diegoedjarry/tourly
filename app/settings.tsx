@@ -21,7 +21,7 @@ import { useProfile, useUpdateProfile, type Profile, type ReminderConfig, type R
 import { useAuth } from '@/hooks/useAuth';
 import { DatePickerField } from '@/components/ui/date-picker-field';
 import { useAppQuery } from '@/hooks/useAppQuery';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMyShares, useInviteShare, useRevokeShare } from '@/hooks/useSharedAccess';
 import { exportTournamentsCsv, exportExpensesCsv, exportAllCsv } from '@/utils/export-csv';
 import { exportSeasonStatementPdf, exportTaxReportPdf } from '@/utils/export-pdf';
@@ -90,6 +90,24 @@ export default function SettingsScreen() {
   const { data: shares } = useMyShares();
   const inviteShare = useInviteShare();
   const revokeShare = useRevokeShare();
+  const { data: scraperLastRun } = useQuery({
+    // Demo mode has no Supabase session — don't fire a live query there.
+    enabled: !DEMO_MODE,
+    queryKey: ['scraperLastRun'],
+    queryFn: async () => {
+      const { supabase: sb } = await import('@/lib/supabase');
+      const { data, error } = await sb
+        .from('scraper_runs')
+        .select('finished_at, status')
+        .order('finished_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return data as { finished_at: string | null; status: string } | null;
+    },
+    // Graceful degradation — if this fails, the UI just shows '—'.
+    retry: false,
+  });
   const [openSection, setOpenSection] = useState<string | null>(null);
   function toggleSection(key: string) { setOpenSection(v => v === key ? null : key); }
 
@@ -667,15 +685,28 @@ export default function SettingsScreen() {
           <View style={s.row}>
             <Text style={s.rowLabel}>{t('settings.scraperStatus')}</Text>
             <View style={s.rowRight}>
-              <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: T.amber, marginRight: 4 }} />
-              <Text style={[s.rowValue, { color: T.amber }]}>{t('settings.manualMode')}</Text>
+              <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: T.teal, marginRight: 4 }} />
+              <Text style={[s.rowValue, { color: T.teal }]}>{t('settings.scraperAuto')}</Text>
             </View>
           </View>
           <Sep />
           <View style={s.row}>
             <Text style={s.rowLabel}>{t('settings.lastScraperRun')}</Text>
             <View style={s.rowRight}>
-              <Text style={s.rowValue}>—</Text>
+              {scraperLastRun?.finished_at && (
+                <View
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: 4,
+                    marginRight: 6,
+                    backgroundColor: scraperLastRun.status === 'error' ? T.red : T.green,
+                  }}
+                />
+              )}
+              <Text style={s.rowValue}>
+                {scraperLastRun?.finished_at ? formatRelative(scraperLastRun.finished_at, lang) : '—'}
+              </Text>
             </View>
           </View>
           <Sep />
@@ -690,8 +721,9 @@ export default function SettingsScreen() {
             <Text style={s.rowLabel}>{t('settings.notifyNewTournaments')}</Text>
             <View style={s.rowRight}>
               <Switch
-                value={false}
-                disabled
+                value={p?.notify_new_tournaments ?? false}
+                disabled={DEMO_MODE}
+                onValueChange={v => { if (!DEMO_MODE) toggleNotif('notify_new_tournaments', v); }}
                 trackColor={{ false: T.cardBorder, true: T.teal }}
                 thumbColor={T.textPrimary}
               />
@@ -1568,6 +1600,21 @@ function formatDate(iso: string) {
   const [y, m, d] = iso.split('-').map(Number);
   const date = new Date(y, m - 1, d);
   return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+// Short relative timestamp for the scraper's last run — "just now", "3h ago", "2d ago",
+// falling back to a short date once it's more than a week old.
+function formatRelative(iso: string, lang: Lang): string {
+  const then = new Date(iso).getTime();
+  const diffMs = Date.now() - then;
+  const minutes = Math.floor(diffMs / 60000);
+  const hours = Math.floor(diffMs / 3600000);
+  const days = Math.floor(diffMs / 86400000);
+  if (minutes < 1) return lang === 'es' ? 'ahora mismo' : 'just now';
+  if (minutes < 60) return lang === 'es' ? `hace ${minutes} min` : `${minutes}m ago`;
+  if (hours < 24) return lang === 'es' ? `hace ${hours} h` : `${hours}h ago`;
+  if (days < 7) return lang === 'es' ? `hace ${days} d` : `${days}d ago`;
+  return new Date(then).toLocaleDateString(lang === 'es' ? 'es-ES' : 'en-GB', { day: 'numeric', month: 'short' });
 }
 
 // ─── Styles ──────────────────────────────────────────────────────────────────

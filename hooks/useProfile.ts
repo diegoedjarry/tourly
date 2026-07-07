@@ -38,6 +38,8 @@ export interface Profile {
   notify_reminder_config: ReminderConfig | null;
   notify_onsite_enabled: boolean;
   notify_onsite_reminders: (OnsiteReminderTime | null)[];
+  notify_new_tournaments: boolean;
+  atp_player_name: string | null;
   language: string | null;
   onboarding_complete: boolean;
   ipin_number: string | null;

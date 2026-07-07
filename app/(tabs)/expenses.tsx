@@ -3060,13 +3060,25 @@ export default function ExpensesScreen() {
       b[cat] = (b[cat] ?? 0) + effectiveUsd(e);
       byT.set(e.tournamentId, b);
     }
+    // One shared label→color map across ALL rows: per-row positional fallback
+    // would give the same custom category different colors in different bars,
+    // contradicting the legend.
+    const colorByLabel = new Map<string, string>();
+    let fallbackIdx = 0;
+    for (const cats of byT.values()) {
+      for (const label of Object.keys(cats)) {
+        if (colorByLabel.has(label)) continue;
+        const preset = CAT_PIE_COLORS[label.toLowerCase()];
+        colorByLabel.set(label, preset ?? PIE_FALLBACK[fallbackIdx++ % PIE_FALLBACK.length]);
+      }
+    }
     const rows: any[] = [];
     for (const [id, cats] of byT.entries()) {
       const trn = tournaments.find((x: any) => x.id === id);
       if (!trn) continue;
-      const segments = Object.entries(cats).sort((a, b) => b[1] - a[1]).map(([label, value], i) => ({
+      const segments = Object.entries(cats).sort((a, b) => b[1] - a[1]).map(([label, value]) => ({
         label, value,
-        color: CAT_PIE_COLORS[label.toLowerCase()] ?? PIE_FALLBACK[i % PIE_FALLBACK.length],
+        color: colorByLabel.get(label)!,
       }));
       rows.push({
         id, name: trn.name,

@@ -37,20 +37,6 @@ export function RankingChart({ points }: { points: { date: string; ranking: numb
   const scrubIdxRef = useRef<number | null>(null);
   const layoutRef = useRef({ chartW, sortedLen: points.length });
 
-  if (points.length < 2) return null;
-
-  const sorted = [...points].sort((a, b) => a.date.localeCompare(b.date));
-  const minRank = Math.min(...sorted.map(p => p.ranking));
-  const maxRank = Math.max(...sorted.map(p => p.ranking));
-  const rankSpan = maxRank - minRank || 1;
-  const careerHigh = minRank;
-
-  // Invert Y: lower rank number = top of chart
-  const toX = (i: number) => PAD_L + (i / (sorted.length - 1)) * chartW;
-  const toY = (r: number) => PAD_T + ((r - minRank) / rankSpan) * chartH;
-
-  layoutRef.current = { chartW, sortedLen: sorted.length };
-
   // Map a touch x (relative to the wrapping View, same origin as the Svg) to
   // the nearest data index.
   const xToIndex = (x: number) => {
@@ -104,6 +90,22 @@ export function RankingChart({ points }: { points: { date: string; ranking: numb
       }),
     []
   );
+
+  // All hooks are above this guard — an early return before a hook changes
+  // hook order between renders and crashes React (rules-of-hooks).
+  if (points.length < 2) return null;
+
+  const sorted = [...points].sort((a, b) => a.date.localeCompare(b.date));
+  const minRank = Math.min(...sorted.map(p => p.ranking));
+  const maxRank = Math.max(...sorted.map(p => p.ranking));
+  const rankSpan = maxRank - minRank || 1;
+  const careerHigh = minRank;
+
+  // Invert Y: lower rank number = top of chart
+  const toX = (i: number) => PAD_L + (i / (sorted.length - 1)) * chartW;
+  const toY = (r: number) => PAD_T + ((r - minRank) / rankSpan) * chartH;
+
+  layoutRef.current = { chartW, sortedLen: sorted.length };
 
   // Catmull-Rom smooth path
   const pts = sorted.map((p, i) => ({ x: toX(i), y: toY(p.ranking) }));

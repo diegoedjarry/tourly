@@ -1,5 +1,5 @@
 import 'react-native-get-random-values';
-import { Stack, useRouter, useSegments } from 'expo-router';
+import { Stack, usePathname, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -11,6 +11,7 @@ import { useFonts, Montserrat_300Light, Montserrat_400Regular, Montserrat_500Med
 import * as SplashScreen from 'expo-splash-screen';
 
 import { useNotificationSetup } from '@/hooks/useNotificationSetup';
+import { useNewTournamentNotifier } from '@/hooks/useNewTournamentNotifier';
 import { AppAlertProvider } from '@/components/ui/app-alert';
 import { ScraperBanner } from '@/components/ui/ScraperBanner';
 import { DemoDataProvider } from '@/hooks/useDemoData';
@@ -19,6 +20,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { DEMO_MODE } from '@/config/demo';
+import { trackScreen } from '@/lib/analytics';
 
 // Restore persisted query cache and subscribe to future changes
 persistCacheToMmkv();
@@ -61,18 +63,20 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     const inAuth = segments[0] === 'auth';
     const inOnboarding = segments[0] === 'onboarding';
 
-    console.log('[AuthGate]', {
-      userId: user?.id ?? null,
-      loading,
-      profileLoading,
-      profileFetching,
-      profileIsNull: profile === null,
-      profileIsUndefined: profile === undefined,
-      onboarding_complete: (profile as any)?.onboarding_complete ?? 'N/A',
-      segments: segments[0],
-      inAuth,
-      inOnboarding,
-    });
+    if (__DEV__) {
+      console.log('[AuthGate]', {
+        userId: user?.id ?? null,
+        loading,
+        profileLoading,
+        profileFetching,
+        profileIsNull: profile === null,
+        profileIsUndefined: profile === undefined,
+        onboarding_complete: (profile as any)?.onboarding_complete ?? 'N/A',
+        segments: segments[0],
+        inAuth,
+        inOnboarding,
+      });
+    }
 
     if (!user) {
       if (!inAuth) {
@@ -103,6 +107,14 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 
 function AppLayout() {
   useNotificationSetup();
+  useNewTournamentNotifier();
+
+  // First-party screen analytics: one event per route change.
+  const pathname = usePathname();
+  useEffect(() => {
+    if (pathname) trackScreen(pathname);
+  }, [pathname]);
+
   return (
     <AuthGate>
       <ScraperBanner />

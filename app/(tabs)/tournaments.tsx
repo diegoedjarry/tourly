@@ -1621,7 +1621,7 @@ export function AddTournamentModal({ onClose, defaultStartDate }: { onClose: () 
                   </TouchableOpacity>
                 ))}
                 {query.trim().length > 0 && searchResults.length === 0 && (
-                  <View style={form.noResults}><Text style={form.noResultsText}>{t('tournaments.noMatches')} "{query}"</Text></View>
+                  <View style={form.noResults}><Text style={form.noResultsText}>{t('tournaments.noMatches')} &quot;{query}&quot;</Text></View>
                 )}
                 {(showManualPrompt || query.trim().length === 0) && (
                   <TouchableOpacity style={form.manualPrompt} onPress={() => setMode('manual')} activeOpacity={0.8}>
