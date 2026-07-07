@@ -43,9 +43,13 @@ const AMOUNT_PATTERNS = [
   /(?:^|[\s:=\-–—])(\d[\d.,]*)(?:\s*$|[\s,;.])/m,           // standalone number
 ];
 
+// ISO (4-digit-year-first) must be tried BEFORE DD/MM: the unanchored DD/MM
+// pattern would otherwise match the "26-06-01" substring inside "2026-06-01"
+// and turn it into 2001-06-26. Both numeric patterns are digit-boundary
+// guarded so they never start mid-number.
 const DATE_PATTERNS = [
-  /(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/,   // 01/15/2024, 15-01-2024, 15.01.24
-  /(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/,      // 2024-01-15
+  /(?:^|[^0-9])(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/,      // 2024-01-15
+  /(?:^|[^0-9])(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/,   // 01/15/2024, 15-01-2024, 15.01.24
   /(\d{1,2})\s+(?:de\s+)?(ene(?:ro)?|feb(?:rero)?|mar(?:zo)?|abr(?:il)?|may(?:o)?|jun(?:io)?|jul(?:io)?|ago(?:sto)?|sep(?:tiembre)?|oct(?:ubre)?|nov(?:iembre)?|dic(?:iembre)?|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s*(?:de\s+)?(\d{2,4})?/i,
 ];
 
@@ -78,7 +82,7 @@ function extractDate(text: string): string | null {
       return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     }
 
-    if (pattern === DATE_PATTERNS[1]) {
+    if (pattern === DATE_PATTERNS[0]) {
       const y = parseInt(m[1]);
       const mo = parseInt(m[2]);
       const d = parseInt(m[3]);
@@ -87,7 +91,7 @@ function extractDate(text: string): string | null {
       }
     }
 
-    if (pattern === DATE_PATTERNS[0]) {
+    if (pattern === DATE_PATTERNS[1]) {
       const a = parseInt(m[1]);
       const b = parseInt(m[2]);
       let y = m[3] ? parseInt(m[3]) : new Date().getFullYear();
@@ -143,11 +147,22 @@ function cleanDescription(seg: string): string {
     .trim();
 }
 
+// Spreadsheet pastes bring along a header row ("date  category  amount ...");
+// without this guard its leading row number becomes a $1 expense.
+function looksLikeHeader(line: string): boolean {
+  const l = line.toLowerCase();
+  const kws = ['date', 'fecha', 'category', 'categoria', 'categoría', 'description', 'descripcion', 'descripción', 'merchant', 'amount', 'monto', 'currency', 'moneda', 'payment', 'notes', 'notas'];
+  return kws.filter(k => l.includes(k)).length >= 3;
+}
+
 export function parseNotes(text: string): ParsedExpense[] {
   const lines = text
     .split(/\n/)
     .map(l => l.trim())
-    .filter(l => l.length > 0);
+    // Strip spreadsheet row numbers ("17<tab>...") so they are never read as amounts.
+    .map(l => l.replace(/^\d{1,4}\t/, ''))
+    .filter(l => l.length > 0)
+    .filter(l => !looksLikeHeader(l));
 
   const expenses: ParsedExpense[] = [];
   let currentDate: string | null = null;
