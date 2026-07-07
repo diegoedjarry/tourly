@@ -2632,6 +2632,18 @@ const abc = StyleSheet.create({
   statValue: { fontSize: 15, fontWeight: '800' },
 });
 
+// ─── Section header (Whoop-style: accent tick + label + hairline rule) ────────
+
+function SectionHeader({ label }: { label: string }) {
+  return (
+    <View style={styles.sectionHeader}>
+      <View style={styles.sectionTick} />
+      <Text style={styles.sectionHeaderText}>{label}</Text>
+      <View style={styles.sectionRule} />
+    </View>
+  );
+}
+
 // ─── Recent expenses (flat, cross-category) ───────────────────────────────────
 
 const RECENT_CAT_ICON: Record<string, string> = {
@@ -2676,10 +2688,18 @@ function RecentExpensesSection({ expenses, onOpen, onRequestDelete }: {
   expenses: any[]; onOpen: (e: any) => void; onRequestDelete: (e: any) => void;
 }) {
   const { t: tr } = useLanguage();
-  const recent = useMemo(
-    () => [...expenses].sort((a: any, b: any) => (b.date ?? '').localeCompare(a.date ?? '')).slice(0, 10),
-    [expenses]
-  );
+  // Current week only (Monday-start, matching the tournament week): the old
+  // 10-most-recent list stretched back a month and dominated the page.
+  const recent = useMemo(() => {
+    const monday = new Date();
+    monday.setHours(0, 0, 0, 0);
+    monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+    const mondayIso = `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, '0')}-${String(monday.getDate()).padStart(2, '0')}`;
+    return expenses
+      .filter((e: any) => (e.date ?? '') >= mondayIso)
+      .sort((a: any, b: any) => (b.date ?? '').localeCompare(a.date ?? ''))
+      .slice(0, 10);
+  }, [expenses]);
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
 
   function handleSwipeDelete(e: any) {
@@ -2692,7 +2712,7 @@ function RecentExpensesSection({ expenses, onOpen, onRequestDelete }: {
 
   return (
     <View style={{ marginBottom: 16 }}>
-      <Text style={styles.sectionLabel}>{tr('expenses.recent')}</Text>
+      <Text style={styles.sectionLabel}>{tr('expenses.thisWeek')}</Text>
       {/* flexGrow:0 — see the drill-sheet comment below for why a bare
           GestureHandlerRootView (default flex:1) collapses to zero height
           inside a content-sized parent. */}
@@ -2777,7 +2797,6 @@ export default function ExpensesScreen() {
   const autoOpenedRef = useRef<string | undefined>(undefined);
 
   const [period, setPeriod] = useState<'week' | 'month' | 'year'>('year');
-  const [periodDropOpen, setPeriodDropOpen] = useState(false);
   const { isFirstVisit, markVisited } = useFirstVisit('expenses');
   const swipeHandlers = useTabSwipe();
   const router = useRouter();
@@ -3128,18 +3147,9 @@ export default function ExpensesScreen() {
       return d && d <= today && !t.isWithdrawn;
     });
 
-    // 1. Cost by surface — cheapest surface
-    // (the old "where your money goes" card was folded into the donut header)
-    const surfaceAvgs: { s: string; avg: number }[] = [];
-    for (const surf of ['clay', 'hard', 'grass']) {
-      const ts = pastT.filter((t: any) => t.surface === surf);
-      if (ts.length === 0) continue;
-      const avg = ts.reduce((sum: number, t: any) => sum + (expensesByTournament.get(t.id)?.total ?? 0), 0) / ts.length;
-      surfaceAvgs.push({ s: surf.charAt(0).toUpperCase() + surf.slice(1), avg });
-    }
-    const cheapest = surfaceAvgs.sort((a, b) => a.avg - b.avg)[0];
-
-    // 2b. Cost by country — most expensive country
+    // 1. Cost by country — most expensive country
+    // (cost-by-surface was retired: surface isn't a spending decision, so the
+    // comparison never told the player anything actionable)
     const countryAvgs: { c: string; avg: number; perDay: number }[] = [];
     const byCountry: Record<string, number[]> = {};
     for (const t of pastT) {
@@ -3208,7 +3218,6 @@ export default function ExpensesScreen() {
 
     const per1k = hasPoints && totalInvested > 0 ? totalPoints / (totalInvested / 1000) : 0;
     return [
-      { type: 'cost-by-surface', label: t('expenses.costBySurface'), value: cheapest ? `${cheapest.s} · $${Math.round(cheapest.avg)} avg` : t('expenses.needMoreData') },
       { type: 'cost-by-country', label: t('expenses.costByCountry'), value: mostExpensiveCountry ? `${mostExpensiveCountry.c} · $${Math.round(mostExpensiveCountry.perDay)}/day` : t('expenses.needMoreData') },
       { type: 'tournament-costs', label: t('expenses.tournamentCosts'), value: avgPerTournament > 0 ? `$${Math.round(avgPerTournament)} avg` : t('expenses.needMoreData') },
       { type: 'coach-impact', label: t('expenses.coachImpact'), value: coachDiff !== 0 ? `${coachDiff > 0 ? '+' : ''}$${Math.abs(Math.round(coachDiff))}` : t('expenses.needMoreData') },
@@ -3247,82 +3256,52 @@ export default function ExpensesScreen() {
           </View>
         </View>
 
-        {/* Period Selector Toggle — single bubble, expands to options */}
-        <View style={{ alignItems: 'center', marginBottom: 8 }}>
+        {/* ── Compact time bar: ‹ period › + Month|Year toggle, one row ── */}
+        <View style={styles.timeBar}>
           <TouchableOpacity
-            style={[styles.periodChip, styles.periodChipActive, { flexDirection: 'row', alignItems: 'center', gap: 4 }]}
-            onPress={() => setPeriodDropOpen(o => !o)}
+            onPress={() => period === 'month' ? setMonthOffset(monthOffset - 1) : setYearOffset(yearOffset - 1)}
             activeOpacity={0.7}
+            style={styles.timeArrow}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
-            <Text style={styles.periodChipTextActive}>
-              {period === 'month' ? t('expenses.monthly') : t('expenses.yearly')}
-            </Text>
-            <Text style={{ fontSize: 10, color: '#FAFAFA' }}>{periodDropOpen ? '▲' : '▼'}</Text>
-          </TouchableOpacity>
-          {periodDropOpen && (
-            <TouchableOpacity
-              style={[styles.periodChip, { marginTop: 4 }]}
-              onPress={() => {
-                const next = period === 'year' ? 'month' : 'year';
-                setPeriod(next);
-                setMonthOffset(0);
-                setYearOffset(0);
-                setPeriodDropOpen(false);
-              }}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.periodChipText}>
-                {period === 'year' ? t('expenses.monthly') : t('expenses.yearly')}
-              </Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {/* ── WHOOP-style Time Navigation ── */}
-        <View style={styles.yearNav}>
-          <TouchableOpacity
-            onPress={() => {
-              if (period === 'month') {
-                setMonthOffset(monthOffset - 1);
-              } else {
-                setYearOffset(yearOffset - 1);
-              }
-            }}
-            activeOpacity={0.7}
-            style={styles.yearNavArrow}
-          >
-            <Text style={styles.yearNavArrowText}>‹</Text>
+            <Text style={styles.timeArrowText}>‹</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={() => {
-              if (period === 'month') {
-                setMonthOffset(0);
-              } else {
-                setYearOffset(0);
-              }
-            }}
+            onPress={() => period === 'month' ? setMonthOffset(0) : setYearOffset(0)}
             activeOpacity={(period === 'month' ? monthOffset === 0 : yearOffset === 0) ? 1 : 0.7}
-            style={styles.yearNavPill}
+            style={styles.timePill}
           >
-            <Text style={styles.yearNavLabel}>
+            <Text style={styles.timePillText}>
               {period === 'month' ? currentMonthLabel : (new Date().getFullYear() + yearOffset)}
             </Text>
           </TouchableOpacity>
           {((period === 'month' ? monthOffset < 0 : yearOffset < 0)) ? (
             <TouchableOpacity
-              onPress={() => {
-                if (period === 'month') {
-                  setMonthOffset(monthOffset + 1);
-                } else {
-                  setYearOffset(yearOffset + 1);
-                }
-              }}
+              onPress={() => period === 'month' ? setMonthOffset(monthOffset + 1) : setYearOffset(yearOffset + 1)}
               activeOpacity={0.7}
-              style={styles.yearNavArrow}
+              style={styles.timeArrow}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
-              <Text style={styles.yearNavArrowText}>›</Text>
+              <Text style={styles.timeArrowText}>›</Text>
             </TouchableOpacity>
-          ) : <View style={styles.yearNavArrow} />}
+          ) : <View style={styles.timeArrow} />}
+          <View style={{ flex: 1 }} />
+          <View style={styles.segWrap}>
+            <TouchableOpacity
+              style={[styles.segBtn, period === 'month' && styles.segBtnActive]}
+              onPress={() => { if (period !== 'month') { setPeriod('month'); setMonthOffset(0); setYearOffset(0); } }}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.segText, period === 'month' && styles.segTextActive]}>{t('expenses.monthly')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.segBtn, period === 'year' && styles.segBtnActive]}
+              onPress={() => { if (period !== 'year') { setPeriod('year'); setMonthOffset(0); setYearOffset(0); } }}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.segText, period === 'year' && styles.segTextActive]}>{t('expenses.yearly')}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {isLoading ? (
@@ -3353,7 +3332,7 @@ export default function ExpensesScreen() {
             />
 
             {/* ══ SECTION: CASH FLOW ══ */}
-            <Text style={styles.sectionLabel}>{t('expenses.sectionCashFlow')}</Text>
+            <SectionHeader label={t('expenses.sectionCashFlow')} />
 
             {/* ── Season Summary Bar (hero header) ── */}
             <View style={styles.seasonBar}>
@@ -3387,6 +3366,9 @@ export default function ExpensesScreen() {
               netSeries={cashFlow.netSeries}
               labels={{ spend: t('expenses.spent'), inflow: t('expenses.cashInflow'), net: t('expenses.net') }}
               emptyLabel={t('expenses.noCashData')}
+              highlightIndex={period === 'year'
+                ? (yearOffset === 0 ? new Date().getMonth() : undefined)
+                : (monthOffset === 0 ? cashFlow.months.length - 1 : undefined)}
               onBarPress={period === 'year' ? (idx) => {
                 setSpentMonth(cashFlow.months[idx].m);
                 setSelectedSpentIds(new Set());
@@ -3417,7 +3399,7 @@ export default function ExpensesScreen() {
             )}
 
             {/* ══ SECTION: BUDGET ══ */}
-            <Text style={styles.sectionLabel}>{t('expenses.sectionBudget')}</Text>
+            <SectionHeader label={t('expenses.sectionBudget')} />
 
             {annualBudget > 0 ? (
               <RunwayCard
@@ -3489,7 +3471,7 @@ export default function ExpensesScreen() {
             <MonthlyFixedSection expenses={expenses} />
 
             {/* ══ SECTION: TOURNAMENTS ══ */}
-            <Text style={styles.sectionLabel}>{t('expenses.sectionTournaments')}</Text>
+            <SectionHeader label={t('expenses.sectionTournaments')} />
 
             {/* ── Cost ladder: comparable stacked bars, most expensive first ── */}
             {ladderRows.length > 0 && (
@@ -3513,12 +3495,13 @@ export default function ExpensesScreen() {
             }} />
 
             {/* ── Financial Insights Grid ── */}
-            <Text style={styles.sectionLabel}>{t('expenses.financialInsights')}</Text>
+            <SectionHeader label={t('expenses.financialInsights')} />
             <View style={styles.insightGrid}>
               {insightCards.map((card) => (
                 <TouchableOpacity key={card.type} style={styles.insightCard}
                   onPress={() => router.push({ pathname: '/insights', params: { type: card.type } } as any)} activeOpacity={0.7}>
-                  <Text style={styles.insightCardLabel}>{card.label}</Text>
+                  <Text style={styles.insightCardLabel} numberOfLines={1}>{card.label}</Text>
+                  <Text style={styles.insightCardValue} numberOfLines={1}>{card.value}</Text>
                   <Text style={styles.insightCardChevron}>›</Text>
                 </TouchableOpacity>
               ))}
@@ -4186,7 +4169,7 @@ const styles = StyleSheet.create({
   summaryCard: { flex: 1, backgroundColor: T.card, borderRadius: 10, paddingVertical: 8, paddingHorizontal: 8, alignItems: 'center' },
   summaryLabel: { fontSize: 10, color: T.textTertiary, fontWeight: '500', marginBottom: 4, textAlign: 'center' },
   summaryAmount: { fontSize: 15, fontWeight: '700', color: T.textPrimary },
-  sectionLabel: { fontSize: 11, fontWeight: '600', color: T.textTertiary, letterSpacing: 0.8, marginBottom: 10 },
+  sectionLabel: { fontSize: 11, fontWeight: '600', color: T.textTertiary, letterSpacing: 0.8, marginBottom: 10, textTransform: 'uppercase' },
   card: { borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12, marginBottom: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: T.card },
   fixedCard: { backgroundColor: T.card },
   cardLeft: { flex: 1, marginRight: 10 },
@@ -4198,11 +4181,6 @@ const styles = StyleSheet.create({
   netNegative: { color: T.red },
   netPositive: { color: T.green },
   emptyText: { fontSize: 14, color: T.textTertiary, textAlign: 'center', marginTop: 40 },
-  yearNav: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 20, paddingVertical: 8 },
-  yearNavArrow: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  yearNavArrowText: { fontSize: 28, color: T.accent, fontWeight: '300' },
-  yearNavPill: { backgroundColor: T.cardBorder, borderRadius: 22, paddingHorizontal: 24, paddingVertical: 8 },
-  yearNavLabel: { fontSize: 16, fontWeight: '700', color: T.textPrimary },
   seasonBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: T.card, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 8, marginBottom: 12 },
   seasonStat: { flex: 1, alignItems: 'center' },
   seasonStatLabel: { fontSize: 10, fontWeight: '600', color: T.textTertiary, letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 3 },
@@ -4257,17 +4235,41 @@ const styles = StyleSheet.create({
     paddingVertical: 13, marginTop: 14,
   },
   insightGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
+  // Uniform bubbles: fixed min-height, one casing, label + value always in the
+  // same slots so the grid scans as a single system rather than mixed chips.
   insightCard: {
-    flexBasis: '47%', flexGrow: 1, backgroundColor: T.card, borderRadius: 12,
+    flexBasis: '47%', flexGrow: 1, minHeight: 64, backgroundColor: T.card, borderRadius: 12,
+    borderWidth: 1, borderColor: T.cardBorder, justifyContent: 'center',
     paddingVertical: 12, paddingHorizontal: 12, paddingRight: 24, position: 'relative',
   },
-  insightCardLabel: { fontSize: 12, fontWeight: '700', color: T.textPrimary, letterSpacing: 0.3 },
+  insightCardLabel: { fontSize: 11, fontWeight: '600', color: T.textTertiary, letterSpacing: 0.2, marginBottom: 3 },
+  insightCardValue: { fontSize: 15, fontWeight: '700', color: T.textPrimary },
   insightCardChevron: { position: 'absolute', top: 12, right: 10, fontSize: 14, color: T.textMuted, fontWeight: '300' },
-  periodRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
-  periodChip: { borderRadius: 20, paddingHorizontal: 18, paddingVertical: 7, backgroundColor: T.card },
-  periodChipActive: { backgroundColor: T.teal },
-  periodChipText: { fontSize: 13, fontWeight: '600', color: T.textTertiary },
-  periodChipTextActive: { color: T.textPrimary },
+  // Compact time bar: ‹ label › + Month|Year segmented toggle in one row
+  timeBar: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
+  timeArrow: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
+  timeArrowText: { fontSize: 24, color: T.accent, fontWeight: '300' },
+  timePill: {
+    backgroundColor: T.card, borderWidth: 1, borderColor: T.cardBorder,
+    borderRadius: 16, paddingHorizontal: 14, paddingVertical: 6, minWidth: 96, alignItems: 'center',
+  },
+  timePillText: { fontSize: 14, fontWeight: '700', color: T.textPrimary },
+  segWrap: {
+    flexDirection: 'row', backgroundColor: T.card, borderRadius: 16, padding: 2,
+    borderWidth: 1, borderColor: T.cardBorder,
+  },
+  segBtn: { borderRadius: 14, paddingHorizontal: 11, paddingVertical: 5 },
+  segBtnActive: { backgroundColor: T.teal },
+  segText: { fontSize: 11, fontWeight: '600', color: T.textTertiary },
+  segTextActive: { color: T.textPrimary },
+  // Whoop-style section header: accent tick + uppercase label + hairline rule
+  sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 24, marginBottom: 12 },
+  sectionTick: { width: 3, height: 14, borderRadius: 2, backgroundColor: T.accent },
+  sectionHeaderText: {
+    fontSize: 12, fontWeight: '800', color: T.textSecondary,
+    letterSpacing: 1.2, textTransform: 'uppercase',
+  },
+  sectionRule: { flex: 1, height: 1, backgroundColor: T.cardBorder },
   reflectionCard: {
     backgroundColor: T.card,
     borderRadius: 12,

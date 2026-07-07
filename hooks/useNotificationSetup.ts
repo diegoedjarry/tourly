@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import Constants from 'expo-constants';
@@ -14,7 +14,6 @@ export function useNotificationSetup() {
   const { data, isFetching } = useAppQuery({});
   const { data: profile } = useProfile();
   const { lang } = useLanguage();
-  const orphanCleanupDone = useRef(false);
 
   useEffect(() => {
     if (Platform.OS === 'web' || isExpoGo) return;
@@ -23,13 +22,20 @@ export function useNotificationSetup() {
     });
   }, []);
 
-  // One-time-per-session: cancel any notifications for tournaments that no longer exist.
-  // Waits for isFetching=false so the cleanup runs against confirmed live data, not stale cache.
+  // Cancel notifications for tournaments that no longer exist — or are withdrawn /
+  // removed from My List (their notifications are stale by definition; buildSpecs
+  // never creates them). Runs on every settled fetch, not once per session: a stale
+  // server refetch (e.g. offline delete queued but not yet flushed) can make the
+  // reschedule effect re-add notifications for a just-deleted tournament, so the
+  // sweep must keep running against confirmed live data.
   useEffect(() => {
     if (Platform.OS === 'web' || isExpoGo) return;
-    if (!data?.tournaments || isFetching || orphanCleanupDone.current) return;
-    orphanCleanupDone.current = true;
-    const validIds = new Set<string>(data.tournaments.map((t: any) => t.id as string));
+    if (!data?.tournaments || isFetching) return;
+    const validIds = new Set<string>(
+      data.tournaments
+        .filter((t: any) => !t.isWithdrawn && t.isInMyList !== false)
+        .map((t: any) => t.id as string),
+    );
     import('@/utils/notifications').then(({ cancelOrphanedNotifications }) => {
       cancelOrphanedNotifications(validIds).catch(() => {});
     });

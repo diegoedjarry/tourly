@@ -24,7 +24,7 @@ import { useAppQuery } from '@/hooks/useAppQuery';
 import { useQueryClient } from '@tanstack/react-query';
 import { useMyShares, useInviteShare, useRevokeShare } from '@/hooks/useSharedAccess';
 import { exportTournamentsCsv, exportExpensesCsv, exportAllCsv } from '@/utils/export-csv';
-import { exportSeasonStatementPdf } from '@/utils/export-pdf';
+import { exportSeasonStatementPdf, exportTaxReportPdf } from '@/utils/export-pdf';
 import {
   pickAndParseFile,
   detectHeaderRow,
@@ -175,6 +175,46 @@ export default function SettingsScreen() {
       showAlert(t('settings.importError'), err?.message ?? 'Could not save expenses.');
       setImportStep('preview');
     }
+  }
+
+  async function generateTaxReport(year: number) {
+    const yearExpenses = (appData?.expenses ?? []).filter(
+      (e: any) => String(e.date ?? '').slice(0, 4) === String(year) && !e.isReimbursed,
+    );
+    const yearTournaments = (appData?.tournaments ?? []).filter(
+      (tourney: any) =>
+        String(tourney.startDate ?? '').slice(0, 4) === String(year) &&
+        tourney.isRegistered &&
+        !tourney.isWithdrawn &&
+        (((tourney.singlesPrizeMoney ?? 0) + (tourney.doublesPrizeMoney ?? 0)) || (tourney.prizeMoney ?? 0)) > 0,
+    );
+    if (yearExpenses.length === 0 && yearTournaments.length === 0) {
+      showAlert(t('settings.taxReport'), t('settings.taxReportEmpty'));
+      return;
+    }
+    setExporting(true);
+    try {
+      await exportTaxReportPdf(
+        year,
+        appData?.tournaments ?? [],
+        appData?.expenses ?? [],
+        profile?.full_name ?? undefined,
+        lang,
+      );
+    } catch (e: any) {
+      showAlert('Export failed', e?.message ?? t('settings.exportSeasonStatementFailed'));
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  function chooseTaxReportYear() {
+    const currentYear = new Date().getFullYear();
+    showAlert(t('settings.taxReport'), t('settings.taxReportChooseYear'), [
+      { text: t('common.cancel'), style: 'cancel' },
+      { text: String(currentYear - 1), onPress: () => generateTaxReport(currentYear - 1) },
+      { text: String(currentYear), onPress: () => generateTaxReport(currentYear) },
+    ]);
   }
 
   function reportProblem() {
@@ -532,16 +572,11 @@ export default function SettingsScreen() {
           <TouchableOpacity
             style={s.row}
             activeOpacity={0.6}
-            onPress={() => {
-              showAlert(
-                t('settings.taxReport'),
-                t('settings.taxReportDesc'),
-              );
-            }}>
+            disabled={exporting}
+            onPress={chooseTaxReportYear}>
             <Text style={s.rowLabel}>{t('settings.taxReport')}</Text>
             <View style={s.rowRight}>
-              <Text style={[s.rowValue, { color: T.amber, fontSize: 11, fontWeight: '600' }]}>{t('common.comingSoon')}</Text>
-              <Text style={s.rowArrow}>›</Text>
+              {exporting ? <ActivityIndicator size="small" color={T.teal} /> : <Text style={s.rowArrow}>›</Text>}
             </View>
           </TouchableOpacity>
         </View>}
@@ -677,16 +712,16 @@ export default function SettingsScreen() {
         {openSection === 'lang' && <View style={s.card}>
           <SettingsRow
             label={t('settings.appLanguage')}
-            value={LANGUAGES.find(l => l.key === (p?.language ?? 'en'))?.label ?? 'English'}
+            value=""
             onPress={() => openEdit('language', p?.language ?? 'en')}
             trailing={
-              <View style={s.rowRight}>
-                <Text style={s.rowValue}>
+              <>
+                <Text style={s.rowValue} numberOfLines={1}>
                   {LANGUAGES.find(l => l.key === (p?.language ?? 'en'))?.flag ?? '🇺🇸'}{' '}
                   {LANGUAGES.find(l => l.key === (p?.language ?? 'en'))?.label ?? 'English'}
                 </Text>
                 <Text style={s.rowArrow}>›</Text>
-              </View>
+              </>
             }
           />
         </View>}
@@ -1378,7 +1413,7 @@ function OnsiteReminderSection({ enabled, onToggle, times, onChange }: {
                   onPress={() => setEditingSlot(editingSlot === idx ? null : idx)}
                   activeOpacity={0.7}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                  <Text style={rs.editBtn}>{editingSlot === idx ? tr('common.done') : '✏️'}</Text>
+                  <Text style={rs.editBtn}>{editingSlot === idx ? tr('common.done') : tr('common.edit')}</Text>
                 </TouchableOpacity>
               </>
             )}
@@ -1595,8 +1630,8 @@ const s = StyleSheet.create({
     minHeight: 48,
   },
   rowLabel: { fontSize: 16, color: T.textPrimary, fontWeight: '500', flex: 1 },
-  rowRight: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1, maxWidth: '50%' },
-  rowValue: { fontSize: 15, color: T.textSecondary, textAlign: 'right' },
+  rowRight: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1, maxWidth: '65%' },
+  rowValue: { fontSize: 15, color: T.textSecondary, textAlign: 'right', flexShrink: 1 },
   rowArrow: { fontSize: 20, color: T.textTertiary, fontWeight: '300' },
   sep: { height: 1, backgroundColor: T.cardBorder, marginLeft: 16 },
   avatarCircle: {

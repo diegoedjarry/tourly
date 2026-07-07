@@ -113,6 +113,18 @@ function DetailScreen({ title, children }: { title: string; children: React.Reac
   );
 }
 
+// Shared narrative-summary card used across financial insight screens. Text is
+// deterministic (rule-based from computed data, no API calls) — callers build
+// the sentence via i18n template keys + manual {placeholder} substitution.
+function SummaryBox({ text }: { text: string }) {
+  return (
+    <View style={ds.summaryBox}>
+      <Text style={ds.summaryEmoji}>💡</Text>
+      <Text style={ds.summaryText}>{text}</Text>
+    </View>
+  );
+}
+
 // ─── 1. Where Your Money Goes ────────────────────────────────────────────────
 
 function WhereMoneyGoes({ expenses, tournaments }: { expenses: any[]; tournaments: any[] }) {
@@ -131,11 +143,32 @@ function WhereMoneyGoes({ expenses, tournaments }: { expenses: any[]; tournament
 
   const tMap = useMemo(() => new Map(tournaments.map((t: any) => [t.id, t])), [tournaments]);
 
+  const summary = useMemo(() => {
+    if (total <= 0 || sorted.length === 0) return null;
+    const [cat1, val1] = sorted[0];
+    const pct1 = Math.round((val1 / total) * 100);
+    if (sorted.length === 1) {
+      return t('insights.summaryTopCategoryOnly')
+        .replace('{cat}', cat1).replace('{pct}', String(pct1))
+        .replace('{amount}', fmtFull(val1)).replace('{total}', fmtFull(total));
+    }
+    const [cat2, val2] = sorted[1];
+    return t('insights.summaryTopCategoryWithSecond')
+      .replace('{cat}', cat1).replace('{pct}', String(pct1))
+      .replace('{cat2}', cat2).replace('{amount}', fmtFull(val1 + val2))
+      .replace('{total}', fmtFull(total));
+  }, [sorted, total, t]);
+
   return (
     <DetailScreen title={t('insights.whereMoneyGoes')}>
       <Text style={ds.bigLabel}>{fmtFull(total)}</Text>
       <Text style={ds.subLabel}>{t('insights.totalSeasonExpenses')}</Text>
-      <View style={{ marginTop: 24 }}>
+      {summary && (
+        <View style={{ marginTop: 16 }}>
+          <SummaryBox text={summary} />
+        </View>
+      )}
+      <View style={{ marginTop: summary ? 8 : 24 }}>
         {sorted.map(([cat, val]) => {
           const pct = total > 0 ? (val / total) * 100 : 0;
           const color = catColor(cat);
@@ -197,108 +230,12 @@ function WhereMoneyGoes({ expenses, tournaments }: { expenses: any[]; tournament
   );
 }
 
-// ─── 2. Cost By Surface ──────────────────────────────────────────────────────
-
-function CostBySurface({ tournaments, expenses }: { tournaments: any[]; expenses: any[] }) {
-  const surfaces: Surface[] = ['clay', 'hard', 'grass'];
-  const [expandedSurface, setExpandedSurface] = useState<Surface | null>(null);
-  const router = useRouter();
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-
-  const data = surfaces.map(s => {
-    const ts = tournaments.filter((t: any) => {
-      if (t.surface !== s || t.isWithdrawn) return false;
-      const d = parseLocalDate(t.startDate);
-      return d && d <= today;
-    });
-    const count = ts.length;
-    const totalSpent = ts.reduce((sum: number, t: any) => {
-      return sum + effectiveSum(expenses.filter((e: any) => e.tournamentId === t.id));
-    }, 0);
-    const totalPrize = ts.reduce((sum: number, t: any) => sum + getPrize(t), 0);
-    return { surface: s, count, avgSpent: count > 0 ? totalSpent / count : 0, avgPrize: count > 0 ? totalPrize / count : 0 };
-  }).filter(d => d.count >= 3);
-
-  return (
-    <DetailScreen title="Cost By Surface">
-      {data.length === 0 ? (
-        <Text style={ds.emptyText}>Need at least 3 tournaments on a surface to show a reliable comparison. Keep logging tournaments and expenses.</Text>
-      ) : data.map(d => {
-        const sc = SURFACE_COLORS[d.surface];
-        const surfaceTournaments = tournaments.filter((t: any) => {
-          if (t.surface !== d.surface || t.isWithdrawn) return false;
-          const dt = parseLocalDate(t.startDate);
-          return dt && dt <= today;
-        });
-        return (
-          <TouchableOpacity
-            key={d.surface}
-            style={[ds.surfaceCard, { borderColor: sc.fill + '30' }]}
-            activeOpacity={0.9}
-            onPress={() => setExpandedSurface(prev => prev === d.surface ? null : d.surface)}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <View style={[ds.surfaceIconBox, { backgroundColor: sc.bg, marginBottom: 0 }]}>
-                <Text style={{ fontSize: 28 }}>{d.surface === 'clay' ? '🟤' : d.surface === 'hard' ? '🔵' : '🟢'}</Text>
-              </View>
-              <View style={{ flex: 1, marginLeft: 12 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text style={[ds.surfaceName, { color: sc.text }]}>{d.surface.charAt(0).toUpperCase() + d.surface.slice(1)}</Text>
-                  <Text style={{ fontSize: 12, color: sc.text + '80' }}>
-                    {expandedSurface === d.surface ? '▼' : '▶'}
-                  </Text>
-                </View>
-                <Text style={ds.surfaceCount}>({d.count} trips)</Text>
-              </View>
-            </View>
-            <View style={ds.surfaceStats}>
-              <View style={ds.surfaceStat}>
-                <Text style={ds.surfaceStatLabel}>Avg. Spend</Text>
-                <Text style={ds.surfaceStatValue}>{fmtFull(d.avgSpent)}</Text>
-              </View>
-              <View style={ds.surfaceStat}>
-                <Text style={ds.surfaceStatLabel}>Avg. Prize</Text>
-                <Text style={[ds.surfaceStatValue, { color: T.green }]}>{fmtFull(d.avgPrize)}</Text>
-              </View>
-            </View>
-
-            {expandedSurface === d.surface && (
-              <View style={ds.nestedList}>
-                {surfaceTournaments.map((t: any, idx: number) => {
-                  const spent = effectiveSum(expenses.filter((e: any) => e.tournamentId === t.id));
-                  const prize = getPrize(t);
-                  return (
-                    <TouchableOpacity
-                      key={t.id}
-                      style={[ds.nestedRow, idx === surfaceTournaments.length - 1 && { borderBottomWidth: 0 }]}
-                      activeOpacity={0.7}
-                      onPress={() => router.push({ pathname: '/(tabs)/expenses', params: { openTournament: t.id } })}
-                    >
-                      <View style={{ flex: 1, marginRight: 12 }}>
-                        <Text style={ds.nestedTitle}>{countryFlag(t.country)} {t.name}</Text>
-                        <Text style={ds.nestedSub}>{t.startDate}</Text>
-                      </View>
-                      <View style={{ alignItems: 'flex-end' }}>
-                        <Text style={ds.nestedAmount}>{fmtFull(spent)}</Text>
-                        {prize > 0 && <Text style={{ fontSize: 11, color: T.green }}>+{fmtFull(prize)}</Text>}
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            )}
-          </TouchableOpacity>
-        );
-      })}
-    </DetailScreen>
-  );
-}
-
-// ─── 2b. Cost By Country ─────────────────────────────────────────────────────
+// ─── 2. Cost By Country ──────────────────────────────────────────────────────
 
 function CostByCountry({ tournaments, expenses }: { tournaments: any[]; expenses: any[] }) {
   const [expandedCountry, setExpandedCountry] = useState<string | null>(null);
   const router = useRouter();
+  const { t } = useLanguage();
   const today = new Date(); today.setHours(0, 0, 0, 0);
 
   const data = useMemo(() => {
@@ -339,16 +276,38 @@ function CostByCountry({ tournaments, expenses }: { tournaments: any[]; expenses
         tournaments: enriched,
       };
     // Primary sort: cost per day (apples-to-apples across trips of different lengths).
-    // n >= 3 gate: a single trip's $/day is noise, not a country comparison.
-    }).filter(d => d.count >= 3).sort((a, b) => b.perDay - a.perDay);
+    }).sort((a, b) => b.perDay - a.perDay);
   }, [tournaments, expenses]);
+
+  const summary = useMemo(() => {
+    if (data.length === 0) return null;
+    const sampleSuffix = (count: number) =>
+      count >= 3 ? '' : t(count === 1 ? 'insights.summarySampleSuffix' : 'insights.summarySampleSuffixPlural').replace('{count}', String(count));
+
+    if (data.length === 1) {
+      const only = data[0];
+      return t('insights.summaryCostByCountrySingle')
+        .replace('{country}', only.country)
+        .replace('{perDay}', fmtFull(only.perDay))
+        .replace('{sample}', sampleSuffix(only.count));
+    }
+
+    const max = data[0]; // already sorted desc by perDay
+    const min = data[data.length - 1];
+    return t('insights.summaryCostByCountry')
+      .replace('{maxCountry}', max.country).replace('{maxPerDay}', fmtFull(max.perDay)).replace('{maxSample}', sampleSuffix(max.count))
+      .replace('{minCountry}', min.country).replace('{minPerDay}', fmtFull(min.perDay)).replace('{minSample}', sampleSuffix(min.count));
+  }, [data, t]);
 
   return (
     <DetailScreen title="Cost By Country">
       <Text style={[ds.subLabel, { marginBottom: 12 }]}>Sorted by cost/day — the comparable number between trips of different lengths</Text>
       {data.length === 0 ? (
-        <Text style={ds.emptyText}>Need at least 3 tournaments in a country to show a reliable comparison. Keep logging tournaments and expenses.</Text>
-      ) : data.map(d => (
+        <Text style={ds.emptyText}>Log tournaments and expenses in different countries to see a comparison.</Text>
+      ) : (
+        <>
+          {summary && <SummaryBox text={summary} />}
+          {data.map(d => (
         <TouchableOpacity
           key={d.country}
           style={[ds.surfaceCard, { borderColor: '#2A2A48' }]}
@@ -411,7 +370,9 @@ function CostByCountry({ tournaments, expenses }: { tournaments: any[]; expenses
             </View>
           )}
         </TouchableOpacity>
-      ))}
+          ))}
+        </>
+      )}
     </DetailScreen>
   );
 }
@@ -420,6 +381,7 @@ function CostByCountry({ tournaments, expenses }: { tournaments: any[]; expenses
 
 function TournamentCosts({ tournaments, expenses }: { tournaments: any[]; expenses: any[] }) {
   const router = useRouter();
+  const { t } = useLanguage();
   const ranked = tournaments
     .filter((t: any) => !t.isWithdrawn)
     .map((t: any) => {
@@ -429,10 +391,38 @@ function TournamentCosts({ tournaments, expenses }: { tournaments: any[]; expens
     .filter(t => t.spent > 0)
     .sort((a, b) => a.spent - b.spent);
 
+  const summary = useMemo(() => {
+    if (ranked.length === 0) return null;
+    const avg = ranked.reduce((s, tt) => s + tt.spent, 0) / ranked.length;
+    if (avg <= 0) return null;
+    const top = ranked[ranked.length - 1]; // sorted ascending — last is most expensive
+    const multiple = top.spent / avg;
+    if (multiple < 1.3) return null; // not enough of an outlier to be worth calling out
+
+    const topExpenses = effectiveExpenses(expenses.filter((e: any) => e.tournamentId === top.id));
+    const catTotals: Record<string, number> = {};
+    for (const e of topExpenses) {
+      const cat = e.category ?? 'Other';
+      catTotals[cat] = (catTotals[cat] ?? 0) + effectiveUsd(e);
+    }
+    const topCat = Object.entries(catTotals).sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'Other';
+
+    return t('insights.summaryTournamentCosts')
+      .replace('{avg}', fmtFull(avg))
+      .replace('{name}', top.name)
+      .replace('{multiple}', multiple.toFixed(1))
+      .replace('{category}', topCat.toLowerCase());
+  }, [ranked, expenses, t]);
+
   return (
     <DetailScreen title="Tournament Costs">
       <Text style={ds.subLabel}>{ranked.length} tournaments with expenses</Text>
-      <View style={{ marginTop: 16 }}>
+      {summary && (
+        <View style={{ marginTop: 16 }}>
+          <SummaryBox text={summary} />
+        </View>
+      )}
+      <View style={{ marginTop: summary ? 8 : 16 }}>
         {ranked.map((t, i) => {
           const sc = SURFACE_COLORS[t.surface as Surface];
           return (
@@ -565,16 +555,51 @@ function CoachImpact({ tournaments, expenses }: { tournaments: any[]; expenses: 
 // ─── 6. Biggest Expenses ─────────────────────────────────────────────────────
 
 function BiggestExpenses({ expenses, tournaments }: { expenses: any[]; tournaments: any[] }) {
+  const { t } = useLanguage();
   const eff = effectiveExpenses(expenses);
   const total = effectiveSum(expenses);
   const sorted = [...eff].sort((a, b) => effectiveUsd(b) - effectiveUsd(a)).slice(0, 10);
   const tMap = new Map(tournaments.map((t: any) => [t.id, t]));
 
+  const summary = useMemo(() => {
+    if (sorted.length === 0 || total <= 0) return null;
+    const topSum = sorted.reduce((s, e) => s + effectiveUsd(e), 0);
+    const pct = Math.round((topSum / total) * 100);
+
+    const catTotals: Record<string, number> = {};
+    for (const e of sorted) {
+      const cat = e.category ?? 'Other';
+      catTotals[cat] = (catTotals[cat] ?? 0) + effectiveUsd(e);
+    }
+    const [topCat, topCatAmt] = Object.entries(catTotals).sort((a, b) => b[1] - a[1])[0];
+    const allSameCat = Object.keys(catTotals).length === 1;
+
+    if (allSameCat) {
+      return t('insights.summaryBiggestExpensesCategory')
+        .replace('{count}', String(sorted.length))
+        .replace('{category}', topCat.toLowerCase())
+        .replace('{amount}', fmtFull(topSum))
+        .replace('{pct}', String(pct));
+    }
+    const catPct = Math.round((topCatAmt / topSum) * 100);
+    return t('insights.summaryBiggestExpensesMixed')
+      .replace('{count}', String(sorted.length))
+      .replace('{amount}', fmtFull(topSum))
+      .replace('{pct}', String(pct))
+      .replace('{category}', topCat)
+      .replace('{catPct}', String(catPct));
+  }, [sorted, total, t]);
+
   return (
     <DetailScreen title="Biggest Expenses">
       <Text style={ds.bigLabel}>{fmtFull(total)}</Text>
       <Text style={ds.subLabel}>Total season expenses</Text>
-      <View style={{ marginTop: 20 }}>
+      {summary && (
+        <View style={{ marginTop: 16 }}>
+          <SummaryBox text={summary} />
+        </View>
+      )}
+      <View style={{ marginTop: summary ? 4 : 20 }}>
         {sorted.map((e, i) => {
           const t = tMap.get(e.tournamentId);
           return (
@@ -858,7 +883,6 @@ export default function InsightsScreen() {
 
   switch (type) {
     case 'where-money-goes':    return <WhereMoneyGoes expenses={expenses} tournaments={tournaments} />;
-    case 'cost-by-surface':     return <CostBySurface tournaments={tournaments} expenses={expenses} />;
     case 'cost-by-country':    return <CostByCountry tournaments={tournaments} expenses={expenses} />;
     case 'tournament-costs':    return <TournamentCosts tournaments={tournaments} expenses={expenses} />;
     case 'coach-impact':        return <CoachImpact tournaments={tournaments} expenses={expenses} />;
@@ -976,6 +1000,15 @@ const ds = StyleSheet.create({
     borderLeftWidth: 3, borderLeftColor: T.teal,
   },
   insightText: { fontSize: 14, color: T.textPrimary, lineHeight: 21 },
+
+  summaryBox: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 10,
+    backgroundColor: T.accent + '14', borderRadius: 14, padding: 14,
+    borderWidth: 1, borderColor: T.accent + '30',
+    marginBottom: 20,
+  },
+  summaryEmoji: { fontSize: 15, lineHeight: 19 },
+  summaryText: { flex: 1, fontSize: 13, lineHeight: 19, color: T.textSecondary },
 
   miniRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

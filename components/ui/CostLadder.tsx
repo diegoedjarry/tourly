@@ -49,6 +49,24 @@ function CostLadderInner({ rows, maxRows = 5, onRowPress, seeAllLabel, onSeeAll 
     [rows]
   );
 
+  // Legend: every segment color used across the rows, biggest spend first,
+  // so the stacked colors are decodable without tapping into a tournament.
+  const legend = useMemo(() => {
+    const acc = new Map<string, { color: string; total: number }>();
+    for (const r of rows) {
+      for (const s of r.segments) {
+        const v = Math.max(0, safeNum(s.value));
+        const cur = acc.get(s.label);
+        if (cur) cur.total += v;
+        else acc.set(s.label, { color: s.color, total: v });
+      }
+    }
+    return [...acc.entries()]
+      .map(([label, v]) => ({ label, ...v }))
+      .filter(l => l.total > 0)
+      .sort((a, b) => b.total - a.total);
+  }, [rows]);
+
   if (sorted.length === 0) return null;
 
   const maxTotal = Math.max(1, ...sorted.map(r => Math.abs(safeNum(r.total))));
@@ -113,6 +131,17 @@ function CostLadderInner({ rows, maxRows = 5, onRowPress, seeAllLabel, onSeeAll 
           <Text style={styles.seeAllText}>{seeAllLabel ?? `See all (${sorted.length})`}</Text>
         </TouchableOpacity>
       )}
+
+      {legend.length > 0 && (
+        <View style={styles.legendWrap}>
+          {legend.map(item => (
+            <View key={item.label} style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: item.color }]} />
+              <Text style={styles.legendLabel}>{item.label}</Text>
+            </View>
+          ))}
+        </View>
+      )}
     </View>
   );
 }
@@ -140,4 +169,11 @@ const styles = StyleSheet.create({
   },
   seeAll: { alignItems: 'center', paddingTop: 4, paddingBottom: 2 },
   seeAllText: { fontSize: 12, fontWeight: '600', color: T.accent },
+  legendWrap: {
+    flexDirection: 'row', flexWrap: 'wrap', columnGap: 12, rowGap: 6,
+    marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: T.cardBorder,
+  },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  legendDot: { width: 8, height: 8, borderRadius: 4 },
+  legendLabel: { fontSize: 10, fontWeight: '600', color: T.textTertiary },
 });

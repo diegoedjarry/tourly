@@ -34,9 +34,11 @@ export interface CashFlowChartProps {
   labels: { spend: string; inflow: string; net: string };
   onBarPress?: (index: number) => void;
   emptyLabel?: string;
+  /** Index of the current month — its label renders emphasized so "now" is findable at a glance. */
+  highlightIndex?: number;
 }
 
-function CashFlowChartInner({ months, netSeries, labels, onBarPress, emptyLabel }: CashFlowChartProps) {
+function CashFlowChartInner({ months, netSeries, labels, onBarPress, emptyLabel, highlightIndex }: CashFlowChartProps) {
   const { width } = useWindowDimensions();
   const W = width - 40;
   const chartW = Math.max(0, W - PAD.l - PAD.r);
@@ -146,12 +148,38 @@ function CashFlowChartInner({ months, netSeries, labels, onBarPress, emptyLabel 
           {netPath !== '' && (
             <Path d={netPath} fill="none" stroke={T.accent} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
           )}
-          {netPts.length > 0 && (
-            <Circle cx={netPts[netPts.length - 1].x} cy={netPts[netPts.length - 1].y} r={4} fill={T.accent} />
-          )}
+          {netPts.length > 0 && (() => {
+            const last = netPts[netPts.length - 1];
+            // Value callout at the end of the net line — the one number the
+            // chart exists to answer ("where am I net, right now?").
+            const nearRightEdge = last.x > W - PAD.r - 48;
+            return (
+              <>
+                <Circle cx={last.x} cy={last.y} r={4} fill={T.accent} />
+                <SvgText
+                  x={nearRightEdge ? last.x - 7 : last.x + 7}
+                  y={Math.max(PAD.t + 9, last.y - 8)}
+                  fontSize={11}
+                  fontWeight="bold"
+                  fill={T.accent}
+                  textAnchor={nearRightEdge ? 'end' : 'start'}
+                >
+                  {fmt(last.v)}
+                </SvgText>
+              </>
+            );
+          })()}
 
           {months.map((m, i) => (
-            <SvgText key={i} x={centerX(i)} y={H - 6} fontSize={10} fill={T.textTertiary} textAnchor="middle">
+            <SvgText
+              key={i}
+              x={centerX(i)}
+              y={H - 6}
+              fontSize={10}
+              fontWeight={i === highlightIndex ? 'bold' : 'normal'}
+              fill={i === highlightIndex ? T.textPrimary : T.textTertiary}
+              textAnchor="middle"
+            >
               {m.label}
             </SvgText>
           ))}

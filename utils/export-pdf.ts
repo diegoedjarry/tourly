@@ -12,6 +12,22 @@ const RED = '#E24B4A';
 
 const DICT: Record<string, { en: string; es: string }> = {
   title: { en: 'Season Statement', es: 'Estado de Temporada' },
+  taxReportTitle: { en: 'Tax Report', es: 'Informe Fiscal' },
+  allAmountsUsd: { en: 'All amounts in USD', es: 'Todos los montos en USD' },
+  expensesSection: { en: 'Expenses', es: 'Gastos' },
+  incomeSection: { en: 'Income', es: 'Ingresos' },
+  numExpenses: { en: '# Expenses', es: '# Gastos' },
+  total: { en: 'Total', es: 'Total' },
+  grandTotal: { en: 'Grand Total', es: 'Total General' },
+  dates: { en: 'Dates', es: 'Fechas' },
+  singles: { en: 'Singles', es: 'Singles' },
+  doubles: { en: 'Doubles', es: 'Dobles' },
+  noExpensesYear: { en: 'No deductible expenses recorded for this year.', es: 'Sin gastos deducibles registrados para este año.' },
+  noIncomeYear: { en: 'No prize money recorded for this year.', es: 'Sin premios registrados para este año.' },
+  taxDisclaimer: {
+    en: 'This document is a summary of recorded data and does not constitute tax advice.',
+    es: 'Este documento es un resumen de los datos registrados y no constituye asesoría tributaria.',
+  },
   generated: { en: 'Generated', es: 'Generado' },
   totalSpend: { en: 'Total Spend', es: 'Gasto Total' },
   grossPrize: { en: 'Gross Prize Money', es: 'Premios Brutos' },
@@ -361,4 +377,250 @@ export async function exportSeasonStatementPdf(
     dialogTitle: `${tr('title', lang)} ${year}`,
     UTI: 'com.adobe.pdf',
   });
+}
+
+export async function exportTaxReportPdf(
+  year: number,
+  tournaments: any[],
+  expenses: any[],
+  playerName: string | undefined,
+  lang: Lang,
+) {
+  // Expense rules: skip reimbursed rows; effective = (amountUsd ?? amount) * (sharePct/100); only this calendar year.
+  const yearExpenses = (expenses ?? []).filter(e => String(e.date ?? '').slice(0, 4) === String(year) && !e.isReimbursed);
+
+  const catTotals = new Map<string, { count: number; total: number }>();
+  for (const e of yearExpenses) {
+    const amount = effectiveSpend(e);
+    const cat = e.category || (lang === 'es' ? 'Otro' : 'Other');
+    const entry = catTotals.get(cat) ?? { count: 0, total: 0 };
+    entry.count += 1;
+    entry.total += amount;
+    catTotals.set(cat, entry);
+  }
+  const catRows = [...catTotals.entries()].sort((a, b) => b[1].total - a[1].total);
+  const totalExpenses = catRows.reduce((sum, [, v]) => sum + v.total, 0);
+
+  const expenseRowsHtml = catRows.length
+    ? catRows.map(([cat, v]) => `
+        <tr>
+          <td>${escapeHtml(cat)}</td>
+          <td class="num">${v.count}</td>
+          <td class="num">${fmtUSD(-v.total)}</td>
+        </tr>`).join('')
+    : `<tr><td colspan="3" class="empty">${tr('noExpensesYear', lang)}</td></tr>`;
+
+  // Income: prize money per tournament this year, only registered & not withdrawn.
+  const yearTournaments = (tournaments ?? []).filter(
+    t => String(t.startDate ?? '').slice(0, 4) === String(year) && t.isRegistered && !t.isWithdrawn,
+  );
+  const incomeRows = yearTournaments
+    .map(t => {
+      const singles = t.singlesPrizeMoney ?? 0;
+      const doubles = t.doublesPrizeMoney ?? 0;
+      const combined = singles + doubles;
+      const gross = combined || (t.prizeMoney ?? 0);
+      return { t, gross };
+    })
+    .filter(r => r.gross > 0)
+    .sort((a, b) => String(a.t.startDate ?? '').localeCompare(String(b.t.startDate ?? '')));
+  const totalIncome = incomeRows.reduce((sum, r) => sum + r.gross, 0);
+
+  const incomeRowsHtml = incomeRows.length
+    ? incomeRows.map(({ t, gross }) => `
+        <tr>
+          <td>${escapeHtml(t.name ?? '')}</td>
+          <td>${escapeHtml(fmtShortDate(t.startDate, lang))}${t.endDate ? ` – ${escapeHtml(fmtShortDate(t.endDate, lang))}` : ''}</td>
+          <td class="num">${fmtUSD(gross)}</td>
+        </tr>`).join('')
+    : `<tr><td colspan="3" class="empty">${tr('noIncomeYear', lang)}</td></tr>`;
+
+  const generatedDate = new Date().toLocaleDateString(lang === 'es' ? 'es-CL' : 'en-US', {
+    year: 'numeric', month: 'long', day: 'numeric',
+  });
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, Helvetica, Arial, sans-serif;
+    background: ${OFFWHITE};
+    color: ${NAVY};
+    margin: 0;
+    padding: 28px 32px;
+    font-size: 11px;
+  }
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    border-bottom: 2px solid ${NAVY};
+    padding-bottom: 10px;
+    margin-bottom: 16px;
+  }
+  .wordmark {
+    font-size: 20px;
+    font-weight: 800;
+    color: ${NAVY};
+    letter-spacing: 0.5px;
+  }
+  .wordmark span { color: ${EMERALD}; }
+  .subtitle {
+    font-size: 15px;
+    font-weight: 700;
+    color: ${NAVY};
+    margin-top: 2px;
+  }
+  .meta {
+    text-align: right;
+    font-size: 10px;
+    color: #555;
+  }
+  .player {
+    font-size: 12px;
+    font-weight: 600;
+    color: ${NAVY};
+  }
+  .usdNote {
+    font-size: 9.5px;
+    color: #6B7280;
+    margin-top: 1px;
+  }
+  .summary {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+  .stat {
+    flex: 1;
+    background: #fff;
+    border: 1px solid #E3E5E8;
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .stat-label {
+    font-size: 8.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: #6B7280;
+    margin-bottom: 4px;
+  }
+  .stat-value {
+    font-size: 15px;
+    font-weight: 700;
+    color: ${NAVY};
+  }
+  h2 {
+    font-size: 12px;
+    color: ${NAVY};
+    border-bottom: 1px solid #D7DAE0;
+    padding-bottom: 4px;
+    margin: 18px 0 8px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 6px;
+  }
+  th {
+    text-align: left;
+    font-size: 8.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    color: #6B7280;
+    padding: 6px 8px;
+    border-bottom: 1px solid #D7DAE0;
+  }
+  td {
+    padding: 6px 8px;
+    border-bottom: 1px solid #EEF0F2;
+    font-size: 10.5px;
+  }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.empty { text-align: center; color: #9CA3AF; padding: 14px; }
+  tr.grand td {
+    font-weight: 700;
+    border-top: 1.5px solid ${NAVY};
+    border-bottom: none;
+  }
+  .footer {
+    margin-top: 22px;
+    padding-top: 8px;
+    border-top: 1px solid #D7DAE0;
+    font-size: 8.5px;
+    color: #6B7280;
+  }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <div class="wordmark">Tour<span>ly</span></div>
+      <div class="subtitle">${tr('taxReportTitle', lang)} — ${year}</div>
+    </div>
+    <div class="meta">
+      ${playerName ? `<div class="player">${escapeHtml(playerName)}</div>` : ''}
+      <div>${tr('generated', lang)}: ${generatedDate}</div>
+      <div class="usdNote">${tr('allAmountsUsd', lang)}</div>
+    </div>
+  </div>
+
+  <div class="summary">
+    <div class="stat">
+      <div class="stat-label">${tr('expensesSection', lang)}</div>
+      <div class="stat-value">${fmtUSDPlain(-totalExpenses)}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">${tr('incomeSection', lang)}</div>
+      <div class="stat-value">${fmtUSDPlain(totalIncome)}</div>
+    </div>
+  </div>
+
+  <h2>${tr('expensesSection', lang)}</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>${tr('category', lang)}</th>
+        <th class="num">${tr('numExpenses', lang)}</th>
+        <th class="num">${tr('total', lang)}</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${expenseRowsHtml}
+      ${catRows.length ? `<tr class="grand"><td>${tr('grandTotal', lang)}</td><td class="num"></td><td class="num">${fmtUSD(-totalExpenses)}</td></tr>` : ''}
+    </tbody>
+  </table>
+
+  <h2>${tr('incomeSection', lang)}</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>${tr('tournament', lang)}</th>
+        <th>${tr('dates', lang)}</th>
+        <th class="num">${tr('total', lang)}</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${incomeRowsHtml}
+      ${incomeRows.length ? `<tr class="grand"><td>${tr('grandTotal', lang)}</td><td></td><td class="num">${fmtUSD(totalIncome)}</td></tr>` : ''}
+    </tbody>
+  </table>
+
+  <div class="footer">${tr('taxDisclaimer', lang)}</div>
+</body>
+</html>`;
+
+  const { uri } = await Print.printToFileAsync({ html, base64: false });
+
+  await Sharing.shareAsync(uri, {
+    mimeType: 'application/pdf',
+    dialogTitle: `${tr('taxReportTitle', lang)} ${year}`,
+    UTI: 'com.adobe.pdf',
+  });
+
+  return { expenseCount: yearExpenses.length, incomeCount: incomeRows.length };
 }
