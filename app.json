@@ -20,7 +20,8 @@
       "buildNumber": "1",
       "supportsTablet": true,
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSLocationWhenInUseUsageDescription": "Tourly uses your location only to center the tournament map on where you are. Your location is never tracked or stored."
       },
       "config": {
         "googleMapsApiKey": "AIzaSyBgFrftL8Lfb5-tRqj7UWJKeLgahlUJsAM"

@@ -1,10 +1,14 @@
 import { parseAmount as parseAmountValue } from '@/utils/import-expenses';
+import { normalizeCurrencyCode } from '@/utils/currency';
 
 export interface ParsedExpense {
+  /** Amount in `currency` (original units, NOT converted). */
   amount: number;
   description: string;
   date: string | null;
   category: string;
+  /** ISO 4217 code; "USD" when no currency marker was found. */
+  currency: string;
 }
 
 const CATEGORY_KEYWORDS: Record<string, string[]> = {
@@ -35,12 +39,19 @@ function detectCategory(text: string): string {
 
 // Captured groups are handed to the shared parseAmount() from import-expenses,
 // which understands both US ("1,500.50") and European/SA ("1.500,50") formats.
-const AMOUNT_PATTERNS = [
-  /\$\s?(\d[\d.,]*)/,                          // $350, $1,200.50, $1.500,50
-  /(\d[\d.,]*)\s*(?:usd|dollars?|dolares?|reais|reales)/i,  // 350 USD, 50 reais
-  /(?:usd|dollars?|dolares?)\s*(\d[\d.,]*)/i,  // USD 350
-  /(\d[\d.,]*)\s*(?:clp|pesos?|cfa|xof|eur|euros?)/i,       // 5000 CLP, 5000 CFA
-  /(?:^|[\s:=\-–—])(\d[\d.,]*)(?:\s*$|[\s,;.])/m,           // standalone number
+// `currency` is the ISO code the pattern implies; 'CODE' means group 2 holds a
+// candidate ISO code to validate; null means no currency marker (defaults USD).
+const AMOUNT_PATTERNS: { re: RegExp; currency: string | null }[] = [
+  { re: /\$\s?(\d[\d.,]*)/, currency: 'USD' },                        // $350, $1.500,50
+  { re: /(\d[\d.,]*)\s*(?:usd|dollars?|dolares?|dólares?)/i, currency: 'USD' },
+  { re: /(?:usd|dollars?|dolares?|dólares?)\s*(\d[\d.,]*)/i, currency: 'USD' },
+  { re: /€\s?(\d[\d.,]*)/, currency: 'EUR' },
+  { re: /(\d[\d.,]*)\s*(?:eur|euros?)\b/i, currency: 'EUR' },
+  { re: /(\d[\d.,]*)\s*(?:reais|reales)\b/i, currency: 'BRL' },
+  { re: /(\d[\d.,]*)\s*(?:clp|pesos?)\b/i, currency: 'CLP' },         // SA user base default
+  { re: /(\d[\d.,]*)\s*(?:cfa|xof)\b/i, currency: 'XOF' },
+  { re: /(\d[\d.,]*)\s+([A-Za-z]{3})\b/, currency: 'CODE' },          // "5000 ARS" — any ISO code
+  { re: /(?:^|[\s:=\-–—])(\d[\d.,]*)(?:\s*$|[\s,;.])/m, currency: null }, // standalone number
 ];
 
 // ISO (4-digit-year-first) must be tried BEFORE DD/MM: the unanchored DD/MM
@@ -113,18 +124,23 @@ function extractDate(text: string): string | null {
   return null;
 }
 
-function extractAmount(text: string): number | null {
+function extractAmount(text: string): { amount: number; currency: string } | null {
   // Remove date-like tokens ("15/06/2025", "15.01.24", "2025-06-15") so their
   // digits are never misread as amounts.
   const cleaned = text
     .replace(/\b\d{4}[\/\-.]\d{1,2}[\/\-.]\d{1,2}\b/g, ' ')
     .replace(/\b\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}\b/g, ' ');
-  for (const pattern of AMOUNT_PATTERNS) {
-    const m = cleaned.match(pattern);
-    if (m && m[1]) {
-      const num = parseAmountValue(m[1]);
-      if (num !== null && num > 0) return num;
+  for (const { re, currency } of AMOUNT_PATTERNS) {
+    const m = cleaned.match(re);
+    if (!m || !m[1]) continue;
+    const num = parseAmountValue(m[1]);
+    if (num === null || num <= 0) continue;
+    if (currency === 'CODE') {
+      const code = normalizeCurrencyCode(m[2]);
+      if (!code) continue; // "2 day" etc. — not a currency, try next pattern
+      return { amount: num, currency: code };
     }
+    return { amount: num, currency: currency ?? 'USD' };
   }
   return null;
 }
@@ -178,10 +194,11 @@ export function parseNotes(text: string): ParsedExpense[] {
     if (segmentsWithAmounts.length > 1) {
       // Multi-expense line: create one entry per segment that has an amount
       for (const seg of segmentsWithAmounts) {
-        const amount = extractAmount(seg);
-        if (amount == null) continue;
+        const found = extractAmount(seg);
+        if (found == null) continue;
         expenses.push({
-          amount,
+          amount: found.amount,
+          currency: found.currency,
           description: cleanDescription(seg) || 'Expense',
           date: lineDate ?? currentDate,
           category: detectCategory(seg),
@@ -189,10 +206,11 @@ export function parseNotes(text: string): ParsedExpense[] {
       }
     } else {
       // Single expense line — original behavior
-      const amount = extractAmount(line);
-      if (amount == null) continue;
+      const found = extractAmount(line);
+      if (found == null) continue;
       expenses.push({
-        amount,
+        amount: found.amount,
+        currency: found.currency,
         description: cleanDescription(line) || 'Expense',
         date: lineDate ?? currentDate,
         category: detectCategory(line),

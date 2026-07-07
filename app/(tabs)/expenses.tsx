@@ -1837,7 +1837,7 @@ function PasteFromNotesModal({ tournaments, onClose }: {
         }
         onClose();
       } else {
-        await Promise.all(toImport.map(item => {
+        await Promise.all(toImport.map(async item => {
           const isFixed = FIXED_CATS.has(item.category.toLowerCase());
           let tId: string | undefined;
           if (isAuto && !isFixed) {
@@ -1847,10 +1847,14 @@ function PasteFromNotesModal({ tournaments, onClose }: {
           } else {
             tId = tournamentId === '' ? undefined : tournamentId;
           }
+          const currency = item.currency ?? 'USD';
+          const amountUsd = currency !== 'USD' ? await toUsd(item.amount, currency) : null;
           return apiAddExpense({
             tournamentId: tId,
             category: item.category.toLowerCase(),
             amount: item.amount,
+            currency,
+            amountUsd,
             note: item.description,
             date: item.date ?? todayIso(),
             isCoachExpense: false,

@@ -53,6 +53,29 @@ export const COUNTRY_CURRENCY: Record<string, string> = {
 // Currencies with no minor unit — format without decimals.
 const ZERO_DECIMAL = new Set(['JPY', 'KRW', 'VND', 'CLP', 'PYG', 'ISK', 'XOF', 'XAF', 'XPF', 'UGX', 'RWF', 'VUV', 'KRW', 'MGA']);
 
+// Every ISO 4217 code the app knows about — used by the importers to decide
+// whether a token like "CLP" or "ARS" in a spreadsheet/paste is a currency.
+export const KNOWN_CURRENCY_CODES: Set<string> = new Set(Object.values(COUNTRY_CURRENCY));
+
+// Currency words/symbols seen in real imports → ISO code.
+const CURRENCY_WORDS: Record<string, string> = {
+  'US$': 'USD', 'USD$': 'USD', 'DOLLAR': 'USD', 'DOLLARS': 'USD',
+  'DOLAR': 'USD', 'DOLARES': 'USD', 'DÓLAR': 'USD', 'DÓLARES': 'USD',
+  'EURO': 'EUR', 'EUROS': 'EUR', '€': 'EUR', '£': 'GBP', '¥': 'JPY',
+  'R$': 'BRL', 'REAL': 'BRL', 'REAIS': 'BRL', 'REALES': 'BRL',
+  'CFA': 'XOF',
+  // Ambiguous but the user base is South American; CLP is the safest default.
+  'PESO': 'CLP', 'PESOS': 'CLP',
+};
+
+/** "clp" / "Dólares" / "€" → "CLP" / "USD" / "EUR"; null when not a currency. */
+export function normalizeCurrencyCode(val: unknown): string | null {
+  const s = String(val ?? '').trim().toUpperCase();
+  if (!s) return null;
+  if (KNOWN_CURRENCY_CODES.has(s)) return s;
+  return CURRENCY_WORDS[s] ?? null;
+}
+
 export function currencyForCountry(iso2?: string | null): string | null {
   if (!iso2) return null;
   return COUNTRY_CURRENCY[iso2.trim().toUpperCase()] ?? null;

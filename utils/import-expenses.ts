@@ -4,6 +4,8 @@ import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import { supabase } from '@/lib/supabase';
 import { expenseDupeKey } from '@/utils/categories';
+import { normalizeCurrencyCode } from '@/utils/currency';
+import { getFxRates } from '@/utils/fx';
 
 // Transliterate Arabic-Indic (٠-٩) and Extended Arabic-Indic (۰-۹) digits to
 // ASCII so amounts and dates written with those numerals parse correctly.
@@ -15,10 +17,14 @@ function normalizeDigits(s: string): string {
 
 export interface MappedExpense {
   category: string;
+  /** Amount in `currency` (original units, NOT converted). */
   amount: number;
   date: string;
   note: string | null;
   tournament_name: string | null;
+  /** ISO 4217 code; undefined means USD. */
+  currency?: string;
+  merchant?: string | null;
 }
 
 export interface ImportResult {
@@ -418,10 +424,21 @@ export async function checkDuplicates(mapped: MappedExpense[]): Promise<boolean>
 const FIELD_KEYWORDS: Record<string, string[]> = {
   amount: ['amount', 'monto', 'total', 'cost', 'price', 'valor', 'gasto', 'expense', 'usd', 'dollars', 'money', 'sum', 'costo', 'importe', 'fee', 'charge', 'debit', 'credit', 'pago', 'paid', 'spend', 'spent'],
   date: ['date', 'fecha', 'day', 'dia', 'when', 'periodo', 'period', 'mes', 'month', 'transaction date', 'posting date', 'fecha de transaccion'],
-  category: ['category', 'categoria', 'type', 'tipo', 'kind', 'class', 'rubro', 'concepto', 'item', 'merchant', 'vendor', 'comercio', 'payee'],
+  category: ['category', 'categoria', 'type', 'tipo', 'kind', 'class', 'rubro', 'concepto', 'item'],
+  merchant: ['merchant', 'vendor', 'comercio', 'payee', 'proveedor', 'store', 'tienda', 'establecimiento'],
+  currency: ['currency', 'moneda', 'divisa', 'curr'],
   note: ['note', 'nota', 'notes', 'notas', 'description', 'descripcion', 'detail', 'detalle', 'comment', 'comentario', 'memo', 'obs', 'observacion', 'reference', 'referencia', 'concept'],
   tournament: ['tournament', 'torneo', 'event', 'evento', 'competition', 'competencia', 'comp', 'location', 'lugar', 'city', 'ciudad', 'venue', 'sede'],
 };
+
+// Currency embedded in the amount cell itself ("€50", "5000 CLP", "R$ 30").
+function currencyFromCell(raw: string): string | null {
+  if (raw.includes('€')) return 'EUR';
+  if (raw.includes('£')) return 'GBP';
+  if (/R\$/i.test(raw)) return 'BRL';
+  const m = raw.match(/[A-Za-zÁ-ú$]{2,8}/);
+  return m ? normalizeCurrencyCode(m[0]) : null;
+}
 
 function scoreRow(row: string[]): number {
   let hits = 0;
@@ -587,6 +604,14 @@ export function parseAmount(val: any): number | null {
     .replace(/\s/g, '')
     .trim();
 
+  // Strip currency codes/words stuck to the number ("CLP5000", "5000 CLP") —
+  // keep only the numeric token.
+  if (/[A-Za-z]/.test(str)) {
+    const numTok = str.match(/\(?-?[\d.,]+\)?/);
+    if (!numTok) return null;
+    str = numTok[0];
+  }
+
   // Detect negative amounts ("-350" or accounting-style "(350)") and strip the
   // sign so the separator heuristics below still match.
   let sign = 1;
@@ -695,7 +720,8 @@ export function applyMapping(
     const nonEmpty = row.filter(c => String(c).trim()).length;
     if (nonEmpty === 0) continue;
 
-    const amount = parseAmount(row[colIndex['amount']]);
+    const rawAmountCell = row[colIndex['amount']];
+    const amount = parseAmount(rawAmountCell);
     if (amount == null) { unmapped++; continue; }
 
     // Date is optional — use today if not available
@@ -704,12 +730,18 @@ export function applyMapping(
     const categoryVal = colIndex['category'] !== undefined ? row[colIndex['category']]?.trim() : '';
     const category = categoryVal || inferCategory(row);
 
+    // Currency: explicit column first, then symbol/code inside the amount cell.
+    const curFromCol = colIndex['currency'] !== undefined ? normalizeCurrencyCode(row[colIndex['currency']]) : null;
+    const currency = curFromCol ?? currencyFromCell(String(rawAmountCell ?? '')) ?? 'USD';
+
     mapped.push({
       category,
       amount,
       date: date ?? today,
       note: colIndex['note'] !== undefined ? row[colIndex['note']]?.trim() || null : null,
       tournament_name: colIndex['tournament'] !== undefined ? row[colIndex['tournament']]?.trim() || null : null,
+      currency,
+      merchant: colIndex['merchant'] !== undefined ? String(row[colIndex['merchant']] ?? '').trim() || null : null,
     });
   }
 
@@ -759,16 +791,29 @@ export async function insertExpenses(
     ? expenses.filter(e => !existingKeys.has(expenseDupeKey(e.date, e.amount, e.category ?? '')))
     : expenses;
 
+  // One rates fetch covers every non-USD row; null rates degrade to
+  // amount_usd = null (unknown), mirroring the manual entry flow.
+  const rates = toInsert.some(e => e.currency && e.currency !== 'USD') ? await getFxRates() : null;
+
   const rows = toInsert.map(e => {
     // Prefer explicit tournament column; fall back to matching by date range.
     let tournamentId = e.tournament_name ? tournamentMap[e.tournament_name.toLowerCase()] ?? null : null;
     if (!tournamentId && opts?.tournaments && e.date) {
       tournamentId = matchTournamentIdByDate(e.date, opts.tournaments);
     }
+    const currency = e.currency ?? 'USD';
+    let amountUsd: number | null = null;
+    if (currency !== 'USD') {
+      const perUsd = rates?.[currency];
+      amountUsd = perUsd && perUsd > 0 ? Math.round((e.amount / perUsd) * 100) / 100 : null;
+    }
     return {
       user_id: user.id,
       category: e.category,
       amount: e.amount,
+      currency,
+      amount_usd: amountUsd,
+      merchant: e.merchant ?? null,
       date: e.date,
       note: e.note,
       tournament_id: tournamentId,

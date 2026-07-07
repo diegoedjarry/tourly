@@ -1072,7 +1072,9 @@ export default function SettingsScreen() {
                       <Text style={{ fontSize: 12, color: T.textSecondary }}>{e.date}{e.note ? ` — ${e.note}` : ''}</Text>
                       {e.tournament_name && <Text style={{ fontSize: 11, color: T.teal }}>{e.tournament_name}</Text>}
                     </View>
-                    <Text style={{ fontSize: 15, fontWeight: '600', color: T.textPrimary }}>${e.amount.toFixed(2)}</Text>
+                    <Text style={{ fontSize: 15, fontWeight: '600', color: T.textPrimary }}>
+                      {e.currency && e.currency !== 'USD' ? `${e.amount} ${e.currency}` : `$${e.amount.toFixed(2)}`}
+                    </Text>
                   </View>
                 ))}
                 {importData.mapped.length > 20 && (
@@ -1154,7 +1156,9 @@ export default function SettingsScreen() {
                           <Text style={{ fontSize: 14, color: T.textPrimary, fontWeight: '500' }}>{e.category}</Text>
                           <Text style={{ fontSize: 12, color: T.textSecondary }}>{e.date ?? 'No date'} — {e.description}</Text>
                         </View>
-                        <Text style={{ fontSize: 15, fontWeight: '600', color: T.textPrimary }}>${e.amount.toFixed(2)}</Text>
+                        <Text style={{ fontSize: 15, fontWeight: '600', color: T.textPrimary }}>
+                          {e.currency && e.currency !== 'USD' ? `${e.amount} ${e.currency}` : `$${e.amount.toFixed(2)}`}
+                        </Text>
                       </View>
                     ))}
                   </ScrollView>
@@ -1169,6 +1173,7 @@ export default function SettingsScreen() {
                           const mapped = parsedNotes.map(e => ({
                             category: e.category,
                             amount: e.amount,
+                            currency: e.currency,
                             date: e.date ?? new Date().toISOString().split('T')[0],
                             note: e.description || null,
                             tournament_name: null,
@@ -1176,8 +1181,10 @@ export default function SettingsScreen() {
                           const tournaments = appData?.tournaments ?? [];
                           const tMap: Record<string, string> = {};
                           for (const tourney of tournaments) { tMap[tourney.name?.toLowerCase()] = tourney.id; }
+                          // Must be expenseDupeKey format — insertExpenses compares
+                          // against it; a mismatched key format disables dedupe.
                           const existingKeys = new Set<string>(
-                            (appData?.expenses ?? []).map((e: any) => `${e.date}:${e.amount}`),
+                            (appData?.expenses ?? []).map((e: any) => expenseDupeKey(e.date, e.amount, e.category ?? '')),
                           );
                           const count = await insertExpenses(mapped, tMap, { tournaments, existingKeys });
                           await queryClient.invalidateQueries({ queryKey: ['expenses'] });
