@@ -9,6 +9,7 @@ import { useEffect } from 'react';
 import { Platform } from 'react-native';
 import { useFonts, Montserrat_300Light, Montserrat_400Regular, Montserrat_500Medium, Montserrat_600SemiBold, Montserrat_700Bold, Montserrat_800ExtraBold } from '@expo-google-fonts/montserrat';
 import * as SplashScreen from 'expo-splash-screen';
+import * as Sentry from '@sentry/react-native';
 
 import { useNotificationSetup } from '@/hooks/useNotificationSetup';
 import { useNewTournamentNotifier } from '@/hooks/useNewTournamentNotifier';
@@ -21,6 +22,15 @@ import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { DEMO_MODE } from '@/config/demo';
 import { trackScreen } from '@/lib/analytics';
+
+const SENTRY_DSN = process.env.EXPO_PUBLIC_SENTRY_DSN;
+if (SENTRY_DSN) {
+  Sentry.init({
+    dsn: SENTRY_DSN,
+    enableNativeCrashHandling: true,
+    tracesSampleRate: 0.2,
+  });
+}
 
 // Restore persisted query cache and subscribe to future changes
 persistCacheToMmkv();
@@ -135,7 +145,7 @@ function AppLayout() {
 
 SplashScreen.preventAutoHideAsync();
 
-export default function RootLayout() {
+function RootLayout() {
   const [fontsLoaded] = useFonts({
     Montserrat_300Light,
     Montserrat_400Regular,
@@ -165,3 +175,5 @@ export default function RootLayout() {
     </GestureHandlerRootView>
   );
 }
+
+export default Sentry.wrap(RootLayout);
