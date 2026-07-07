@@ -2,9 +2,6 @@ import { useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '@/lib/supabase';
 
-const GH_PAT   = process.env.EXPO_PUBLIC_GH_PAT    ?? '';
-const GH_REPO  = process.env.EXPO_PUBLIC_GITHUB_REPO ?? '';
-const WORKFLOW  = 'weekly-scraper.yml';
 const FLAG_KEY  = 'scraper_triggered_once_v1';
 const POLL_MS   = 15_000;
 const TIMEOUT_MS = 10 * 60 * 1000;
@@ -41,24 +38,16 @@ export async function triggerScraperOnce(playerName: string): Promise<void> {
 
   setScraperStatus('loading');
 
-  // Dispatch workflow_dispatch to GitHub Actions
-  if (GH_PAT && GH_REPO) {
-    try {
-      await fetch(
-        `https://api.github.com/repos/${GH_REPO}/actions/workflows/${WORKFLOW}/dispatches`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${GH_PAT}`,
-            Accept: 'application/vnd.github+json',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ ref: 'main', inputs: { player_name: name } }),
-        },
-      );
-    } catch {
-      // Network failure — still poll; workflow may have been dispatched
-    }
+  // Dispatch via the trigger-player-scrape edge function. The GitHub token
+  // lives server-side only — never bundle a PAT into the client via
+  // EXPO_PUBLIC_* (those are compiled into the shipped JS bundle).
+  try {
+    await supabase.functions.invoke('trigger-player-scrape', {
+      body: { record: { atp_player_name: name } },
+    });
+  } catch {
+    // Network failure — still poll; the profile-update DB webhook may have
+    // dispatched the same scrape anyway.
   }
 
   // Poll Supabase every 15 s for up to 10 minutes

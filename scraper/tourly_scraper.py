@@ -34,9 +34,14 @@ import itf_results
 
 load_dotenv()
 
-# ── Hardcoded for testing — swap SUPABASE_SERVICE_KEY to secret key before prod ─
-os.environ.setdefault("SUPABASE_URL", "https://bpxcizhgntucuhhyykqc.supabase.co")
-os.environ.setdefault("SUPABASE_SERVICE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJweGNpemhnbnR1Y3VoaHl5a3FjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MTYzODg0OCwiZXhwIjoyMDk3MjE0ODQ4fQ.nzpHZ4kS4K16CqlomrAxURVWcuhFQtU9l324r7XuEiM")
+# Credentials come exclusively from the environment (.env locally, GitHub
+# Secrets in CI). The service-role key bypasses RLS — it must never appear
+# in source or in any tracked file.
+if not os.environ.get("SUPABASE_URL") or not os.environ.get("SUPABASE_SERVICE_KEY"):
+    sys.exit(
+        "Missing SUPABASE_URL / SUPABASE_SERVICE_KEY. "
+        "Copy scraper/.env.example to scraper/.env and fill in real values."
+    )
 os.environ.setdefault("PLAYER_NAME", "")
 
 # ── Constants ──────────────────────────────────────────────────────────────────
