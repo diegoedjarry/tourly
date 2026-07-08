@@ -819,6 +819,19 @@ class TennisAbstractScraper:
                     await asyncio.sleep(30)
                     r = await client.get(url, headers=headers, timeout=20)
 
+                # 403s from Tennis Abstract have been observed to be intermittent
+                # bot-detection rather than a hard per-IP block (a later slug/player
+                # in the same run can succeed) — one retry with backoff before
+                # giving up on this slug.
+                if r.status_code == 403:
+                    print(f"   ⚠  {slug}: HTTP 403 — retrying once after 15s...")
+                    await asyncio.sleep(15)
+                    try:
+                        r = await client.get(url, headers=headers, timeout=20)
+                    except Exception as e:
+                        print(f"   ⚠  HTTP error for {slug} on retry: {e}")
+                        continue
+
                 if r.status_code != 200:
                     print(f"   {slug}: HTTP {r.status_code} — skipping")
                     continue
@@ -1562,7 +1575,9 @@ class TourlyDataIntegrator:
                 .eq("player_name", player_name) \
                 .maybe_single() \
                 .execute()
-            existing_mh = (existing.data or {}).get("match_history") or []
+            # maybe_single().execute() returns None (not a response with .data=None)
+            # when no row matches — i.e. every brand-new player, like this one.
+            existing_mh = ((existing.data if existing else None) or {}).get("match_history") or []
 
             # Guard: if new scrape returned empty match_history, preserve existing data
             if not new_mh:
@@ -1805,6 +1820,11 @@ async def run_player_phase(integrator: TourlyDataIntegrator, player_name: str) -
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
+# atp_player_name values that are app/store test accounts, not real tennis
+# players — scraping them just burns a Tennis Abstract request every run for a
+# guaranteed 403/no-match, tripping the liveness gate for no reason.
+NON_PLAYER_NAMES = {"reviewer ios", "reviewer", "test", "test account"}
+
 async def fetch_players_to_scrape(supabase: Client) -> list[str]:
     """
     Returns all player names to scrape, in priority order:
@@ -1818,7 +1838,7 @@ async def fetch_players_to_scrape(supabase: Client) -> list[str]:
         res = supabase.table("player_profiles").select("player_name").execute()
         for row in res.data or []:
             n = (row.get("player_name") or "").strip()
-            if n:
+            if n and n.lower() not in NON_PLAYER_NAMES:
                 names.append(n)
     except Exception as e:
         print(f"   ⚠  Could not fetch from player_profiles: {e}")
@@ -1829,7 +1849,7 @@ async def fetch_players_to_scrape(supabase: Client) -> list[str]:
         existing_lower = {n.lower() for n in names}
         for row in res2.data or []:
             n = (row.get("atp_player_name") or "").strip()
-            if n and n.lower() not in existing_lower:
+            if n and n.lower() not in existing_lower and n.lower() not in NON_PLAYER_NAMES:
                 names.append(n)
                 existing_lower.add(n.lower())
     except Exception as e:
@@ -1893,14 +1913,25 @@ async def main(*, players_only: bool = False) -> int:
         profile_players = await fetch_players_to_scrape(integrator.sb)
 
     if profile_players:
+        # A single player's gate tripping (e.g. Tennis Abstract 403ing that one
+        # slug) doesn't fail the whole run — the empty-match-history guard
+        # already preserves that player's existing data, so nothing was lost.
+        # Only fail the phase if EVERY player came back empty, which signals a
+        # systemic break (TA layout change, blanket IP block) rather than
+        # one-off per-player flakiness.
+        player_results: list[bool] = []
         for pname in profile_players:
             print(f"\n> Phase 2: Player Profile — {pname}")
             try:
                 ok = await run_player_phase(integrator, pname)
-                any_failure = any_failure or not ok
+                player_results.append(ok)
             except Exception as e:
                 print(f"✗  Player scraper ({pname}): {e}")
-                any_failure = True
+                player_results.append(False)
+        if player_results and not any(player_results):
+            print(f"\n❌  ALL {len(player_results)} player(s) failed their liveness gate — "
+                  f"treating as a systemic failure (not just per-player flakiness).")
+            any_failure = True
     else:
         print("\nℹ  No player names found — skipping player profile phase.")
         print("   Set atp_player_name in the app profile to enable this.")
