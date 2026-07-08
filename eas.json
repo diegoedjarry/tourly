@@ -26,6 +26,11 @@
     "production": {
       "ios": {
         "ascAppId": "6788479223"
+      },
+      "android": {
+        "serviceAccount": "@credentials.json",
+        "track": "internal",
+        "changesNotSentForReview": false
       }
     }
   }
