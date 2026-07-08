@@ -35,6 +35,10 @@ yarn-error.*
 .env.*
 !.env.example
 
+# Google Play service account key (never commit)
+playstore-service-account.json
+credentials.json
+
 # typescript
 *.tsbuildinfo
 

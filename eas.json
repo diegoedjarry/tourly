@@ -28,9 +28,8 @@
         "ascAppId": "6788479223"
       },
       "android": {
-        "serviceAccount": "@credentials.json",
-        "track": "internal",
-        "changesNotSentForReview": false
+        "serviceAccountKeyPath": "./playstore-service-account.json",
+        "track": "internal"
       }
     }
   }

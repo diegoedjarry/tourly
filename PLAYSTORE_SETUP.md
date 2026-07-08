@@ -1,254 +1,169 @@
-# PlayStore App Setup Guide — Tourly
+# Google Play Setup — Tourly
 
-This guide walks you through publishing Tourly to Google Play Console. Your developer registration is already accepted, so you're ready to begin.
+Everything needed to take Tourly from "developer registration accepted" to live on Google Play.
 
-## Phase 1: Create the App Listing in Google Play Console
+## What's already done in this repo
 
-### 1.1 Create a New App
+| Item | Where |
+|---|---|
+| Android package name | `com.diegojarry.tourly` (`app.json`) |
+| EAS production build profile (auto-increments versionCode) | `eas.json` |
+| EAS submit config for Play (internal track) | `eas.json` → `submit.production.android` |
+| Play Store icon, 512×512 | `store-assets/play/icon-512.png` |
+| Feature graphic, 1024×500 | `store-assets/play/feature-graphic-1024x500.png` |
+| Privacy policy (covers Supabase, location, receipt photos) | `docs/privacy.html` |
+| Store listing copy + Data Safety answers | below in this file |
+| Service account key ignored by git | `.gitignore` |
 
-1. Go to [Google Play Console](https://play.google.com/console)
-2. Click **+ Create app**
-3. Fill in:
-   - **App name**: `Tourly`
-   - **Default language**: English – United States
-   - **App or game**: App
-   - **Free or paid**: Free
-   - **Declaration**: Check "Declarations" → agree to required terms
-4. Click **Create app**
+## ⚠️ Important: closed testing requirement
 
-### 1.2 Set Up App Details
+Personal developer accounts created after Nov 13, 2023 **cannot publish straight to production**. Google requires a closed test with **at least 12 testers opted in continuously for 14 days** before you can apply for production access. Plan for this:
 
-Navigate to **All apps → Tourly → App details**:
+1. Publish first to **Internal testing** (instant, up to 100 testers) to sanity-check the build.
+2. Promote to **Closed testing**, recruit 12+ testers (friends, other players — they opt in via a link), keep them enrolled 14 days.
+3. Apply for production access from the Play Console dashboard, answering the questions about your test.
 
-- **App name**: Tourly
-- **Short description** (80 chars max):
-  > Tournament management for professional tennis players.
+Details: [App testing requirements for new personal developer accounts](https://support.google.com/googleplay/android-developer/answer/14151465).
 
-- **Full description** (4000 chars max):
+## Step 1 — Create the app in Play Console
+
+[Play Console](https://play.google.com/console) → **Create app**:
+
+- App name: **Tourly**
+- Default language: **English (United States)**
+- App or game: **App** · Free or paid: **Free**
+- Accept the declarations → **Create app**
+
+Then work through the **"Set up your app"** checklist on the dashboard. The answers:
+
+- **Privacy policy URL**: host `docs/privacy.html` (e.g. GitHub Pages → `https://diegoedjarry.github.io/tourly/privacy.html`). Verify the URL loads publicly before pasting it.
+- **App access**: the app requires login (email one-time code). Provide Google a demo account, **or** state that all features are available after a free signup with any email. If reviewers need instant access, consider providing credentials to a test account.
+- **Ads**: No, the app contains no ads.
+- **Content rating**: fill the questionnaire honestly (utility app, no violence/gambling/user communication) → results in **Everyone**.
+- **Target audience**: 18+ is the simplest choice (professional athletes); avoids Families policy requirements.
+- **News app**: No. **COVID-19 app**: No. **Data safety**: see Step 2. **Government app**: No.
+- **Category**: Sports. Contact email: your developer email.
+
+## Step 2 — Data Safety form
+
+Based on what the app actually does:
+
+| Data type | Collected? | Shared? | Purpose | Notes |
+|---|---|---|---|---|
+| Email address | Yes, required | No | Account management | Sign-in via one-time code (Supabase) |
+| Name / profile info | Yes, optional | No | App functionality | Player profile |
+| User-generated content (tournaments, expenses) | Yes | No | App functionality | Stored in Supabase |
+| Photos | Yes, optional | No | App functionality | Receipt photo sent once for parsing; **processed ephemerally, not stored** — check the "ephemeral processing" box |
+| Precise location | **No** | — | — | Used on-device only to center the map; never transmitted, so it does not count as "collected" |
+| Device ID (push token) | Yes | No | App functionality | Deadline reminders |
+| Crash logs & diagnostics | Yes | No | Analytics / stability | Sentry |
+
+Global answers: data **encrypted in transit** — Yes. Users can **request deletion** — Yes (email per privacy policy).
+
+Separate **Advertising ID** declaration: answer **No** (no ads, no ad SDKs). If Play flags that the uploaded AAB contains the `AD_ID` permission (a dependency can add it), block it in a config plugin or declare it honestly.
+
+## Step 3 — Store listing
+
+**Main store listing** → paste:
+
+- **App name** (30 max): `Tourly`
+- **Short description** (80 max):
+  > Schedule, deadlines & expenses for pro tennis players on the ITF World Tour.
+- **Full description** (4000 max):
+
   ```
-  Tourly is the essential tournament management app for professional tennis 
-  players on the ITF World Tennis Tour circuit.
-  
-  Keep your tournament schedule organized, never miss a deadline, and track 
-  your travel and expense budgets all in one place.
-  
-  Features:
-  • Manage your tournament schedule with automatic deadline tracking
-  • View upcoming tournaments on an interactive map
-  • Track singles and doubles entry fees and deadlines
-  • Monitor travel expenses and tournament budgets
-  • Receive timely push notifications before key deadlines
-  • Offline access to all tournament information
-  • Sync seamlessly across your devices
-  
-  Designed specifically for the professional tennis circuit, Tourly 
-  simplifies tournament management so you can focus on your game.
+  Tourly is the tournament manager built for professional tennis players
+  competing on the ITF World Tennis Tour.
+
+  PLAN YOUR SCHEDULE
+  • See your season at a glance, color-coded by surface (clay, hard, grass)
+  • Browse tournaments on an interactive map
+  • Track prize money for singles and doubles
+
+  NEVER MISS A DEADLINE
+  • Automatic ITF deadlines for every tournament: singles entry, withdrawal,
+    freeze and doubles sign-in
+  • Push reminders before each deadline
+  • Works offline — changes sync when you're back online
+
+  CONTROL YOUR BUDGET
+  • Log travel expenses per tournament in seconds
+  • Snap a receipt and let Tourly read the amount, merchant and date
+  • See your net result: prize money vs. expenses, tournament by tournament
+
+  Built by people who know the circuit. Focus on your game — Tourly handles
+  the admin.
   ```
 
-- **Developer contact info**:
-  - Email: allanjarry@gmail.com
-  - Phone: (optional but recommended)
-  - Website: (optional)
+- **Graphics**:
+  - App icon: `store-assets/play/icon-512.png`
+  - Feature graphic: `store-assets/play/feature-graphic-1024x500.png`
+  - **Phone screenshots (required, 2–8)**: capture from a real device or emulator, portrait, 9:16 (e.g. 1080×1920+). Tabs worth showing: schedule, tournament detail with deadlines, map, expenses, net-result view.
 
-- **Privacy policy**: Add your privacy policy URL (you'll need one before publishing)
+## Step 4 — First build & manual upload
 
-### 1.3 Add App Screenshots
-
-**Screenshots go to: App details → Main store listing → Screenshots**
-
-You need:
-- **Phone screenshots** (portrait, 1080×1920 px, min 2, max 8)
-- **Tablet screenshots** (optional, landscape)
-
-For now, placeholder screenshots are fine. You can update them before submission.
-
-### 1.4 Add App Icon & Preview Graphics
-
-- **App icon**: 512×512 PNG (go to **All apps → Tourly → All apps → App details → App icon**)
-  - Use the same icon from `assets/images/icon.png`
-
-- **Featured graphic** (1024×500 PNG): Promotional banner
-- **Cover image** (1024×500 PNG): Store listing header
-
-## Phase 2: Set Up Google Play App Signing
-
-Google Play now requires App Signing. Expo/EAS handles this automatically through **Play App Signing**.
-
-### 2.1 Enable Play App Signing
-
-1. Navigate to **Tourly → Setup → App integrity**
-2. Under **App signing**, you should see **Google Play App Signing** enabled by default
-   - Google manages your upload and app signing keys
-   - Your signing certificate is stored securely
-
-**You do NOT need to manually generate a keystore** — EAS and Google Play handle this together.
-
-## Phase 3: Build and Upload the First AAB
-
-### 3.1 Create a Signed Android App Bundle (AAB)
-
-Run this command to trigger an EAS production build:
+From your machine (needs `eas login` as `diegoedjarry`):
 
 ```bash
 eas build --platform android --profile production
 ```
 
-This will:
-- Build your Android app as an `.aab` (Android App Bundle)
-- EAS automatically signs it using Google Play App Signing credentials
-- Upload the build to your EAS account
+- EAS generates and stores the Android keystore for you on first run (accept the prompt). Nothing to manage locally.
+- Output is an `.aab` signed with your upload key; **Play App Signing** (default for new apps) re-signs it for distribution.
 
-**Wait for the build to complete.** You'll receive an email with a link to your build.
+**The very first upload must be manual** — the Play API can't create the first release:
 
-### 3.2 Submit to Google Play Console
+1. Play Console → **Testing → Internal testing → Create new release**.
+2. When asked about app signing, accept **Google-generated key** (default).
+3. Upload the `.aab` downloaded from [expo.dev](https://expo.dev) builds page.
+4. Add release notes, save, roll out to internal testers (add your own email to the tester list).
 
-Option A: **Use EAS Submit** (Recommended)
+## Step 5 — Restrict the Maps API key (before wide release)
 
-First, create Google Play service account credentials:
+`app.json` ships a Google Maps key for `react-native-maps`. Once the app is on Play:
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a **Service Account**:
-   - Project: Create or select a new GCP project
-   - Service account name: `tourly-play-deploy`
-   - Grant role: **Editor** (or more restrictive: **Play Developer API Access**)
-   - Create a **JSON key** and save it
+1. Play Console → **Test and release → App integrity → App signing** → copy the **App signing key certificate SHA-1** (and the upload key SHA-1).
+2. Google Cloud Console → APIs & Services → Credentials → that key → **Application restrictions → Android apps** → add `com.diegojarry.tourly` + both SHA-1s.
+3. API restriction: **Maps SDK for Android** only.
 
-3. In Google Play Console:
-   - Go to **Setup → API access**
-   - Click **Link Google Cloud project**
-   - Grant the service account `Releases Editor` or `Admin` access
+Without this, anyone can lift the key from the repo/APK and bill your account.
 
-4. Save the JSON key as `credentials.json` in your project root (add to `.gitignore`!)
+## Step 6 — Automate future submissions (optional but recommended)
 
-5. Submit the build:
-   ```bash
-   eas submit --platform android --profile production --use-submission-service
-   ```
+1. Google Cloud Console → IAM & Admin → **Service Accounts** → create `tourly-play-publisher`, no roles needed at the project level.
+2. Create a **JSON key**, save it as `playstore-service-account.json` in the repo root (it's git-ignored).
+3. Play Console → **Users and permissions → Invite new user** → the service account's email → grant access to Tourly with **Release to testing tracks / production** permissions.
+4. Wait ~24h for permissions to propagate on a fresh link, then:
 
-Option B: **Manual Upload**
+```bash
+eas submit --platform android --profile production
+```
 
-1. Download the `.aab` from your EAS dashboard
-2. Go to Google Play Console → **Tourly → Release → Production**
-3. Click **Create new release**
-4. Upload the `.aab` file
-5. Review and publish
+`eas.json` is already configured (`serviceAccountKeyPath`, `track: internal`). For later releases, one command does both:
 
-## Phase 4: Complete Store Listing & Content Ratings
+```bash
+eas build --platform android --profile production --auto-submit
+```
 
-### 4.1 Target Audience
+Change `track` in `eas.json` as you graduate: `internal` → `alpha` (closed) → `production`.
 
-**Tourly → Setup → Target audience**
+## Step 7 — Closed test → production
 
-- Age group: Everyone / Mature audiences (your choice)
-- Content rating: None (or add questionnaire)
+1. Promote the internal release to a **Closed testing** track.
+2. Recruit **12+ testers**; they opt in via the track's link and must stay opted in **14 continuous days** (they should install and actually use the app — Google reviews engagement).
+3. After 14 days, the dashboard shows **Apply for production access** — answer the questionnaire about your testing.
+4. Approval typically takes a few days. Then create a **Production** release (promote the same build or a newer one) and roll out.
 
-### 4.2 Content Rating Questionnaire
+First production review can take up to ~7 days for a new account; subsequent updates are usually reviewed in hours to a couple of days.
 
-Complete the **Content rating** questionnaire:
-- Go to **Setup → Content rating**
-- Fill out the IAMAI/PEGI questionnaire (takes ~5 min)
+## Release checklist
 
-### 4.3 Pricing & Distribution
-
-**Tourly → Setup → Pricing → Production**
-
-- Status: **Available on Google Play**
-- Countries: Select all or your target countries
-
-### 4.4 Privacy, Permissions & Ads
-
-**Tourly → Setup → App security**
-
-- **Permissions**: Review and confirm Android permissions
-- **Ads**: Declare if you use ads (you don't, so select "No")
-- **Privacy**: Link your privacy policy
-
-## Phase 5: Submit for Review
-
-### 5.1 Pre-Flight Checklist
-
-Before submitting, verify:
-
-- [ ] App name, description, icon, and screenshots complete
-- [ ] Privacy policy linked
-- [ ] Content rating completed
-- [ ] All required permissions declared
-- [ ] No placeholder graphics
-- [ ] AAB uploaded and no errors shown
-- [ ] Version code incremented (should auto-increment in `eas.json`)
-
-### 5.2 Submit for Review
-
-1. Go to **Tourly → Release → Production**
-2. Review the release details
-3. Click **Review release**
-4. Check for any errors or warnings
-5. Click **Start rollout to Production** (or **Begin staged rollout** to test with a small % first)
-
-**Review typically takes 1–3 hours, but can take up to 24 hours.**
-
-## Phase 6: Post-Publication
-
-### 6.1 Monitor Your App
-
-- Go to **Tourly → Release → Production** to see release status
-- Use **Analytics** dashboard to monitor installs and crashes
-- Monitor **Vitals** for app stability metrics
-
-### 6.2 Update Procedure for Future Versions
-
-For subsequent releases:
-
-1. Increment version in `app.json`:
-   ```json
-   "version": "1.0.1",  // X.Y.Z semver
-   "android": {
-     "versionCode": 2     // Must increase for each release
-   }
-   ```
-
-2. Build and submit:
-   ```bash
-   eas build --platform android --profile production
-   eas submit --platform android --profile production --use-submission-service
-   ```
-
-3. Or use one command:
-   ```bash
-   eas build --platform android --profile production --auto-submit
-   ```
-
-## Troubleshooting
-
-### Build fails with "No valid signing certificate"
-
-→ This happens if your upload key hasn't been linked. Make sure Google Play App Signing is enabled and your EAS account is connected.
-
-### "Service account cannot access this app"
-
-→ Verify the service account has **Releases Editor** (or higher) role in Google Play Console.
-
-### Build shows as "Not signed" in Google Play Console
-
-→ This is normal with Play App Signing. Google will sign it before release.
-
-### How long before my app appears in search?
-
-→ **3–6 hours** after your first submission. Manual search results take longer; indexed search takes 24–48 hrs.
-
-## Resources
-
-- [Expo EAS Submit docs](https://docs.expo.dev/versions/v54.0.0/build/submit/)
-- [Google Play Console Setup](https://play.google.com/console/about/gettingstarted/)
-- [Google Play Policies](https://play.google.com/about/play-policies/policy-center/)
-- [Android App Bundle Format](https://developer.android.com/guide/app-bundle)
-
----
-
-**Next Steps:**
-1. Create app listing in Play Console
-2. Complete store metadata and screenshots
-3. Obtain Google Play service account credentials
-4. Run `eas build --platform android --profile production`
-5. Submit using `eas submit` or manually upload
-6. Submit for review
+- [ ] Privacy policy URL live and linked
+- [ ] Store listing: descriptions, icon, feature graphic, 2+ screenshots
+- [ ] Content rating, target audience, ads & Data Safety declared
+- [ ] `.aab` built via `eas build -p android --profile production`
+- [ ] First release uploaded manually to Internal testing
+- [ ] Maps API key restricted to the package + SHA-1s
+- [ ] Service account wired for `eas submit`
+- [ ] Closed test running with 12+ testers for 14 days
+- [ ] Production access granted → roll out
