@@ -1,4 +1,3 @@
-import * as DocumentPicker from 'expo-document-picker';
 import { readAsStringAsync, EncodingType } from 'expo-file-system/legacy';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
@@ -76,6 +75,14 @@ async function readFileContent(uri: string, name: string): Promise<string[][]> {
 }
 
 export async function pickAndParseFile(): Promise<{ rows: string[][]; fileName: string } | null> {
+  let DocumentPicker;
+  try {
+    DocumentPicker = await import('expo-document-picker');
+  } catch {
+    // Native module missing (e.g. binary/JS version drift after an OTA update) —
+    // fail quietly instead of crashing the whole app.
+    return null;
+  }
   const result = await DocumentPicker.getDocumentAsync({
     type: [
       'text/csv',
@@ -292,7 +299,7 @@ function parseBankStatement(headers: string[], rows: string[][]): ImportResult {
 
   const mapped: MappedExpense[] = [];
   let unmapped = 0;
-  const today = new Date().toISOString().split('T')[0];
+  const today = toLocalIso(new Date());
 
   for (const row of rows) {
     if (!Array.isArray(row)) continue;
@@ -324,7 +331,7 @@ function parseSimpleList(headers: string[], rows: string[][]): ImportResult {
   // Best-effort: find any numeric column as amount, rest as description
   const mapped: MappedExpense[] = [];
   let unmapped = 0;
-  const today = new Date().toISOString().split('T')[0];
+  const today = toLocalIso(new Date());
 
   // Find the column with the most numeric values
   let amtColIdx = -1;
@@ -524,6 +531,10 @@ function toLocalIso(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+function daysInMonth(year: number, month: number): number {
+  return new Date(year, month, 0).getDate(); // month is 1-indexed here
+}
+
 export function parseDate(val: any): string | null {
   if (val == null) return null;
 
@@ -548,16 +559,20 @@ export function parseDate(val: any): string | null {
     const b = parseInt(parts[1]);
     let y = parts[2];
     if (y.length === 2) y = (parseInt(y) > 50 ? '19' : '20') + y;
+    const yNum = parseInt(y);
 
     // If first number > 12, it must be a day (DD/MM/YYYY)
     if (a > 12 && b <= 12) {
+      if (b < 1 || b > 12 || a < 1 || a > daysInMonth(yNum, b)) return null;
       return `${y}-${String(b).padStart(2, '0')}-${String(a).padStart(2, '0')}`;
     }
     // If second number > 12, it must be a day (MM/DD/YYYY)
     if (b > 12 && a <= 12) {
+      if (a < 1 || a > 12 || b < 1 || b > daysInMonth(yNum, a)) return null;
       return `${y}-${String(a).padStart(2, '0')}-${String(b).padStart(2, '0')}`;
     }
     // Ambiguous — default to DD/MM/YYYY (South American standard)
+    if (b < 1 || b > 12 || a < 1 || a > daysInMonth(yNum, b)) return null;
     return `${y}-${String(b).padStart(2, '0')}-${String(a).padStart(2, '0')}`;
   }
 
@@ -568,29 +583,43 @@ export function parseDate(val: any): string | null {
     const b = parseInt(parts[1]);
     let y = parts[2];
     if (y.length === 2) y = (parseInt(y) > 50 ? '19' : '20') + y;
+    const yNum = parseInt(y);
 
     if (a > 12 && b <= 12) {
+      if (b < 1 || b > 12 || a < 1 || a > daysInMonth(yNum, b)) return null;
       return `${y}-${String(b).padStart(2, '0')}-${String(a).padStart(2, '0')}`;
     }
     if (b > 12 && a <= 12) {
+      if (a < 1 || a > 12 || b < 1 || b > daysInMonth(yNum, a)) return null;
       return `${y}-${String(a).padStart(2, '0')}-${String(b).padStart(2, '0')}`;
     }
+    if (b < 1 || b > 12 || a < 1 || a > daysInMonth(yNum, b)) return null;
     return `${y}-${String(b).padStart(2, '0')}-${String(a).padStart(2, '0')}`;
   }
 
   // DD.MM.YYYY
   if (/^\d{1,2}\.\d{1,2}\.\d{2,4}$/.test(str)) {
     const parts = str.split('.');
-    const d = parts[0].padStart(2, '0');
-    const m = parts[1].padStart(2, '0');
+    const dNum = parseInt(parts[0]);
+    const mNum = parseInt(parts[1]);
     let y = parts[2];
     if (y.length === 2) y = (parseInt(y) > 50 ? '19' : '20') + y;
+    const yNum = parseInt(y);
+    if (mNum < 1 || mNum > 12 || dNum < 1 || dNum > daysInMonth(yNum, mNum)) return null;
+    const d = String(dNum).padStart(2, '0');
+    const m = String(mNum).padStart(2, '0');
     return `${y}-${m}-${d}`;
   }
 
-  // Try native Date parse as last resort
+  // Bare integer strings are never dates the user meant — they're amounts or
+  // Excel serials that arrived as text ("45000"). Without this guard,
+  // new Date('45000') "succeeds" as January 1st of the year 45000.
+  if (/^\d+$/.test(str)) return null;
+
+  // Try native Date parse as last resort. Cap the year range so junk that
+  // happens to parse (far-future/ancient dates) is rejected, not imported.
   const d = new Date(str);
-  if (!isNaN(d.getTime()) && d.getFullYear() > 2000) {
+  if (!isNaN(d.getTime()) && d.getFullYear() > 2000 && d.getFullYear() <= 2100) {
     return toLocalIso(d);
   }
 
@@ -711,7 +740,7 @@ export function applyMapping(
 
   const mapped: MappedExpense[] = [];
   let unmapped = 0;
-  const today = new Date().toISOString().split('T')[0];
+  const today = toLocalIso(new Date());
 
   for (const row of rows) {
     if (!Array.isArray(row)) { unmapped++; continue; }

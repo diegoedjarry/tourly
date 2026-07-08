@@ -17,7 +17,6 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Haptics from 'expo-haptics';
 import { Text } from '@/components/ui/text';
@@ -112,6 +111,14 @@ export function ReceiptCaptureSheet({ visible, onClose, onCaptured }: Props) {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setBusy('file');
     try {
+      let DocumentPicker;
+      try {
+        DocumentPicker = await import('expo-document-picker');
+      } catch {
+        // Native module missing (e.g. binary/JS version drift after an OTA update) —
+        // fail quietly instead of crashing the whole app.
+        return;
+      }
       const result = await DocumentPicker.getDocumentAsync({
         type: ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'],
         copyToCacheDirectory: true,
