@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="500" viewBox="0 0 1024 500">
+<rect width="1024" height="500" fill="#FFFFFF"/>
+<g transform="translate(130 0)">
+<path d="M 0 195.5 H 96" fill="none" stroke="#2D2B55" stroke-width="11" stroke-linecap="butt"/>
+<path d="M 48 201 V 310" fill="none" stroke="#2D2B55" stroke-width="11" stroke-linecap="butt"/>
+<circle cx="196" cy="250" r="66" fill="none" stroke="#2D2B55" stroke-width="11"/>
+<path d="M 130.2511499259448 244.24772097865457 A 75.89999999999999 75.89999999999999 0 0 0 201.75227902134543 184.2511499259448" fill="none" stroke="#2D2B55" stroke-width="9.35"/>
+<path d="M 261.7488500740552 255.75227902134543 A 75.89999999999999 75.89999999999999 0 0 0 190.24772097865457 315.7488500740552" fill="none" stroke="#2D2B55" stroke-width="9.35"/>
+<path d="M 301.5 190 V 264 A 40.5 40.5 0 0 0 382.5 264 V 190" fill="none" stroke="#2D2B55" stroke-width="11" stroke-linecap="butt"/>
+<path d="M 427.5 310 V 195.5 H 480 A 30 30 0 0 1 480 244.5 H 427.5" fill="none" stroke="#2D2B55" stroke-width="11" stroke-linecap="butt"/>
+<path d="M 472 250 L 510 310" fill="none" stroke="#2D2B55" stroke-width="11" stroke-linecap="butt"/>
+<path d="M 549.5 190 V 304.5 H 622" fill="none" stroke="#2D2B55" stroke-width="11" stroke-linecap="butt"/>
+<path d="M 656 190 L 710 250" fill="none" stroke="#2D2B55" stroke-width="11" stroke-linecap="butt"/>
+<path d="M 764 190 L 710 250" fill="none" stroke="#2D2B55" stroke-width="11" stroke-linecap="butt"/>
+<path d="M 710 250 V 310" fill="none" stroke="#2D2B55" stroke-width="11" stroke-linecap="butt"/>
+</g>
+</svg>
