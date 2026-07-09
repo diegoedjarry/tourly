@@ -38,36 +38,72 @@ async function isOffline(): Promise<boolean> {
 // ── Optimistic cache primitives ──────────────────────────────────────────────
 // Every mutation applies its change to the react-query cache BEFORE the network
 // round-trip, so the UI updates instantly (native-feel, no frozen spinners).
-// On server error the snapshot is restored and the error rethrown for the
+// On server error the rollback below is applied and the error rethrown for the
 // caller's alert. Offline writes keep their optimistic row — the queue flush
 // invalidates and reconciles on reconnect.
+//
+// Rollbacks are mutation-scoped (not whole-array snapshots): if two mutations
+// overlap and the earlier one fails after the later one applied, undoing the
+// earlier one must not resurrect state the later one already changed.
 type Row = Record<string, any>;
 
 function optimisticInsert(key: string[], row: Row): () => void {
-  const previous = queryClient.getQueryData<Row[]>(key);
   queryClient.setQueryData<Row[]>(key, (old) => [row, ...(old ?? [])]);
-  return () => queryClient.setQueryData(key, previous);
+  // Rollback removes exactly the row we inserted, by id — untouched by any
+  // other insert/merge/remove that happened on this key in the meantime.
+  return () => queryClient.setQueryData<Row[]>(key, (old) =>
+    (old ?? []).filter((r) => r.id !== row.id));
 }
 
 function optimisticMerge(key: string[], id: string, patch: Row): () => void {
-  const previous = queryClient.getQueryData<Row[]>(key);
+  const current = queryClient.getQueryData<Row[]>(key);
+  const target = current?.find((r) => r.id === id);
+  // Capture prior values for only the keys we're about to patch, so rollback
+  // restores just those fields on this row and leaves everything else (other
+  // rows, other concurrently-patched keys on this row) alone.
+  const priorValues: Row = {};
+  if (target) {
+    for (const k of Object.keys(patch)) priorValues[k] = target[k];
+  }
   queryClient.setQueryData<Row[]>(key, (old) =>
     (old ?? []).map((r) => (r.id === id ? { ...r, ...patch } : r)));
-  return () => queryClient.setQueryData(key, previous);
+  return () => queryClient.setQueryData<Row[]>(key, (old) =>
+    (old ?? []).map((r) => (r.id === id ? { ...r, ...priorValues } : r)));
 }
 
 function optimisticRemove(key: string[], id: string): () => void {
-  const previous = queryClient.getQueryData<Row[]>(key);
+  const current = queryClient.getQueryData<Row[]>(key);
+  const removed = current?.find((r) => r.id === id);
   queryClient.setQueryData<Row[]>(key, (old) => (old ?? []).filter((r) => r.id !== id));
-  return () => queryClient.setQueryData(key, previous);
+  // Rollback re-inserts the captured row, but only if nothing else already
+  // re-added a row with that id in the meantime.
+  return () => {
+    if (!removed) return;
+    queryClient.setQueryData<Row[]>(key, (old) => {
+      if ((old ?? []).some((r) => r.id === id)) return old ?? [];
+      return [removed, ...(old ?? [])];
+    });
+  };
 }
 
-function replaceRow(key: string[], tempId: string, serverRow: Row) {
+// With a client-supplied uuid (see newRowId below), the optimistic row and the
+// server-returned row share the same id — replacing is a no-op in the common
+// case, but this stays in place as a safety net for callers/paths that mutate
+// the row server-side (e.g. defaults applied by a trigger) so the cache still
+// reconciles to the authoritative row shape.
+function replaceRow(key: string[], id: string, serverRow: Row) {
   queryClient.setQueryData<Row[]>(key, (old) =>
-    (old ?? []).map((r) => (r.id === tempId ? serverRow : r)));
+    (old ?? []).map((r) => (r.id === id ? serverRow : r)));
 }
 
-const tempId = () => `optimistic-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+// Client-generated uuid v4 for new rows. Postgres `id uuid` columns reject the
+// old `optimistic-<timestamp>` placeholder ids, so every insert (online or
+// offline) now gets a real uuid up front — used as the optimistic cache row
+// id, the queued mutation id, AND the online insert payload id. That keeps
+// both paths symmetric and offline replays idempotent via upsert-on-id.
+function newRowId(): string {
+  return (globalThis as any).crypto.randomUUID();
+}
 
 export async function apiPatchTournament(id: string, updates: Record<string, any>) {
   const { data: { user } } = await supabase.auth.getUser();
@@ -106,20 +142,21 @@ export async function apiPatchTournamentIfUnchanged(
 export async function apiAddTournament(data: Record<string, any>) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
-  const optimistic = { ...toSnake(data), id: tempId(), user_id: user.id, created_at: new Date().toISOString() };
+  const id = newRowId();
+  const optimistic = { ...toSnake(data), id, user_id: user.id, created_at: new Date().toISOString() };
   const rollback = optimisticInsert(['tournaments'], optimistic);
   if (await isOffline()) {
-    await enqueue({ table: 'tournaments', action: 'insert', data, userId: user.id });
+    await enqueue({ id, table: 'tournaments', action: 'insert', data, userId: user.id });
     notifyQueued();
     return optimistic;
   }
   const { data: row, error } = await supabase
     .from('tournaments')
-    .insert({ ...toSnake(data), user_id: user.id })
+    .insert({ ...toSnake(data), id, user_id: user.id })
     .select()
     .single();
   if (error) { rollback(); throw error; }
-  replaceRow(['tournaments'], optimistic.id, row);
+  replaceRow(['tournaments'], id, row);
   queryClient.invalidateQueries({ queryKey: ['tournaments'] });
   return row;
 }
@@ -136,20 +173,21 @@ export async function apiAddExpense(data: Record<string, any>) {
   }
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
-  const optimistic = { ...toSnake(data), id: tempId(), user_id: user.id, created_at: new Date().toISOString() };
+  const id = newRowId();
+  const optimistic = { ...toSnake(data), id, user_id: user.id, created_at: new Date().toISOString() };
   const rollback = optimisticInsert(['expenses'], optimistic);
   if (await isOffline()) {
-    await enqueue({ table: 'expenses', action: 'insert', data, userId: user.id });
+    await enqueue({ id, table: 'expenses', action: 'insert', data, userId: user.id });
     notifyQueued();
     return optimistic;
   }
   const { data: row, error } = await supabase
     .from('expenses')
-    .insert({ ...toSnake(data), user_id: user.id })
+    .insert({ ...toSnake(data), id, user_id: user.id })
     .select()
     .single();
   if (error) { rollback(); throw error; }
-  replaceRow(['expenses'], optimistic.id, row);
+  replaceRow(['expenses'], id, row);
   queryClient.invalidateQueries({ queryKey: ['expenses'] });
   return row;
 }
@@ -211,20 +249,21 @@ export async function apiDeleteTournament(id: string) {
 export async function apiAddIncome(data: Record<string, any>) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
-  const optimistic = { ...toSnake(data), id: tempId(), user_id: user.id, created_at: new Date().toISOString() };
+  const id = newRowId();
+  const optimistic = { ...toSnake(data), id, user_id: user.id, created_at: new Date().toISOString() };
   const rollback = optimisticInsert(['income'], optimistic);
   if (await isOffline()) {
-    await enqueue({ table: 'income', action: 'insert', data, userId: user.id });
+    await enqueue({ id, table: 'income', action: 'insert', data, userId: user.id });
     notifyQueued();
     return optimistic;
   }
   const { data: row, error } = await supabase
     .from('income')
-    .insert({ ...toSnake(data), user_id: user.id })
+    .insert({ ...toSnake(data), id, user_id: user.id })
     .select()
     .single();
   if (error) { rollback(); throw error; }
-  replaceRow(['income'], optimistic.id, row);
+  replaceRow(['income'], id, row);
   queryClient.invalidateQueries({ queryKey: ['income'] });
   return row;
 }

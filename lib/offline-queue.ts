@@ -65,15 +65,16 @@ async function saveFailedQueue(queue: QueuedMutation[]) {
   await AsyncStorage.setItem(FAILED_QUEUE_KEY, JSON.stringify(capped));
 }
 
-export async function enqueue(mutation: Omit<QueuedMutation, 'id' | 'createdAt'>) {
+export async function enqueue(mutation: Omit<QueuedMutation, 'id' | 'createdAt'> & { id?: string }) {
   return withQueueLock(async () => {
     const queue = await getQueue();
     // Preserve any id already present on the payload (e.g. a client-generated
-    // id set by the optimistic-update path) so inserts stay idempotent across
-    // replays. Only generate a new one if the mutation doesn't already have one.
-    const existingId = (mutation as Partial<QueuedMutation>).id;
+    // uuid set by the caller at row-creation time — see newRowId() in
+    // lib/api.ts) so inserts stay idempotent across replays. Only generate a
+    // fallback id if the mutation doesn't already have one.
+    const { id: existingId, ...rest } = mutation;
     queue.push({
-      ...mutation,
+      ...rest,
       id: existingId || `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
       createdAt: Date.now(),
       attempts: 0,

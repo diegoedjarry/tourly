@@ -8,7 +8,15 @@ jest.mock('@react-native-community/netinfo', () => ({
 }));
 
 jest.mock('@/lib/queryClient', () => ({
-  queryClient: { invalidateQueries: jest.fn() },
+  queryClient: {
+    invalidateQueries: jest.fn(),
+    getQueryData: jest.fn(),
+    setQueryData: jest.fn(),
+  },
+}));
+
+jest.mock('@/lib/deleted-tournaments', () => ({
+  recordDeletedTournament: jest.fn(),
 }));
 
 // Controllable chainable supabase mock. Each test configures `mockAuthGetUser`
@@ -50,6 +58,9 @@ import {
   getFailedQueueLength,
   clearQueue,
 } from '@/lib/offline-queue';
+import { apiAddExpense, apiAddTournament } from '@/lib/api';
+
+const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const QUEUE_KEY = '@tourly_offline_queue';
 const FAILED_QUEUE_KEY = '@tourly_offline_queue_failed';
@@ -64,6 +75,14 @@ async function readFailedQueue(): Promise<any[]> {
   return raw ? JSON.parse(raw) : [];
 }
 
+// Minimal in-memory-backed fake so the optimistic-cache primitives in
+// lib/api.ts (getQueryData/setQueryData with a functional updater) behave
+// like the real react-query client would for these tests.
+const fakeCache = new Map<string, any>();
+function fakeCacheKey(key: string[]) {
+  return JSON.stringify(key);
+}
+
 beforeEach(async () => {
   await AsyncStorage.clear();
   // Reset ONLY our own mocks — jest.resetAllMocks() would also wipe the
@@ -72,6 +91,18 @@ beforeEach(async () => {
   mockAuthGetUser.mockReset();
   (NetInfo.fetch as jest.Mock).mockReset();
   (queryClient.invalidateQueries as jest.Mock).mockClear();
+  fakeCache.clear();
+  (queryClient.getQueryData as jest.Mock).mockReset().mockImplementation(
+    (key: string[]) => fakeCache.get(fakeCacheKey(key))
+  );
+  (queryClient.setQueryData as jest.Mock).mockReset().mockImplementation(
+    (key: string[], updater: any) => {
+      const k = fakeCacheKey(key);
+      const next = typeof updater === 'function' ? updater(fakeCache.get(k)) : updater;
+      fakeCache.set(k, next);
+      return next;
+    }
+  );
   // Table mocks are recreated fresh per test, so no config can bleed over.
   for (const k of Object.keys(mockTableMocks)) delete mockTableMocks[k];
   mockAuthGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } });
@@ -268,6 +299,77 @@ describe('processQueue — failed queue cap', () => {
     expect(failed.find((m: any) => m.id === 'old-0')).toBeUndefined();
     expect(failed.find((m: any) => m.id === 'old-1')).toBeDefined();
     expect(failed[failed.length - 1].id).toBe('newest-dead-letter');
+  });
+});
+
+describe('apiAddExpense / apiAddTournament — offline insert uses a real client-generated uuid', () => {
+  // Regression coverage for the real call path (apiAddExpense/apiAddTournament
+  // -> enqueue -> processQueue -> upsert), not a hand-supplied id. Before the
+  // fix these functions left `enqueue()` to self-generate a `${Date.now()}_...`
+  // id, which Postgres `uuid` columns reject outright.
+  beforeEach(() => {
+    (NetInfo.fetch as jest.Mock).mockResolvedValue({ isConnected: false });
+  });
+
+  it('apiAddExpense: optimistic row id, queued mutation id, and upsert payload id are all the same uuid v4', async () => {
+    const optimistic = await apiAddExpense({
+      amount: 25,
+      category: 'stringing',
+      date: '2026-07-01',
+    });
+
+    expect(optimistic.id).toMatch(UUID_V4_RE);
+
+    // Optimistic cache row uses that same id.
+    const cached = fakeCache.get(fakeCacheKey(['expenses']));
+    expect(cached[0].id).toBe(optimistic.id);
+
+    // Queued mutation carries the same id through to processQueue.
+    const queued = await readQueue();
+    expect(queued).toHaveLength(1);
+    expect(queued[0].id).toBe(optimistic.id);
+
+    (NetInfo.fetch as jest.Mock).mockResolvedValue({ isConnected: true });
+    await processQueue();
+
+    const mock = mockTableMocks['expenses'];
+    expect(mock.upsert).toHaveBeenCalledTimes(1);
+    const [payload] = mock.upsert.mock.calls[0];
+    expect(payload.id).toBe(optimistic.id);
+    expect(payload.id).toMatch(UUID_V4_RE);
+    expect(await getQueueLength()).toBe(0);
+  });
+
+  it('apiAddTournament: optimistic row id, queued mutation id, and upsert payload id are all the same uuid v4', async () => {
+    const optimistic = await apiAddTournament({
+      name: 'M25 Cuiabá',
+      startDate: '2026-06-09',
+    });
+
+    expect(optimistic.id).toMatch(UUID_V4_RE);
+
+    const queued = await readQueue();
+    expect(queued).toHaveLength(1);
+    expect(queued[0].id).toBe(optimistic.id);
+
+    (NetInfo.fetch as jest.Mock).mockResolvedValue({ isConnected: true });
+    await processQueue();
+
+    const mock = mockTableMocks['tournaments'];
+    expect(mock.upsert).toHaveBeenCalledTimes(1);
+    const [payload] = mock.upsert.mock.calls[0];
+    expect(payload.id).toBe(optimistic.id);
+    expect(payload.id).toMatch(UUID_V4_RE);
+    expect(await getQueueLength()).toBe(0);
+  });
+
+  it('generates a different uuid per call (no collisions across two offline inserts)', async () => {
+    const first = await apiAddExpense({ amount: 10, category: 'travel', date: '2026-07-01' });
+    const second = await apiAddExpense({ amount: 20, category: 'travel', date: '2026-07-02' });
+
+    expect(first.id).not.toBe(second.id);
+    expect(first.id).toMatch(UUID_V4_RE);
+    expect(second.id).toMatch(UUID_V4_RE);
   });
 });
 

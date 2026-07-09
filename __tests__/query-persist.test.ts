@@ -66,6 +66,41 @@ describe('persistCacheToMmkv — restore', () => {
     expect(queryClient.getQueryData(['profile', 'user-1'])).toBeUndefined();
     expect(queryClient.getQueryData(['tournaments'])).toEqual({ ok: true });
   });
+
+  it('does not overwrite a query key that already has data (a live fetch that resolved before the async restore)', async () => {
+    await AsyncStorage.setItem(
+      CACHE_KEY,
+      JSON.stringify([{ queryKey: ['tournaments'], data: { stale: true } }])
+    );
+
+    // Simulate a live fetch resolving first, synchronously, before the
+    // pending AsyncStorage.getItem() promise inside persistCacheToMmkv
+    // settles and runs its restore callback.
+    persistCacheToMmkv();
+    queryClient.setQueryData(['tournaments'], { fresh: true });
+    await flushMicrotasks();
+
+    expect(queryClient.getQueryData(['tournaments'])).toEqual({ fresh: true });
+  });
+
+  it('still restores a key that has no live data yet', async () => {
+    await AsyncStorage.setItem(
+      CACHE_KEY,
+      JSON.stringify([
+        { queryKey: ['tournaments'], data: { fresh: false } },
+        { queryKey: ['expenses'], data: { ok: true } },
+      ])
+    );
+
+    persistCacheToMmkv();
+    queryClient.setQueryData(['tournaments'], { fresh: true });
+    await flushMicrotasks();
+
+    // 'tournaments' already had live data — untouched.
+    expect(queryClient.getQueryData(['tournaments'])).toEqual({ fresh: true });
+    // 'expenses' had none — restored from the snapshot.
+    expect(queryClient.getQueryData(['expenses'])).toEqual({ ok: true });
+  });
 });
 
 describe('persistCacheToMmkv — persist (debounced write)', () => {

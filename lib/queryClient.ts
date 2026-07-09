@@ -43,6 +43,11 @@ export function persistCacheToMmkv() {
         // ['profile', userId].
         const rootKey = Array.isArray(entry.queryKey) ? entry.queryKey[0] : entry.queryKey;
         if (SKIP_RESTORE_KEYS.has(rootKey)) return;
+        // This restore runs after an async AsyncStorage read, so a live fetch
+        // may have already resolved and populated the cache by the time we get
+        // here. Restoring over it would clobber fresher data with a stale
+        // snapshot — skip any key that already has data.
+        if (queryClient.getQueryData(entry.queryKey) !== undefined) return;
         // New format stores `data` directly; old format nested it in `state`.
         const data = entry.data ?? entry.state?.data;
         if (data) {
