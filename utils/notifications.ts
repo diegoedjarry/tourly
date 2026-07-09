@@ -432,3 +432,23 @@ async function doCancelOrphaned(validTournamentIds: Set<string>): Promise<void> 
   });
   await Promise.all(orphans.map(n => Notifications.cancelScheduledNotificationAsync(n.identifier)));
 }
+
+// Routed through the same rescheduleInFlight chain as rescheduleAllNotifications
+// and cancelOrphanedNotifications: sign-out must not race an in-flight reschedule
+// (e.g. a reschedule triggered just before sign-out could otherwise re-add
+// notifications for the outgoing user after this cancelAll runs).
+export function cancelAllNotificationsForSignOut(): Promise<void> {
+  rescheduleInFlight = rescheduleInFlight
+    .catch(() => {})
+    .then(() => doCancelAllForSignOut());
+  return rescheduleInFlight;
+}
+
+async function doCancelAllForSignOut(): Promise<void> {
+  if (Platform.OS === 'web') return;
+  try {
+    await Notifications.cancelAllScheduledNotificationsAsync();
+  } catch {
+    // Best-effort — sign-out must proceed even if the OS call fails.
+  }
+}

@@ -43,7 +43,12 @@ export default function OnboardingProfileScreen() {
     // Mark onboarding complete so we never land here again on re-login
     try {
       await updateProfile.mutateAsync({ onboarding_complete: true } as any);
-    } catch {}
+    } catch {
+      // Do NOT navigate on failure — if onboarding_complete never lands, the
+      // AuthGate keeps bouncing the user back here on every relaunch.
+      Alert.alert(t('common.couldNotSaveProfile'), t('common.tryAgain'));
+      return;
+    }
     router.replace('/(tabs)');
   }
 

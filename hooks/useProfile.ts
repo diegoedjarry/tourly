@@ -72,20 +72,56 @@ export function useProfile() {
   });
 }
 
+// Serializes update calls so a second mutateAsync() started before the first
+// one's response lands merges against the first one's result instead of the
+// same pre-update cache snapshot both calls would otherwise read. Without
+// this, two quick edits (e.g. toggling two reminder rows back-to-back) each
+// spread the same stale nested object (like notify_reminder_config) and
+// whichever upsert resolves last silently discards the other's change.
+let updateChain: Promise<any> = Promise.resolve();
+
 export function useUpdateProfile() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (updates: Partial<Profile>) => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Not authenticated');
-      const { data, error } = await supabase
-        .from('profiles')
-        .upsert({ id: user.id, ...updates })
-        .select()
-        .single();
-      if (error) throw error;
-      return data as Profile;
+    mutationFn: (updates: Partial<Profile>) => {
+      const result = updateChain.then(
+        () => applyProfileUpdate(qc, updates),
+        () => applyProfileUpdate(qc, updates), // run even if the prior update in the chain failed
+      );
+      // Swallow rejections in the chain itself (already surfaced to the
+      // caller via the returned/thrown promise) so one failure doesn't
+      // permanently wedge the chain for subsequent updates.
+      updateChain = result.catch(() => {});
+      return result;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEY }),
+    onSuccess: (data) => {
+      // Seed the cache with the authoritative server row immediately so the
+      // next queued update's getQueryData() read (and any immediate re-render)
+      // sees this result rather than stale data, then let invalidate refetch
+      // in the background to reconcile with any other source of truth.
+      qc.setQueryData(QUERY_KEY, data);
+      qc.invalidateQueries({ queryKey: QUERY_KEY });
+    },
   });
+}
+
+async function applyProfileUpdate(qc: ReturnType<typeof useQueryClient>, updates: Partial<Profile>): Promise<Profile> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+  // Merge against the freshest cached profile at mutation execution time
+  // (not a render-closure snapshot the caller captured when the button was
+  // pressed) so a partial update never clobbers fields — nested or
+  // top-level — changed by another update that landed in between.
+  const fresh = qc.getQueryData<Profile | null>(QUERY_KEY);
+  // created_at is server-defaulted and never meant to be re-sent by a client
+  // update — omit it from the merge base so it's never round-tripped.
+  const { created_at: _createdAt, ...freshWithoutCreatedAt } = fresh ?? {};
+  const payload = fresh ? { ...freshWithoutCreatedAt, ...updates } : { ...updates };
+  const { data, error } = await supabase
+    .from('profiles')
+    .upsert({ ...payload, id: user.id })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as Profile;
 }

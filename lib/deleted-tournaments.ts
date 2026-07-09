@@ -52,3 +52,18 @@ export async function getDeletedTournamentIds(): Promise<Set<string>> {
     return new Set();
   }
 }
+
+// Sign-out cleanup: wipe tombstones so they can't leak into the next user's
+// session on a shared device. Serialized through the same chain as
+// recordDeletedTournament/getDeletedTournamentIds to avoid racing an
+// in-flight read-modify-write.
+export function clearDeletedTournaments(): Promise<void> {
+  chain = chain.catch(() => {}).then(async () => {
+    try {
+      await AsyncStorage.removeItem(STORAGE_KEY);
+    } catch {
+      // Best-effort — a failed clear must never block sign-out.
+    }
+  });
+  return chain;
+}

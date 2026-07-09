@@ -8,7 +8,7 @@ import { useRouter } from 'expo-router';
 import { useUpdateProfile } from '@/hooks/useProfile';
 import { Text } from '@/components/ui/text';
 import { TourlyLogo } from '@/components/ui/tourly-logo';
-import { supabase } from '@/lib/supabase'; // used for sign-out in handleBackToLogin
+import { useAuth } from '@/hooks/useAuth';
 import { triggerScraperOnce } from '@/hooks/useScraperTrigger';
 import { T } from '@/constants/theme';
 import { useLanguage } from '@/hooks/useLanguage';
@@ -266,7 +266,7 @@ const STRINGING_OPTS = ['Yes', 'No'];
 const ROLES = ['Player', 'Coach', 'Other'];
 
 function ProfileSetupScreen({ onNext, onBack }: { onNext: () => void; onBack: () => void }) {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const updateProfile = useUpdateProfile();
 
   const SURFACE_LABELS: Record<string, string> = {
@@ -307,7 +307,21 @@ function ProfileSetupScreen({ onNext, onBack }: { onNext: () => void; onBack: ()
     if (budget) payload.annual_budget = parseInt(budget, 10);
     if (coachTravel) payload.travel_with_coach = coachTravel;
     if (stringing) payload.travel_with_stringing = stringing;
-    try { await updateProfile.mutateAsync(payload); } catch {}
+    try {
+      await updateProfile.mutateAsync(payload);
+    } catch {
+      // Never silently advance past a failed write — ask the user to retry
+      // or explicitly choose to continue without saving this step's data.
+      Alert.alert(
+        t('common.couldNotSaveProfile'),
+        t('common.tryAgain'),
+        [
+          { text: lang === 'es' ? 'Reintentar' : 'Retry', onPress: handleContinue },
+          { text: lang === 'es' ? 'Continuar sin guardar' : 'Continue without saving', onPress: onNext, style: 'destructive' },
+        ],
+      );
+      return;
+    }
     onNext();
   }
 
@@ -454,15 +468,26 @@ function ReadyScreen({ onAddTournament, onExplore }: { onAddTournament: () => vo
 export default function WalkthroughScreen() {
   const router = useRouter();
   const updateProfile = useUpdateProfile();
+  const { signOut } = useAuth();
   const [step, setStep] = useState(0);
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
 
   async function finishOnboarding(): Promise<boolean> {
     try {
       await updateProfile.mutateAsync({ onboarding_complete: true });
     } catch {
-      Alert.alert(t('common.couldNotSaveProfile'), t('common.tryAgain'));
-      return false;
+      // Never silently advance past a failed write — ask the user to retry
+      // or explicitly choose to continue without saving.
+      return new Promise<boolean>((resolve) => {
+        Alert.alert(
+          t('common.couldNotSaveProfile'),
+          t('common.tryAgain'),
+          [
+            { text: lang === 'es' ? 'Reintentar' : 'Retry', onPress: () => resolve(finishOnboarding()) },
+            { text: lang === 'es' ? 'Continuar sin guardar' : 'Continue without saving', onPress: () => resolve(true), style: 'destructive' },
+          ],
+        );
+      });
     }
     // Fire scraper once — non-blocking, does not delay navigation
     if (_pendingPlayerName) triggerScraperOnce(_pendingPlayerName);
@@ -470,8 +495,10 @@ export default function WalkthroughScreen() {
   }
 
   async function handleBackToLogin() {
-    try { await supabase.auth.signOut(); } catch {}
-    // AuthGate in _layout.tsx will redirect to /auth once session clears
+    try { await signOut(); } catch {}
+    // AuthGate in _layout.tsx will redirect to /auth once session clears.
+    // Routed through useAuth's signOut() (not supabase.auth.signOut()
+    // directly) so sign-out device cleanup has a single source of truth.
   }
 
   const steps: React.ReactNode[] = [

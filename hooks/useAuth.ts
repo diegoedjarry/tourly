@@ -3,6 +3,29 @@ import { Alert, Platform } from 'react-native';
 import { supabase } from '@/lib/supabase';
 import type { User, Session } from '@supabase/supabase-js';
 import { clearPersistedCache, queryClient } from '@/lib/queryClient';
+import { clearQueue, getQueueLength } from '@/lib/offline-queue';
+import { cancelAllNotificationsForSignOut } from '@/utils/notifications';
+import { clearDeletedTournaments } from '@/lib/deleted-tournaments';
+import { clearDevicePushToken } from '@/db';
+
+// Device-local state that must never leak from User A to User B on a shared
+// device. Invoked from two places only: the explicit signOut() call, and the
+// auth listener's user-switch branch. Deliberately NOT run on a bare
+// SIGNED_OUT event — Supabase also emits that when a refresh token expires
+// involuntarily (e.g. while the device was offline), and discarding the queue
+// there would lose the same returning user's queued offline writes.
+async function clearDeviceStateForSignOut(): Promise<void> {
+  const queuedCount = await getQueueLength().catch(() => 0);
+  if (queuedCount > 0) {
+    console.warn(`[useAuth] discarding ${queuedCount} queued offline mutation(s) on sign-out`);
+  }
+  await Promise.allSettled([
+    clearQueue(),
+    cancelAllNotificationsForSignOut(),
+    clearDeletedTournaments(),
+    clearDevicePushToken(),
+  ]);
+}
 
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
@@ -22,8 +45,19 @@ export function useAuth() {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       const newUserId = session?.user?.id ?? null;
-      if (event === 'SIGNED_OUT' || (prevUserIdRef.current && newUserId && newUserId !== prevUserIdRef.current)) {
+      const isUserSwitch = !!(prevUserIdRef.current && newUserId && newUserId !== prevUserIdRef.current);
+      if (event === 'SIGNED_OUT' || isUserSwitch) {
         await clearPersistedCache();
+      }
+      // Full device cleanup only when the account actually changes hands:
+      // explicit sign-outs run it directly in signOut(); a direct user switch
+      // (new session for a different user with no SIGNED_OUT in between) is an
+      // account change, so clean up here too. A bare SIGNED_OUT without either
+      // is treated as involuntary (refresh-token expiry) — the queue's
+      // per-user guard already blocks cross-account replay, and notifications
+      // rebuild from the next signed-in user's data.
+      if (isUserSwitch) {
+        await clearDeviceStateForSignOut();
       }
       // When a new user session is established, reset the profile query so the
       // AuthGate guard blocks on isLoading until the real fetch completes.
@@ -74,6 +108,11 @@ export function useAuth() {
     setUser(null);
     setSession(null);
     await clearPersistedCache();
+    // Explicit sign-out = the user is leaving this device session on purpose,
+    // so device-local state (queued mutations, notifications, tombstones,
+    // push token) goes with them. Runs here, not on the SIGNED_OUT event,
+    // so involuntary session expiry can't discard queued offline writes.
+    await clearDeviceStateForSignOut();
   }
 
   async function signInWithOAuth(provider: 'google' | 'apple') {

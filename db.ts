@@ -81,3 +81,20 @@ const schema = i.schema({
 
 export type AppSchema = typeof schema;
 export const db = init({ appId: APP_ID, schema, Store: AsyncStorageStore });
+
+// Sign-out cleanup: best-effort clear of the shared device's push token so a
+// stale token tied to User A doesn't keep receiving pushes routed for User A
+// after User B signs in on the same device. Never throws — this must not be
+// able to block sign-out.
+export async function clearDevicePushToken(): Promise<void> {
+  try {
+    await db.transact(
+      db.tx.devices['singleton-device'].update({
+        pushToken: null as unknown as string,
+        updatedAt: Date.now(),
+      }),
+    );
+  } catch {
+    // Best-effort — InstantDB write failures must never block sign-out.
+  }
+}
