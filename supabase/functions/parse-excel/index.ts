@@ -3,6 +3,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import * as XLSX from 'https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs';
 
 const MAX_BASE64_LENGTH = 10_000_000; // ~7.5MB file
+const MAX_ROWS = 5000;
+const MAX_CELLS_PER_ROW = 200;
 
 serve(async (req) => {
   try {
@@ -73,7 +75,23 @@ serve(async (req) => {
 
     const filtered = rows.filter((r: string[]) => r.some((cell: string) => String(cell).trim() !== ''));
 
-    return new Response(JSON.stringify({ rows: filtered }), {
+    // Cap rows and per-row cells so a pathological workbook can't blow up
+    // response size or downstream client parsing.
+    let truncated = false;
+    let bounded = filtered;
+    if (bounded.length > MAX_ROWS) {
+      bounded = bounded.slice(0, MAX_ROWS);
+      truncated = true;
+    }
+    bounded = bounded.map((r: string[]) => {
+      if (r.length > MAX_CELLS_PER_ROW) {
+        truncated = true;
+        return r.slice(0, MAX_CELLS_PER_ROW);
+      }
+      return r;
+    });
+
+    return new Response(JSON.stringify({ rows: bounded, ...(truncated ? { truncated: true } : {}) }), {
       status: 200, headers: { 'Content-Type': 'application/json' },
     });
 

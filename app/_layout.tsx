@@ -22,6 +22,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { DEMO_MODE } from '@/config/demo';
 import { trackScreen } from '@/lib/analytics';
+import { consumePendingDeepLink } from '@/lib/pending-navigation';
+import { ErrorBoundary } from '@/components/ui/error-boundary';
 
 const SENTRY_DSN = process.env.EXPO_PUBLIC_SENTRY_DSN;
 if (SENTRY_DSN) {
@@ -108,6 +110,23 @@ function AuthGate({ children }: { children: React.ReactNode }) {
         console.log('[AuthGate] → /(tabs) (onboarding_complete = true)');
         router.replace('/(tabs)');
       }
+
+      // Auth + profile are now settled and the user is signed in and
+      // onboarded — safe to replay a notification tap that arrived on cold
+      // start before this gate had resolved (see lib/pending-navigation.ts).
+      // consumePendingDeepLink() is consume-once, so this only ever replays
+      // a given tap a single time even though the effect can re-run.
+      const pending = consumePendingDeepLink();
+      if (pending) {
+        if (pending.target === 'calendar') {
+          router.navigate('/(tabs)/calendar');
+        } else {
+          router.navigate({
+            pathname: '/(tabs)/tournaments',
+            params: { openTournament: pending.tournamentId },
+          });
+        }
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, loading, profile, profileLoading, profileFetching]);
@@ -167,7 +186,9 @@ function RootLayout() {
         <SafeAreaProvider>
           <DemoDataProvider>
             <AppAlertProvider>
-              <AppLayout />
+              <ErrorBoundary>
+                <AppLayout />
+              </ErrorBoundary>
             </AppAlertProvider>
           </DemoDataProvider>
         </SafeAreaProvider>

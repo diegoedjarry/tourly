@@ -7,6 +7,7 @@ import { useAppQuery } from '@/hooks/useAppQuery';
 import { useProfile } from '@/hooks/useProfile';
 import { useLanguage } from '@/hooks/useLanguage';
 import { DEMO_MODE } from '@/config/demo';
+import { setPendingDeepLink } from '@/lib/pending-navigation';
 
 // Push notifications don't work in Expo Go on Android (SDK 53+). Skip entirely.
 const isExpoGo = Constants.executionEnvironment === 'storeClient';
@@ -121,13 +122,21 @@ export function useNotificationSetup() {
       if (cancelled) return;
       sub = Notifications.addNotificationResponseReceivedListener(response => {
         const data = response.notification.request.content.data as Record<string, unknown> | undefined;
-        // Profile-matched "new tournament" notifications land on the calendar.
+        // Always record the tap first — on cold start, AuthGate may still be
+        // resolving auth/profile and can concurrently redirect to /auth or
+        // /onboarding, clobbering a navigate() issued here. AuthGate replays
+        // this once it settles on the signed-in + onboarded route. The
+        // immediate navigate below still handles the common warm-app case
+        // (AuthGate already settled, no redirect in flight); replaying the
+        // same route afterward from AuthGate is a harmless no-op.
         if (data?.target === 'calendar') {
+          setPendingDeepLink({ target: 'calendar' });
           router.navigate('/(tabs)/calendar');
           return;
         }
         const tournamentId = data?.tournamentId as string | undefined;
         if (tournamentId) {
+          setPendingDeepLink({ target: 'tournament', tournamentId });
           router.navigate({
             pathname: '/(tabs)/tournaments',
             params: { openTournament: tournamentId as string },

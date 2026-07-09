@@ -55,6 +55,37 @@ serve(async (req) => {
       });
     }
 
+    // --- Input caps (cost/abuse control before we ever build a prompt) ---
+    const MAX_HEADERS = 60;
+    const MAX_SAMPLE_ROWS = 10;
+    const MAX_COLS_PER_ROW = 60;
+    const MAX_CELL_LENGTH = 200;
+    if (!Array.isArray(headers) || !Array.isArray(sampleRows)) {
+      return new Response(JSON.stringify({ error: 'headers and sampleRows must be arrays' }), {
+        status: 400, headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (headers.length > MAX_HEADERS) {
+      return new Response(JSON.stringify({ error: `Too many columns (max ${MAX_HEADERS})` }), {
+        status: 400, headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (sampleRows.length > MAX_SAMPLE_ROWS) {
+      return new Response(JSON.stringify({ error: `Too many sample rows (max ${MAX_SAMPLE_ROWS})` }), {
+        status: 400, headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (sampleRows.some((r: unknown) => Array.isArray(r) && r.length > MAX_COLS_PER_ROW)) {
+      return new Response(JSON.stringify({ error: `Too many columns in a sample row (max ${MAX_COLS_PER_ROW})` }), {
+        status: 400, headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const safeHeaders: string[] = headers.map((h: unknown) => String(h ?? '').slice(0, MAX_CELL_LENGTH));
+    const safeSampleRows: string[][] = sampleRows.map((r: unknown) =>
+      (Array.isArray(r) ? r : []).map((cell: unknown) => String(cell ?? '').slice(0, MAX_CELL_LENGTH)),
+    );
+
     const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
     const prompt = `You are a data mapping assistant. A user is importing a spreadsheet of tennis tournament expenses into an app.
@@ -67,10 +98,10 @@ The app needs these fields:
 - "tournament" (tournament name)
 
 The user's spreadsheet has these column headers:
-${JSON.stringify(headers)}
+${JSON.stringify(safeHeaders)}
 
 Here are a few sample rows:
-${sampleRows.map((r: string[]) => JSON.stringify(r)).join('\n')}
+${safeSampleRows.map((r: string[]) => JSON.stringify(r)).join('\n')}
 
 Map each of the app's fields to the best matching column header from the user's spreadsheet. If no column matches a field, omit it.
 
@@ -86,16 +117,32 @@ Respond ONLY in valid JSON:
 }`;
 
     const response = await anthropic.messages.create({
-      model: 'claude-3-5-sonnet-20241022',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 512,
       messages: [{ role: 'user', content: prompt }],
     });
 
     const text = response.content[0].type === 'text' ? response.content[0].text : '';
     const jsonMatch = text.match(/\{[\s\S]*\}/);
-    const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : { mapping: {} };
+    let parsed: { mapping?: Record<string, unknown> };
+    try {
+      parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : { mapping: {} };
+    } catch {
+      parsed = { mapping: {} };
+    }
 
-    return new Response(JSON.stringify(parsed), {
+    // Validate every mapping value is actually one of the input headers —
+    // drop anything the model hallucinated that doesn't match a real column.
+    const headerSet = new Set(safeHeaders);
+    const rawMapping = (parsed && typeof parsed.mapping === 'object' && parsed.mapping) ? parsed.mapping : {};
+    const mapping: Record<string, string> = {};
+    for (const [field, value] of Object.entries(rawMapping)) {
+      if (typeof value === 'string' && headerSet.has(value)) {
+        mapping[field] = value;
+      }
+    }
+
+    return new Response(JSON.stringify({ mapping }), {
       status: 200, headers: { 'Content-Type': 'application/json' },
     });
 

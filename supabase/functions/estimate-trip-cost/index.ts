@@ -66,9 +66,17 @@ const median = (xs: number[]) => {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 };
 
-const effective = (e: any): number => {
+// Non-USD expenses with no amount_usd (no FX rate available at entry time)
+// are EXCLUDED from aggregation rather than having their raw foreign-currency
+// amount summed as if it were USD — mirrors the client-side fix for the same
+// fallback (amount_usd null + non-USD currency degrades to "unknown", not a
+// same-unit dollar amount). USD rows always have a same-unit amount, so they
+// still fall back to `amount` when amount_usd is null.
+const effective = (e: any): number | null => {
   if (e.is_reimbursed) return 0;
-  const base = e.amount_usd ?? e.amount ?? 0;
+  const isUsd = (e.currency ?? 'USD') === 'USD';
+  const base = e.amount_usd ?? (isUsd ? e.amount : null);
+  if (base == null) return null;
   return base * ((e.share_pct ?? 100) / 100);
 };
 
@@ -193,7 +201,7 @@ serve(async (req) => {
       supabase.from('tournaments').select('*').eq('id', tournamentId).eq('user_id', user.id).single(),
       supabase.from('profiles').select('home_city, nationality, travel_with_coach').eq('id', user.id).maybeSingle(),
       supabase.from('tournaments').select('id, name, city, country, category, start_date, end_date').eq('user_id', user.id),
-      supabase.from('expenses').select('tournament_id, category, amount, amount_usd, share_pct, is_reimbursed, date').eq('user_id', user.id),
+      supabase.from('expenses').select('tournament_id, category, amount, currency, amount_usd, share_pct, is_reimbursed, date').eq('user_id', user.id),
     ]);
     if (!trn) return json({ error: 'Tournament not found' }, 404);
 
@@ -205,8 +213,9 @@ serve(async (req) => {
     const byTrip = new Map<string, Record<string, number>>();
     let coachSpendTotal = 0, allSpendTotal = 0;
     for (const e of myExpenses ?? []) {
-      const t = e.tournament_id ? tById.get(e.tournament_id) : null;
       const amt = effective(e);
+      if (amt == null) continue; // non-USD row with no known USD value — excluded, not summed raw
+      const t = e.tournament_id ? tById.get(e.tournament_id) : null;
       allSpendTotal += amt;
       if (isCoachCat(e.category)) coachSpendTotal += amt;
       if (!t || !(t as any).start_date || (t as any).start_date >= todayIso || (t as any).id === tournamentId) continue;
@@ -248,21 +257,25 @@ serve(async (req) => {
       if (consentIds.length >= 5 && (trn.city || trn.country)) {
         let q = supabase.from('tournaments')
           .select('id, user_id, city, country, start_date')
-          .in('user_id', consentIds).gte('start_date', cutoff).lt('start_date', todayIso);
+          .in('user_id', consentIds).gte('start_date', cutoff).lt('start_date', todayIso)
+          .limit(500);
         q = trn.city ? q.ilike('city', `%${trn.city}%`) : q.eq('country', trn.country);
         const { data: peerTrns } = await q;
         const peerTrnIds = (peerTrns ?? []).map((t: any) => t.id);
         if (peerTrnIds.length) {
           const { data: peerExp } = await supabase.from('expenses')
-            .select('user_id, tournament_id, category, amount, amount_usd, share_pct, is_reimbursed')
-            .in('tournament_id', peerTrnIds);
+            .select('user_id, tournament_id, category, amount, currency, amount_usd, share_pct, is_reimbursed')
+            .in('tournament_id', peerTrnIds)
+            .limit(500);
           const perUserTrip = new Map<string, Record<string, number>>();
           for (const e of peerExp ?? []) {
             if (isCoachCat(e.category)) continue;
+            const amt = effective(e);
+            if (amt == null) continue; // non-USD row with no known USD value — excluded, not summed raw
             const key = `${e.user_id}|${e.tournament_id}`;
             const buckets = perUserTrip.get(key) ?? {};
             const b = bucketOf(e.category);
-            buckets[b] = (buckets[b] ?? 0) + effective(e);
+            buckets[b] = (buckets[b] ?? 0) + amt;
             perUserTrip.set(key, buckets);
           }
           const distinctUsers = new Set(Array.from(perUserTrip.keys()).map((k) => k.split('|')[0]));

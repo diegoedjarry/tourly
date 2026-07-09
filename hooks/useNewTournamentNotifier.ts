@@ -14,9 +14,11 @@ const isExpoGo = Constants.executionEnvironment === 'storeClient';
 
 const SEEN_AT_KEY = 'newTournamentSeenAt';
 const CHECK_AT_KEY = 'newTournamentCheckAt';
+const NOTIFIED_IDS_KEY = 'newTournamentNotifiedIds';
 const CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000; // at most once per 12h
 const BACKFILL_MS = 7 * 24 * 60 * 60 * 1000;   // first enable: only look back 7 days
 const MAX_NOTIFICATIONS = 3;
+const MAX_NOTIFIED_IDS = 200; // bounded — keep only the most recent ids
 
 // Module-level guard: the AsyncStorage throttle below is check-then-act, so two
 // overlapping effect runs (fast refresh, rapid settings toggling) could both
@@ -53,7 +55,10 @@ export function useNewTournamentNotifier() {
 
         const seenAtRaw = await AsyncStorage.getItem(SEEN_AT_KEY);
         const seenAt = seenAtRaw ?? new Date(Date.now() - BACKFILL_MS).toISOString();
-        const todayIso = new Date().toISOString().slice(0, 10);
+        // Local calendar date, not UTC — matches the repo's local-date convention
+        // (see parseLocalDate() pattern) so "today" lines up with the player's
+        // actual day rather than flipping early/late in negative-offset timezones.
+        const todayIso = localDateIso(new Date());
 
         const { data: rows, error } = await supabase
           .from('itf_tournaments')
@@ -65,7 +70,13 @@ export function useNewTournamentNotifier() {
 
         if (error || !rows || cancelled) return;
 
+        // Skip tournaments we've already notified about — a flaky cycle (e.g.
+        // seenAt persisted but the app was killed before scheduling finished)
+        // must not re-notify the same tournament on the next run.
+        const notifiedIds = await readNotifiedIds();
+
         const matches = rows
+          .filter(row => !notifiedIds.has(row.id))
           .map(row => {
             const t: MatchTournament = {
               name: row.name,
@@ -84,6 +95,7 @@ export function useNewTournamentNotifier() {
 
         if (matches.length > 0) {
           const Notifications = await import('expo-notifications');
+          const newlyNotified: string[] = [];
           for (const { row, match } of matches) {
             const title = lang === 'es' ? `Nuevo torneo: ${row.name}` : `New tournament: ${row.name}`;
             const reasonsJoined = match.reasons.join(' · ');
@@ -100,9 +112,14 @@ export function useNewTournamentNotifier() {
                 },
                 trigger: null,
               });
+              newlyNotified.push(row.id);
             } catch {
-              // One failed notification shouldn't block the rest.
+              // One failed notification shouldn't block the rest — and it's
+              // left out of newlyNotified so a future cycle can retry it.
             }
+          }
+          if (newlyNotified.length > 0) {
+            await writeNotifiedIds(notifiedIds, newlyNotified);
           }
         }
 
@@ -117,6 +134,43 @@ export function useNewTournamentNotifier() {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile?.notify_new_tournaments, profile?.id, lang]);
+}
+
+// Local calendar date as YYYY-MM-DD (per the repo's local-date convention —
+// see utils/deadlines.ts's parseLocalDate() pattern). Deliberately NOT
+// toISOString(), which is UTC and would flip "today" a day early/late for
+// players in negative-offset timezones.
+function localDateIso(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+// ── Notified-id bookkeeping ──────────────────────────────────────────────────
+// Bounded record of tournament ids we've already sent a "new tournament" push
+// for, so a flaky cycle (crash/kill between scheduling and persisting seenAt)
+// can't re-notify the same tournaments on a later run.
+async function readNotifiedIds(): Promise<Set<string>> {
+  try {
+    const raw = await AsyncStorage.getItem(NOTIFIED_IDS_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? new Set(parsed) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+async function writeNotifiedIds(existing: Set<string>, added: string[]): Promise<void> {
+  try {
+    const merged = [...existing, ...added];
+    // Keep only the most recent MAX_NOTIFIED_IDS — oldest entries fall off.
+    const bounded = merged.slice(Math.max(0, merged.length - MAX_NOTIFIED_IDS));
+    await AsyncStorage.setItem(NOTIFIED_IDS_KEY, JSON.stringify(bounded));
+  } catch {
+    // Best-effort — worst case a future cycle re-notifies once more.
+  }
 }
 
 // Builds the scoring context from the same profiles/player_profiles accessor pattern
