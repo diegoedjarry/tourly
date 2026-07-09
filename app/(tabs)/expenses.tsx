@@ -51,7 +51,8 @@ import { smartDefaultCurrency, fmtCurrency } from '@/utils/currency';
 import { toUsd } from '@/utils/fx';
 import { SwipeableRow } from '@/components/ui/SwipeableRow';
 import * as Haptics from 'expo-haptics';
-import { parseAmount } from '@/utils/import-expenses';
+import { parseAmount, insertExpenses, mapPasteNotesToExpenses } from '@/utils/import-expenses';
+import { expenseDupeKey } from '@/utils/categories';
 
 const EXPENSES_WALKTHROUGH = [
   { icon: '💸', title: 'Log Your First Expense', body: 'Tap + to log your first expense. Link it to a tournament to track your weekly costs and see which tournaments give the best financial return.' },
@@ -108,11 +109,23 @@ function fmtRowAmount(e: any): string {
   return s.includes(cur) ? s : `${s} ${cur}`;
 }
 
+// True when an expense is in a foreign currency but has no indicative USD
+// value on record (FX rate was unavailable at entry time). These must never
+// silently contribute their raw foreign-currency number to a USD aggregate.
+function isUnconverted(e: any): boolean {
+  return !!e?.currency && e.currency !== 'USD' && e?.amountUsd == null;
+}
+
 // Single source of truth for every aggregate on this screen (totals, charts,
 // per-tournament sums, budget card): USD-normalized amount, scaled by the
 // user's ownership share. Reimbursed expenses are excluded entirely — callers
 // filter them out before summing (see effectiveExpenses / effectiveSum below).
+// Foreign-currency expenses with no USD conversion on record contribute 0 —
+// never their raw foreign-currency amount (e.g. 5000 CLP must not count as
+// $5,000). Callers that need to flag this to the user should check
+// isUnconverted() / countUnconverted() separately.
 function effectiveUsd(e: any): number {
+  if (isUnconverted(e)) return 0;
   const base = e?.amountUsd ?? e?.amount ?? 0;
   const pct = e?.sharePct ?? 100;
   return base * (pct / 100);
@@ -126,6 +139,12 @@ function effectiveExpenses(expenses: any[]): any[] {
 
 function effectiveSum(expenses: any[]): number {
   return effectiveExpenses(expenses).reduce((s: number, e: any) => s + effectiveUsd(e), 0);
+}
+
+// Count of expenses excluded from USD aggregates because their FX rate was
+// unavailable at entry time — surfaced as a small note wherever totals render.
+function countUnconverted(expenses: any[]): number {
+  return effectiveExpenses(expenses).filter(isUnconverted).length;
 }
 
 // Receipt buckets → the exact chip values used by this form, so the scanned
@@ -1789,12 +1808,13 @@ export function TournamentExpenseDetail({ tournament, onClose, allTournaments }:
 
 type PasteItem = ParsedExpense & { selected: boolean; id: string };
 
-function PasteFromNotesModal({ tournaments, onClose }: {
-  tournaments: any[]; onClose: () => void;
+function PasteFromNotesModal({ tournaments, expenses, onClose }: {
+  tournaments: any[]; expenses: any[]; onClose: () => void;
 }) {
   const { t } = useLanguage();
   const demoCtx = useDemoData();
   const generateInsight = useGenerateInsight();
+  const queryClient = useQueryClient();
 
   const [rawText,      setRawText]      = useState('');
   const [parsed,       setParsed]       = useState<PasteItem[]>([]);
@@ -1827,7 +1847,19 @@ function PasteFromNotesModal({ tournaments, onClose }: {
     setParsed(prev => prev.map(p => ({ ...p, selected: !allSelected })));
   }
 
+  // Per-item tournament resolution: explicit picker selection always wins;
+  // "auto" mode date-matches EXCEPT for fixed-category items (Academy, Trainer,
+  // Strings & Grip, Stringing Fee), which must never auto-link to a tournament.
+  function resolveTournamentId(item: { date: string | null; category: string }): string | undefined {
+    const isFixed = FIXED_CATS.has(item.category.toLowerCase());
+    if (isAutoMatch) {
+      return isFixed ? undefined : matchTournamentByDate(item.date ?? undefined, tournaments);
+    }
+    return tournamentId === '' ? undefined : tournamentId;
+  }
+
   async function handleImport() {
+    if (importing) return; // guard against double-tap re-firing the import
     const toImport = parsed.filter(p => p.selected);
     if (toImport.length === 0) { setError('Select at least one expense to import.'); return; }
     const invalid = toImport.filter(p =>
@@ -1840,60 +1872,64 @@ function PasteFromNotesModal({ tournaments, onClose }: {
     }
     setImporting(true);
     setError('');
-    const isAuto = tournamentId === '__auto__';
     try {
       if (DEMO_MODE) {
+        // Mirror insertExpenses()'s dedupe so pasting the same notes twice in
+        // demo mode skips repeats instead of doubling every row.
+        const existingKeys = new Set<string>(
+          (demoCtx?.demoData?.expenses ?? []).map((e: any) => expenseDupeKey(e.date, e.amount, e.category ?? '')),
+        );
+        let skipped = 0;
         for (const item of toImport) {
-          const isFixed = FIXED_CATS.has(item.category.toLowerCase());
-          let tId: string | undefined;
-          if (isAuto && !isFixed) {
-            tId = matchTournamentByDate(item.date ?? undefined, tournaments);
-          } else if (isAuto) {
-            tId = undefined;
-          } else {
-            tId = tournamentId === '' ? undefined : tournamentId;
-          }
+          const key = expenseDupeKey(item.date ?? todayIso(), item.amount, item.category ?? '');
+          if (existingKeys.has(key)) { skipped++; continue; }
+          existingKeys.add(key);
           demoCtx?.addExpense({
             id: genId(),
-            tournamentId: tId,
+            tournamentId: resolveTournamentId(item),
             category: item.category.toLowerCase(),
             amount: item.amount,
+            currency: item.currency ?? 'USD',
             note: item.description,
             date: item.date ?? todayIso(),
             isCoachExpense: false,
           });
         }
+        if (skipped > 0) {
+          setError(`${toImport.length - skipped} imported, ${skipped} duplicate${skipped !== 1 ? 's' : ''} skipped.`);
+          setImporting(false);
+          setTimeout(onClose, 1200);
+          return;
+        }
         onClose();
       } else {
-        const results = await Promise.allSettled(toImport.map(async item => {
-          const isFixed = FIXED_CATS.has(item.category.toLowerCase());
-          let tId: string | undefined;
-          if (isAuto && !isFixed) {
-            tId = matchTournamentByDate(item.date ?? undefined, tournaments);
-          } else if (isAuto) {
-            tId = undefined;
-          } else {
-            tId = tournamentId === '' ? undefined : tournamentId;
-          }
-          const currency = item.currency ?? 'USD';
-          const amountUsd = currency !== 'USD' ? await toUsd(item.amount, currency) : null;
-          return apiAddExpense({
-            tournamentId: tId,
-            category: item.category.toLowerCase(),
+        // Route through the same insertExpenses() + expenseDupeKey dedupe path
+        // used by the Settings paste-notes and file-import flows, so pasting
+        // the same notes twice skips duplicates consistently everywhere.
+        const existingKeys = new Set<string>(
+          expenses.map((e: any) => expenseDupeKey(e.date, e.amount, e.category ?? '')),
+        );
+        const mapped = mapPasteNotesToExpenses(
+          toImport.map(item => ({
             amount: item.amount,
-            currency,
-            amountUsd,
-            note: item.description,
-            date: item.date ?? todayIso(),
-            isCoachExpense: false,
-          });
-        }));
-        const failedIndices = results.map((r, i) => r.status === 'rejected' ? i : -1).filter(i => i >= 0);
-        if (failedIndices.length > 0) {
-          const failedItems = failedIndices.map(i => toImport[i]);
-          setParsed(prev => prev.filter(p => failedItems.some(f => f.id === p.id)));
-          setError(`${toImport.length - failedIndices.length} imported, ${failedIndices.length} failed — review and retry.`);
+            description: item.description,
+            date: item.date,
+            category: item.category.toLowerCase(),
+            currency: item.currency ?? 'USD',
+          })),
+          resolveTournamentId,
+        );
+        const tMap: Record<string, string> = {};
+        for (const tourney of tournaments) {
+          if (tourney?.name) tMap[tourney.name.toLowerCase()] = tourney.id;
+        }
+        const count = await insertExpenses(mapped, tMap, { tournaments, existingKeys });
+        const skipped = mapped.length - count;
+        await queryClient.invalidateQueries({ queryKey: ['expenses'] });
+        if (skipped > 0) {
+          setError(`${count} imported, ${skipped} duplicate${skipped !== 1 ? 's' : ''} skipped.`);
           setImporting(false);
+          setTimeout(onClose, 1200);
           return;
         }
         generateInsight.mutate({ trigger: 'expense_logged' });
@@ -2025,7 +2061,7 @@ function PasteFromNotesModal({ tournaments, onClose }: {
                     </View>
                     <View style={{ flex: 1 }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        <Text style={pn.reviewAmt}>${item.amount.toFixed(2)}</Text>
+                        <Text style={pn.reviewAmt}>{fmtRowAmount(item)}</Text>
                         <View style={pn.catBadge}>
                           <Text style={pn.catBadgeText}>{item.category}</Text>
                         </View>
@@ -2827,7 +2863,7 @@ type DrillRow =
 
 export default function ExpensesScreen() {
   const { lang, t } = useLanguage();
-  const { data, isLoading } = useAppQuery({ tournaments: {}, expenses: {} });
+  const { data, isLoading, error: queryError } = useAppQuery({ tournaments: {}, expenses: {} });
   const { data: _prof } = useProfile();
   const queryClient = useQueryClient();
   const [showAddForm, setShowAddForm] = useState(false);
@@ -3070,6 +3106,10 @@ export default function ExpensesScreen() {
 
   const periodExpenses = expenses.filter((e: any) => e.date && e.date >= pStart && e.date <= pEnd);
   const periodSpent = effectiveSum(periodExpenses);
+  // Foreign-currency expenses excluded from every USD total above because no
+  // FX rate was available at entry time (see effectiveUsd) — surfaced so the
+  // player knows the numbers are understated, not silently wrong.
+  const unconvertedCount = countUnconverted(periodExpenses);
   const periodPrizeMoney = tournaments.reduce((s: number, t: any) => {
     if (!t.startDate || t.startDate < pStart || t.startDate > pEnd) return s;
     return s + tPrize(t);
@@ -3385,6 +3425,20 @@ export default function ExpensesScreen() {
 
         {isLoading ? (
           <LoadingLogo style={{ minHeight: 300 }} />
+        ) : queryError ? (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorBannerText}>
+              {lang === 'es'
+                ? 'No se pudieron cargar tus gastos. Revisa tu conexión e inténtalo de nuevo.'
+                : 'Could not load your expenses. Check your connection and try again.'}
+            </Text>
+            <TouchableOpacity
+              style={styles.errorBannerBtn}
+              activeOpacity={0.8}
+              onPress={() => queryClient.invalidateQueries()}>
+              <Text style={styles.errorBannerBtnText}>{t('common.tryAgain')}</Text>
+            </TouchableOpacity>
+          </View>
         ) : (
           <>
             {/* ── Active-Tournament Budget Card ── */}
@@ -3438,6 +3492,14 @@ export default function ExpensesScreen() {
                 <Text style={[styles.seasonStatValue, periodNet >= 0 ? styles.netPositive : styles.netNegative]}>{fmt(periodNet)}</Text>
               </View>
             </View>
+
+            {unconvertedCount > 0 && (
+              <Text style={styles.unconvertedNote}>
+                {lang === 'es'
+                  ? `${unconvertedCount} gasto${unconvertedCount !== 1 ? 's' : ''} sin tipo de cambio, no incluido${unconvertedCount !== 1 ? 's' : ''} en los totales`
+                  : `${unconvertedCount} expense${unconvertedCount !== 1 ? 's' : ''} missing exchange rate, excluded from totals`}
+              </Text>
+            )}
 
             {/* ── Cash-flow hero: monthly spend vs inflow + cumulative net ── */}
             <CashFlowChart
@@ -4078,6 +4140,7 @@ export default function ExpensesScreen() {
       {showPasteModal && (
         <PasteFromNotesModal
           tournaments={tournaments}
+          expenses={expenses}
           onClose={() => setShowPasteModal(false)}
         />
       )}
@@ -4290,6 +4353,14 @@ const styles = StyleSheet.create({
   seasonStatLabel: { fontSize: 10, fontWeight: '600', color: T.textTertiary, letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 3 },
   seasonStatValue: { fontSize: 14, fontWeight: '700', color: T.textPrimary },
   seasonDivider: { width: 1, height: 22, backgroundColor: T.cardBorder },
+  unconvertedNote: { fontSize: 11, color: T.textTertiary, textAlign: 'center', marginTop: -6, marginBottom: 12 },
+  errorBanner: {
+    backgroundColor: T.card, borderRadius: 14, borderWidth: 1, borderColor: T.red,
+    padding: 16, marginTop: 12, alignItems: 'center',
+  },
+  errorBannerText: { fontSize: 14, color: T.textPrimary, textAlign: 'center', marginBottom: 12, lineHeight: 20 },
+  errorBannerBtn: { backgroundColor: T.red, borderRadius: 10, paddingHorizontal: 18, paddingVertical: 10 },
+  errorBannerBtnText: { fontSize: 14, fontWeight: '700', color: T.textPrimary },
   // ── Financial sections (cash-flow donut toggle, budget, income) ──
   catToggleRow: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: T.card,

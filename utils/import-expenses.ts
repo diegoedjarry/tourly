@@ -24,6 +24,15 @@ export interface MappedExpense {
   /** ISO 4217 code; undefined means USD. */
   currency?: string;
   merchant?: string | null;
+  /**
+   * Pre-resolved tournament id — takes priority over `tournament_name` /
+   * date-range auto-match in insertExpenses(). Lets a caller that already
+   * knows exactly which tournament (or "none") an item belongs to — e.g. an
+   * explicit picker selection, or a fixed-category item that must never
+   * auto-link — bypass the name/date resolution entirely. `null` explicitly
+   * means "no tournament"; `undefined` means "let insertExpenses decide".
+   */
+  tournament_id?: string | null;
 }
 
 export interface ImportResult {
@@ -825,9 +834,13 @@ export async function insertExpenses(
   const rates = toInsert.some(e => e.currency && e.currency !== 'USD') ? await getFxRates() : null;
 
   const rows = toInsert.map(e => {
-    // Prefer explicit tournament column; fall back to matching by date range.
-    let tournamentId = e.tournament_name ? tournamentMap[e.tournament_name.toLowerCase()] ?? null : null;
-    if (!tournamentId && opts?.tournaments && e.date) {
+    // A caller-resolved tournament_id (explicit picker selection, or "no
+    // tournament" for a fixed-category item) always wins. Otherwise prefer
+    // the explicit tournament_name column, falling back to date-range match.
+    let tournamentId: string | null = e.tournament_id !== undefined
+      ? e.tournament_id
+      : (e.tournament_name ? tournamentMap[e.tournament_name.toLowerCase()] ?? null : null);
+    if (!tournamentId && e.tournament_id === undefined && opts?.tournaments && e.date) {
       tournamentId = matchTournamentIdByDate(e.date, opts.tournaments);
     }
     const currency = e.currency ?? 'USD';
@@ -859,4 +872,41 @@ export async function insertExpenses(
   }
 
   return inserted;
+}
+
+// ─── Paste-from-notes → insertExpenses bridge ─────────────────────────────────
+// Shared by the settings.tsx and expenses.tsx (tab) paste-notes flows so both
+// go through the same insertExpenses() dedupe/FX/tournament-linking path
+// instead of each hand-rolling its own insert loop.
+
+/** Minimal shape of a parsed paste-notes item — matches ParsedExpense from utils/parse-notes. */
+export interface PasteNoteItem {
+  amount: number;
+  description: string;
+  date: string | null;
+  category: string;
+  currency: string;
+}
+
+/**
+ * Convert parsed paste-notes items into MappedExpense rows ready for
+ * insertExpenses(). `resolveTournamentId` lets the caller decide per-item
+ * tournament linking (explicit selection, auto-match-by-date, or "never
+ * link" for fixed-category items) — pass it through as `tournament_id` so
+ * insertExpenses() skips its own name/date resolution for these rows.
+ */
+export function mapPasteNotesToExpenses(
+  items: PasteNoteItem[],
+  resolveTournamentId?: (item: PasteNoteItem) => string | null | undefined,
+): MappedExpense[] {
+  const today = toLocalIso(new Date());
+  return items.map(item => ({
+    category: item.category,
+    amount: item.amount,
+    date: item.date ?? today,
+    note: item.description || null,
+    tournament_name: null,
+    currency: item.currency ?? 'USD',
+    tournament_id: resolveTournamentId ? resolveTournamentId(item) : undefined,
+  }));
 }

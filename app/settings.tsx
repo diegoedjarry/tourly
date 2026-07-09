@@ -131,6 +131,7 @@ export default function SettingsScreen() {
   const [showPasteNotes, setShowPasteNotes] = useState(false);
   const [notesText, setNotesText] = useState('');
   const [parsedNotes, setParsedNotes] = useState<ParsedExpense[]>([]);
+  const [pasteImporting, setPasteImporting] = useState(false);
   const [ipinInput, setIpinInput] = useState((profile as Profile | null)?.ipin_number ?? '');
 
   async function handleImport() {
@@ -1187,12 +1188,15 @@ export default function SettingsScreen() {
                     ))}
                   </ScrollView>
                   <View style={s.modalBtnRow}>
-                    <TouchableOpacity style={s.modalCancel} onPress={() => setParsedNotes([])}>
+                    <TouchableOpacity style={s.modalCancel} onPress={() => setParsedNotes([])} disabled={pasteImporting}>
                       <Text style={s.modalCancelText}>{t('common.back')}</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      style={s.modalSave}
+                      style={[s.modalSave, pasteImporting && { opacity: 0.5 }]}
+                      disabled={pasteImporting}
                       onPress={async () => {
+                        if (pasteImporting) return; // guard against double-tap re-firing the import
+                        setPasteImporting(true);
                         try {
                           const mapped = parsedNotes.map(e => ({
                             category: e.category,
@@ -1211,16 +1215,26 @@ export default function SettingsScreen() {
                             (appData?.expenses ?? []).map((e: any) => expenseDupeKey(e.date, e.amount, e.category ?? '')),
                           );
                           const count = await insertExpenses(mapped, tMap, { tournaments, existingKeys });
+                          const skipped = mapped.length - count;
                           await queryClient.invalidateQueries({ queryKey: ['expenses'] });
                           setShowPasteNotes(false);
                           setParsedNotes([]);
                           setNotesText('');
-                          showAlert(t('settings.importComplete'), `${count} expenses imported.`);
+                          showAlert(
+                            t('settings.importComplete'),
+                            `${count} expenses imported.${skipped > 0 ? ` ${skipped} duplicate${skipped !== 1 ? 's' : ''} skipped.` : ''}`,
+                          );
                         } catch (err: any) {
                           showAlert('Error', err?.message ?? 'Could not save expenses.');
+                        } finally {
+                          setPasteImporting(false);
                         }
                       }}>
-                      <Text style={s.modalSaveText}>Import All</Text>
+                      {pasteImporting ? (
+                        <ActivityIndicator color={T.bg} size="small" />
+                      ) : (
+                        <Text style={s.modalSaveText}>Import All</Text>
+                      )}
                     </TouchableOpacity>
                   </View>
                 </>
