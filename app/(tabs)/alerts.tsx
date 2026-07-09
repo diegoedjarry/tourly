@@ -47,6 +47,11 @@ interface AlertItem {
   exactDate: string;
   urgency: Urgency;
   timeLabel: string;
+  // Signed day/hour counts (negative = overdue) — the source of truth for
+  // sorting. timeLabel ("3d ago") is display-only; parsing it with parseInt
+  // loses the sign and makes overdue items sort as +3 days in the future.
+  daysSigned: number;
+  hoursSigned: number | null;
 }
 
 import { countryFlag } from '@/utils/countryFlag';
@@ -98,7 +103,9 @@ function buildAlerts(tournaments: any[], tr: (key: any) => string): AlertItem[] 
       if (signUpDays !== null && signUpDays > 14) continue;
     }
 
-    if (withdrawal) {
+    // Withdrawal alerts must mirror buildSpecs' eligibility in utils/notifications.ts:
+    // only shown once the player is registered (wdOn && t.isRegistered && t.withdrawalDeadline).
+    if (t.isRegistered && withdrawal) {
       const days = daysUntil(withdrawal);
       if (days !== null && days >= -7 && days <= 30) {
         const hours = hoursUntil(withdrawal, t.category, 'withdrawal');
@@ -115,10 +122,14 @@ function buildAlerts(tournaments: any[], tr: (key: any) => string): AlertItem[] 
           urgency,
           timeLabel: days < 0 ? `${Math.abs(days)}d ago` : days === 0 ? 'today'
             : (hours !== null && hours > 0 && hours < 36) ? `${hours}h` : `${days}d`,
+          daysSigned: days,
+          hoursSigned: hours,
         });
       }
     }
 
+    // Signup alerts must mirror buildSpecs' eligibility: only shown while the
+    // player is NOT yet registered (singlesOn && !t.isRegistered && t.signUpDeadline).
     if (!t.isRegistered && signUp) {
       const days = daysUntil(signUp);
       if (days !== null && days >= -7 && days <= 14) {
@@ -136,10 +147,14 @@ function buildAlerts(tournaments: any[], tr: (key: any) => string): AlertItem[] 
           urgency,
           timeLabel: days < 0 ? `${Math.abs(days)}d ago` : days === 0 ? 'today'
             : (hours !== null && hours > 0 && hours < 36) ? `${hours}h` : `${days}d`,
+          daysSigned: days,
+          hoursSigned: hours,
         });
       }
     }
 
+    // Freeze alerts must mirror buildSpecs' eligibility: shown regardless of
+    // registration status (fzOn && t.freezeDeadline — no isRegistered gate).
     if (freeze) {
       const days = daysUntil(freeze);
       if (days !== null && days >= -7 && days <= 14) {
@@ -157,6 +172,8 @@ function buildAlerts(tournaments: any[], tr: (key: any) => string): AlertItem[] 
           urgency,
           timeLabel: days < 0 ? `${Math.abs(days)}d ago` : days === 0 ? 'today'
             : (hours !== null && hours > 0 && hours < 36) ? `${hours}h` : `${days}d`,
+          daysSigned: days,
+          hoursSigned: hours,
         });
       }
     }
@@ -225,7 +242,10 @@ interface TournamentAlertGroup {
 function buildTournamentGroups(alerts: AlertItem[]): TournamentAlertGroup[] {
   const map = new Map<string, TournamentAlertGroup>();
   for (const alert of alerts) {
-    const days = alert.timeLabel === 'today' ? 0 : (parseInt(alert.timeLabel, 10) || 999);
+    // Use the real signed day count, not a re-parse of the display timeLabel
+    // ("3d ago" parsed with parseInt gives +3, ranking an overdue deadline as
+    // 3 days in the FUTURE instead of the most urgent item).
+    const days = alert.daysSigned;
     if (!map.has(alert.tournamentId)) {
       map.set(alert.tournamentId, {
         tournamentId: alert.tournamentId,
@@ -245,9 +265,9 @@ function buildTournamentGroups(alerts: AlertItem[]): TournamentAlertGroup[] {
   }
   for (const g of map.values()) {
     g.deadlines.sort((a, b) => {
-      const aPast = a.timeLabel.includes('ago') ? 1 : 0;
-      const bPast = b.timeLabel.includes('ago') ? 1 : 0;
-      if (aPast !== bPast) return aPast - bPast;
+      // Overdue (negative daysSigned) sorts first — most urgent first —
+      // then by real day count, falling back to the exact date.
+      if (a.daysSigned !== b.daysSigned) return a.daysSigned - b.daysSigned;
       return a.exactDate.localeCompare(b.exactDate);
     });
   }

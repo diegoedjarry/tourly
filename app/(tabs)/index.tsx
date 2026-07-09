@@ -98,7 +98,7 @@ function getActiveTournament(tournaments: any[]): any | null {
 }
 
 export default function HomeScreen() {
-  const { data, isLoading } = useAppQuery({ tournaments: {}, expenses: {} });
+  const { data, isLoading, error } = useAppQuery({ tournaments: {}, expenses: {} });
   const [detailId, setDetailId] = useState<string | null>(null);
   const router = useRouter();
 
@@ -107,7 +107,7 @@ export default function HomeScreen() {
   const { isFirstVisit, markVisited } = useFirstVisit('home');
   const swipeHandlers = useTabSwipe();
   const { isOnline, pendingCount } = useOfflineSync();
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const { data: profileData } = useProfile();
   const profileInitials = getInitials(profileData?.full_name);
   const hasGeneratedRef = useRef(false);
@@ -131,11 +131,19 @@ export default function HomeScreen() {
               setScrapedMatchHistory(data?.[0]?.match_history ?? []);
             });
         });
+    }).catch((err) => {
+      // A failure here must be visible during debugging — silently leaving
+      // scrapedMatchHistory at [] reads identically to "no match history yet".
+      console.warn('[home] scraped match history fetch failed', err);
     });
   }, []);
 
   const tournaments = data?.tournaments ?? [];
   const expenses = data?.expenses ?? [];
+  // A failed fetch with nothing to show must not silently render as the
+  // "no tournaments yet" empty state or $0 season stats — that reads as
+  // "you have no data" instead of "we couldn't load your data".
+  const hasLoadError = !!error && !isLoading && tournaments.length === 0 && expenses.length === 0;
 
   const deadlines = useMemo(() => getUpcomingDeadlines(tournaments), [tournaments]);
   const activeTournament = useMemo(() => getActiveTournament(tournaments), [tournaments]);
@@ -236,6 +244,14 @@ export default function HomeScreen() {
 
           {isLoading ? (
             <LoadingLogo style={{ minHeight: 200 }} />
+          ) : hasLoadError ? (
+            <View style={st.errorBanner}>
+              <Text style={st.errorBannerText}>
+                {lang === 'es'
+                  ? 'No se pudieron cargar tus datos. Desliza hacia abajo o vuelve a intentarlo más tarde.'
+                  : "Couldn't load your data. Pull to refresh or try again later."}
+              </Text>
+            </View>
           ) : (
             <>
               {/* Upcoming Deadlines — shown only when tournaments exist */}
@@ -476,6 +492,9 @@ const st = StyleSheet.create({
 
   offlineBanner: { backgroundColor: T.amber, borderRadius: 12, paddingVertical: 8, paddingHorizontal: 16, marginBottom: 16, alignItems: 'center' },
   offlineText: { fontSize: 13, fontWeight: '600', color: '#FFF' },
+
+  errorBanner: { backgroundColor: T.red, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 16, marginTop: 24, alignItems: 'center' },
+  errorBannerText: { fontSize: 13, fontWeight: '600', color: '#FFF', textAlign: 'center' },
 
   emptyNote: { fontSize: 13, color: T.textTertiary, fontStyle: 'italic', marginBottom: 16 },
   featureChevron: { fontSize: 20, color: T.accent, fontWeight: '300' },

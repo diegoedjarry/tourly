@@ -639,6 +639,15 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
   const [aiEstimates, setAiEstimates] = useState<Record<string, TripCostEstimate | null>>({});
   const [aiErrored, setAiErrored] = useState<Record<string, boolean>>({});
 
+  // If the tournament is deleted while this modal is open, `tournament` goes
+  // from defined to undefined underneath the parent's still-open detailId —
+  // without this, the modal would just silently render null while the parent
+  // keeps thinking a detail view is open. Must run before the early return
+  // below so hook ordering stays stable across renders.
+  useEffect(() => {
+    if (!tournament) onClose();
+  }, [tournament, onClose]);
+
   if (!tournament) return null;
 
   const surfaceBg   = SURFACE_BG[(editing ? editState?.surface : tournament.surface) as Surface]   ?? '#FAEEDA';
@@ -1831,6 +1840,11 @@ function TournamentDiscoveryModal({
   const [trainNote, setTrainNote]     = useState('');
   const [savingTrain, setSavingTrain] = useState(false);
 
+  // Busy-guard for discovery/ITF adds — without this a fast double-tap fires
+  // handleAddFromITF/handleAddFromDiscovery twice before the first `await`
+  // resolves and the row disappears, creating two identical tournaments.
+  const [addingIds, setAddingIds] = useState<Set<string>>(new Set());
+
   const myCalendarIds = new Set(allTournaments.filter((t: any) => t.isInMyList !== false).map((t: any) => t.id));
   const discoverable = allTournaments.filter((trn: any) => trn.isInMyList === false);
 
@@ -1838,6 +1852,8 @@ function TournamentDiscoveryModal({
   const itfDiscoverable = itfTournaments.filter(t => !myCalendarIds.has(t.id));
 
   async function handleAddFromITF(tournament: any) {
+    if (addingIds.has(tournament.id)) return;
+    setAddingIds(prev => new Set(prev).add(tournament.id));
     try {
       const calc = tournament.startDate ? calcDeadlines(tournament.startDate, tournament.category) : {};
       await apiAddTournament({
@@ -1856,6 +1872,7 @@ function TournamentDiscoveryModal({
       onClose();
     } catch (e: any) {
       Alert.alert(t('common.couldNotAddTournament'), e?.message ?? t('common.tryAgain'));
+      setAddingIds(prev => { const next = new Set(prev); next.delete(tournament.id); return next; });
     }
   }
 
@@ -1900,6 +1917,8 @@ function TournamentDiscoveryModal({
   });
 
   async function handleAddFromDiscovery(tournament: any) {
+    if (addingIds.has(tournament.id)) return;
+    setAddingIds(prev => new Set(prev).add(tournament.id));
     try {
       const updates: any = { isInMyList: true };
       const composedName = challengerDisplayName(tournament);
@@ -1913,6 +1932,7 @@ function TournamentDiscoveryModal({
       await apiPatchTournament(tournament.id, updates);
       onClose();
     } catch (e: any) {
+      setAddingIds(prev => { const next = new Set(prev); next.delete(tournament.id); return next; });
       Alert.alert(t('common.couldNotAddTournament'), e?.message ?? t('common.tryAgain'));
     }
   }
@@ -2083,8 +2103,15 @@ function TournamentDiscoveryModal({
                     {weekMap[week].map((trn: any) => {
                       const days = daysUntil(trn.signUpDeadline);
                       const urgentColor = days !== null && days <= 7 ? '#E24B4A' : days !== null && days <= 14 ? '#E8A030' : null;
+                      const isBusy = addingIds.has(trn.id);
                       return (
-                        <TouchableOpacity key={trn.id} style={disc.trnRow} onPress={() => trn._fromSupabase ? handleAddFromITF(trn) : handleAddFromDiscovery(trn)} activeOpacity={0.75}>
+                        <TouchableOpacity
+                          key={trn.id}
+                          style={[disc.trnRow, isBusy && { opacity: 0.5 }]}
+                          onPress={() => trn._fromSupabase ? handleAddFromITF(trn) : handleAddFromDiscovery(trn)}
+                          activeOpacity={0.75}
+                          disabled={isBusy}
+                        >
                           <View style={{ marginRight: 10 }}>
                             {trn.surface ? <CourtIcon surface={trn.surface} size="sm" /> : null}
                           </View>
@@ -2096,12 +2123,18 @@ function TournamentDiscoveryModal({
                               {[trn.city, fmtDateRange(trn.startDate, trn.endDate), trn.prizeMoney ? `$${Number(trn.prizeMoney).toLocaleString()}` : null].filter(Boolean).join(' · ')}
                             </Text>
                           </View>
-                          {trn.category && !trn.category.toLowerCase().includes('challenger') ? <View style={disc.catPill}><Text style={disc.catPillText}>{trn.category}</Text></View> : null}
-                          {urgentColor && days !== null ? (
-                            <View style={[disc.deadlinePill, { backgroundColor: urgentColor + '22', marginLeft: 6 }]}>
-                              <Text style={[disc.deadlinePillText, { color: urgentColor }]}>{days}d</Text>
-                            </View>
-                          ) : null}
+                          {isBusy ? (
+                            <ActivityIndicator size="small" color={T.accent} style={{ marginLeft: 6 }} />
+                          ) : (
+                            <>
+                              {trn.category && !trn.category.toLowerCase().includes('challenger') ? <View style={disc.catPill}><Text style={disc.catPillText}>{trn.category}</Text></View> : null}
+                              {urgentColor && days !== null ? (
+                                <View style={[disc.deadlinePill, { backgroundColor: urgentColor + '22', marginLeft: 6 }]}>
+                                  <Text style={[disc.deadlinePillText, { color: urgentColor }]}>{days}d</Text>
+                                </View>
+                              ) : null}
+                            </>
+                          )}
                         </TouchableOpacity>
                       );
                     })}
@@ -2404,7 +2437,7 @@ const disc = StyleSheet.create({
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function TournamentsScreen() {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const filters: { key: Filter; label: string }[] = [
     { key: 'all', label: t('tournaments.all') },
     { key: 'active', label: t('tournaments.active') },
@@ -2429,6 +2462,11 @@ export default function TournamentsScreen() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [scrapedPast, setScrapedPast] = useState<{ name: string; startDate: string; endDate: string; surface: string | null }[] | null>(DEMO_MODE ? [] : null);
   const [materializingId, setMaterializingId] = useState<string | null>(null);
+  // Persists across the async gap between `finally { setMaterializingId(null) }`
+  // re-enabling the row and the tournaments refetch actually landing — without
+  // this, a second tap in that window re-materializes (and duplicates) the same
+  // scraped history entry. Never cleared for keys that already succeeded.
+  const materializedKeysRef = useRef(new Set<string>());
   // Swipe actions — confirmation targets. Same confirm dialogs as the detail /
   // select-mode flows; the swipe only opens them, never mutates directly.
   const [swipeWithdrawTrn, setSwipeWithdrawTrn] = useState<any | null>(null);
@@ -2501,6 +2539,25 @@ export default function TournamentsScreen() {
   useEffect(() => {
     if (openTournament) setDetailId(openTournament);
   }, [openTournament]);
+
+  // Deep link (e.g. a notification tap) pointing at a tournament that no
+  // longer exists — previously this silently no-op'd (TournamentDetail's
+  // `!tournament` render-null). Tell the user instead of leaving them staring
+  // at a screen that did nothing. Guarded to fire at most once per param value.
+  const missingDeepLinkAlertedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!openTournament || isLoading) return;
+    if (missingDeepLinkAlertedRef.current === openTournament) return;
+    const exists = (data?.tournaments ?? []).some((x: any) => x.id === openTournament);
+    if (exists) return;
+    missingDeepLinkAlertedRef.current = openTournament;
+    Alert.alert(
+      lang === 'es' ? 'Torneo no encontrado' : 'Tournament not found',
+      lang === 'es'
+        ? 'Este torneo ya no existe. Puede que haya sido eliminado.'
+        : 'This tournament no longer exists. It may have been deleted.',
+    );
+  }, [openTournament, isLoading, data?.tournaments, lang]);
 
   // ── Supabase ITF calendar (upcoming, scraped) ─────────────────────────────
   const [itfTournaments, setItfTournaments] = useState<any[]>([]);
@@ -2692,6 +2749,14 @@ export default function TournamentsScreen() {
   async function materializeAndOpen(entry: { name: string; startDate: string; endDate: string; surface: string | null }) {
     if (DEMO_MODE) return;
     const key = `${entry.name}|${entry.startDate}`;
+    if (materializedKeysRef.current.has(key)) return;
+    // Defensive dedupe: if a prior materialize already landed in the refetched
+    // data (or the tournament otherwise already exists), don't create another.
+    const alreadyExists = (data?.tournaments ?? []).some(
+      (t: any) => (t.name ?? '').toLowerCase() === entry.name.toLowerCase() && t.startDate === entry.startDate
+    );
+    if (alreadyExists) return;
+    materializedKeysRef.current.add(key);
     setMaterializingId(key);
     try {
       // Attempt to auto-derive country from itf_tournaments by matching start_date + city keyword.
@@ -2743,6 +2808,10 @@ export default function TournamentsScreen() {
       // Open the results/expenses view — TournamentDetail is the management
       // modal (deadlines/registration) and shows nothing useful for history.
       if (row?.id) setExpenseDetailId(row.id);
+    } catch (e) {
+      // The add genuinely failed — allow a retry by un-reserving the key.
+      materializedKeysRef.current.delete(key);
+      throw e;
     } finally {
       setMaterializingId(null);
     }

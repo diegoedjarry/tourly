@@ -812,10 +812,13 @@ function PointsBySurface({ tournaments, atpMatchHistory }: { tournaments: any[];
             {expandedSurface === d.surface && (
               <View style={ds.nestedList}>
                 {d.entries.map((m: any, idx: number) => {
-                  const linked = tournaments.find((t: any) =>
-                    t.name?.toLowerCase().includes((m.tournamentName ?? '').toLowerCase().split(' ')[0]) &&
-                    Math.abs(new Date(t.startDate).getTime() - new Date(m.date).getTime()) < 14 * 86400000
-                  );
+                  const linked = tournaments.find((t: any) => {
+                    if (!t.name?.toLowerCase().includes((m.tournamentName ?? '').toLowerCase().split(' ')[0])) return false;
+                    const tDate = parseLocalDate(t.startDate);
+                    const mDate = parseLocalDate(m.date);
+                    if (!tDate || !mDate) return false;
+                    return Math.abs(tDate.getTime() - mDate.getTime()) < 14 * 86400000;
+                  });
                   return (
                     <TouchableOpacity
                       key={idx}
@@ -847,9 +850,14 @@ function PointsBySurface({ tournaments, atpMatchHistory }: { tournaments: any[];
 
 export default function InsightsScreen() {
   const { type } = useLocalSearchParams<{ type: string }>();
-  const { data } = useAppQuery({ tournaments: {}, expenses: {} });
+  const { lang } = useLanguage();
+  const { data, isLoading, error } = useAppQuery({ tournaments: {}, expenses: {} });
   const tournaments = data?.tournaments ?? [];
   const expenses = data?.expenses ?? [];
+  // A failed fetch with nothing to show must not silently render as one of
+  // the "log expenses/tournaments to unlock" empty states below — that reads
+  // as "you have no data" instead of "we couldn't load your data".
+  const hasLoadError = !!error && !isLoading && tournaments.length === 0 && expenses.length === 0;
 
   const [atpMatchHistory, setAtpMatchHistory] = useState<any[] | null>(null);
 
@@ -874,14 +882,37 @@ export default function InsightsScreen() {
             .then(({ data: rows }) => {
               if (cancelled) return;
               setAtpMatchHistory(rows?.[0]?.match_history ?? []);
-            }, () => { if (!cancelled) setAtpMatchHistory([]); });
-        }, () => { if (!cancelled) setAtpMatchHistory([]); });
+            }, (err) => {
+              // Falling back to [] is correct UX, but a silent failure here is
+              // indistinguishable from "no match history yet" while debugging.
+              console.warn('[insights] match_history fetch failed', err);
+              if (!cancelled) setAtpMatchHistory([]);
+            });
+        }, (err) => {
+          console.warn('[insights] profile fetch failed', err);
+          if (!cancelled) setAtpMatchHistory([]);
+        });
+    }).catch((err) => {
+      console.warn('[insights] auth.getUser failed', err);
+      if (!cancelled) setAtpMatchHistory([]);
     });
 
     return () => { cancelled = true; };
   }, [type]);
 
   if (needsAtp && atpMatchHistory === null) return <LoadingLogo />;
+
+  if (hasLoadError) {
+    return (
+      <DetailScreen title="Insight">
+        <Text style={ds.emptyText}>
+          {lang === 'es'
+            ? 'No se pudieron cargar tus datos. Desliza hacia abajo o vuelve a intentarlo más tarde.'
+            : "Couldn't load your data. Pull to refresh or try again later."}
+        </Text>
+      </DetailScreen>
+    );
+  }
 
   const safeAtp = atpMatchHistory ?? [];
 
