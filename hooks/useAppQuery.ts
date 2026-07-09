@@ -28,6 +28,9 @@ function mapTournament(t: Tournament) {
     taxWithholdingPct: (t as any).tax_withholding_pct ?? null,
     status: t.status,
     createdAt: t.created_at,
+    // Server-maintained (BEFORE UPDATE trigger) — used as the optimistic-lock
+    // token for background reconciliation writes.
+    updatedAt: (t as any).updated_at ?? null,
   };
 }
 
@@ -53,8 +56,8 @@ function mapExpense(e: Expense) {
 
 export function useAppQuery(_query: any) {
   const demoCtx = useDemoData();
-  const { data: tournaments, isLoading: tLoading, isFetching: tFetching } = useTournaments();
-  const { data: expenses, isLoading: eLoading, isFetching: eFetching } = useExpenses();
+  const { data: tournaments, isLoading: tLoading, isFetching: tFetching, error: tError } = useTournaments();
+  const { data: expenses, isLoading: eLoading, isFetching: eFetching, error: eError } = useExpenses();
 
   const mappedTournaments = useMemo(
     () => (tournaments ?? []).map(mapTournament),
@@ -76,6 +79,6 @@ export function useAppQuery(_query: any) {
     },
     isLoading: tLoading || eLoading,
     isFetching: tFetching || eFetching,
-    error: null,
+    error: tError ?? eError ?? null,
   };
 }

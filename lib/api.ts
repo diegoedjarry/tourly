@@ -5,6 +5,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { enqueue } from './offline-queue';
 import { t as i18nT } from './i18n';
 import { getCurrentLang } from '@/hooks/useLanguage';
+import { recordDeletedTournament } from './deleted-tournaments';
 
 // Tell the user their write was queued, not sent. Debounced so multi-row
 // saves (e.g. paste imports) show at most one notice per burst.
@@ -82,6 +83,26 @@ export async function apiPatchTournament(id: string, updates: Record<string, any
   queryClient.invalidateQueries({ queryKey: ['tournaments'] });
 }
 
+// Optimistically-locked patch for BACKGROUND writes (deadline reconciliation).
+// Only applies when the row's updated_at still equals the value we read — the
+// tournaments_updated_at trigger bumps it on every update, so any concurrent
+// user edit makes this a silent no-op instead of clobbering their change.
+// Skips entirely when offline: queueing a stale guarded write is pointless.
+export async function apiPatchTournamentIfUnchanged(
+  id: string,
+  updates: Record<string, any>,
+  lastKnownUpdatedAt: string | null,
+) {
+  if (await isOffline()) return;
+  let query = supabase.from('tournaments').update(toSnake(updates)).eq('id', id);
+  // Rows predating the updated_at column may carry null — fall back to the
+  // unguarded behavior for those (same semantics as before this guard existed).
+  if (lastKnownUpdatedAt) query = query.eq('updated_at', lastKnownUpdatedAt);
+  const { error } = await query;
+  if (error) throw error;
+  queryClient.invalidateQueries({ queryKey: ['tournaments'] });
+}
+
 export async function apiAddTournament(data: Record<string, any>) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
@@ -104,6 +125,15 @@ export async function apiAddTournament(data: Record<string, any>) {
 }
 
 export async function apiAddExpense(data: Record<string, any>) {
+  if (!Number.isFinite(data.amount) || data.amount <= 0) {
+    throw new Error('Invalid expense amount.');
+  }
+  if (data.date != null && !/^\d{4}-\d{2}-\d{2}$/.test(data.date)) {
+    throw new Error('Invalid expense date.');
+  }
+  if (!data.category || typeof data.category !== 'string' || !data.category.trim()) {
+    throw new Error('Expense category is required.');
+  }
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
   const optimistic = { ...toSnake(data), id: tempId(), user_id: user.id, created_at: new Date().toISOString() };
@@ -125,6 +155,15 @@ export async function apiAddExpense(data: Record<string, any>) {
 }
 
 export async function apiUpdateExpense(id: string, updates: Record<string, any>) {
+  if ('amount' in updates && (!Number.isFinite(updates.amount) || updates.amount <= 0)) {
+    throw new Error('Invalid expense amount.');
+  }
+  if ('date' in updates && updates.date != null && !/^\d{4}-\d{2}-\d{2}$/.test(updates.date)) {
+    throw new Error('Invalid expense date.');
+  }
+  if ('category' in updates && (!updates.category || typeof updates.category !== 'string' || !updates.category.trim())) {
+    throw new Error('Expense category is required.');
+  }
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
   const rollback = optimisticMerge(['expenses'], id, toSnake(updates));
@@ -155,6 +194,9 @@ export async function apiDeleteExpense(id: string) {
 export async function apiDeleteTournament(id: string) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
+  // Tombstone first — a delete that later fails server-side just means the row
+  // reappears in data and the tombstone expires in 30 days; do not roll it back.
+  await recordDeletedTournament(id);
   const rollback = optimisticRemove(['tournaments'], id);
   if (await isOffline()) {
     await enqueue({ table: 'tournaments', action: 'delete', matchId: id, userId: user.id });

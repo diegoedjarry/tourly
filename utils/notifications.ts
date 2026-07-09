@@ -2,11 +2,13 @@ import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { ReminderConfig, ReminderTime, OnsiteReminderTime } from '@/hooks/useProfile';
 import { DEFAULT_REMINDER_CONFIG, DEFAULT_ONSITE_REMINDERS } from '@/hooks/useProfile';
 import { getOnsiteDeadlines, getCircuit, deadlineInstant } from '@/utils/deadlines';
 import type { OnsiteDeadlineLabel, StoredDeadlineKind } from '@/utils/deadlines';
 import { t as i18nT, type Lang, type StringKey } from '@/lib/i18n';
+import { getDeletedTournamentIds } from '@/lib/deleted-tournaments';
 
 try {
   if (Platform.OS !== 'web') {
@@ -297,6 +299,29 @@ function buildSpecs(tournaments: any[], prefs?: NotifPrefs, lang: Lang = 'en'): 
   return specs;
 }
 
+// ─── Timezone-change detection ────────────────────────────────────────────────
+// On-site reminders are scheduled as local wall-clock Date triggers (see isoToDate).
+// If the device's timezone changes after scheduling (e.g. a player flies to a new
+// timezone) but before the trigger fires, the OS interprets the already-scheduled
+// Date in the new local timezone, so the reminder no longer lines up with the
+// intended tournament-local moment. We store the timezone active at the last
+// successful reschedule so callers (useNotificationSetup's AppState listener) can
+// detect drift on foreground and trigger a fresh reschedule.
+export const LAST_TZ_STORAGE_KEY = '@tourly_last_tz';
+
+export function getCurrentTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
+async function storeCurrentTimeZone(): Promise<void> {
+  try {
+    await AsyncStorage.setItem(LAST_TZ_STORAGE_KEY, getCurrentTimeZone());
+  } catch {
+    // Best-effort — a failed write just means the next foreground check may
+    // redundantly reschedule once more, which is harmless.
+  }
+}
+
 // Serialize reschedules: concurrent cancelAll+schedule runs can drop or duplicate
 // notifications. Each call waits for the previous run to finish.
 let rescheduleInFlight: Promise<void> = Promise.resolve();
@@ -308,6 +333,11 @@ export function rescheduleAllNotifications(tournaments: any[], prefs?: NotifPref
   return rescheduleInFlight;
 }
 
+// iOS keeps only the 64 soonest pending local notifications and silently drops
+// the rest; capping deterministically keeps the soonest ones and gives Android
+// identical behavior instead of relying on OS-specific drop order.
+const MAX_SCHEDULED = 64;
+
 async function doRescheduleAll(tournaments: any[], prefs?: NotifPrefs, lang: Lang = 'en'): Promise<void> {
   if (Platform.OS === 'web') return;
   try {
@@ -315,7 +345,21 @@ async function doRescheduleAll(tournaments: any[], prefs?: NotifPrefs, lang: Lan
   } catch {
     return;
   }
-  const specs = buildSpecs(tournaments, prefs, lang);
+  let specs = buildSpecs(tournaments, prefs, lang);
+
+  // Drop specs for tombstoned (deleted-but-maybe-not-yet-synced) tournaments —
+  // a stale refetch can resurrect the row before an offline delete flushes.
+  const deletedIds = await getDeletedTournamentIds();
+  if (deletedIds.size > 0) {
+    specs = specs.filter(s => !deletedIds.has(s.tournamentId));
+  }
+
+  specs.sort((a, b) => a.trigger.getTime() - b.trigger.getTime());
+  if (specs.length > MAX_SCHEDULED) {
+    console.warn('[notifications] dropping', specs.length - MAX_SCHEDULED, 'notifications past the', MAX_SCHEDULED, 'cap');
+    specs = specs.slice(0, MAX_SCHEDULED);
+  }
+
   for (const spec of specs) {
     try {
       await Notifications.scheduleNotificationAsync({
@@ -336,9 +380,21 @@ async function doRescheduleAll(tournaments: any[], prefs?: NotifPrefs, lang: Lan
       console.warn('[notifications] failed to schedule', spec.id);
     }
   }
+  await storeCurrentTimeZone();
 }
 
-export async function cancelTournamentNotifications(tournamentId: string): Promise<void> {
+// Routed through the same rescheduleInFlight chain as rescheduleAllNotifications
+// and cancelOrphanedNotifications: an unserialized cancel can interleave with an
+// in-flight doRescheduleAll (cancelAll + rebuild from possibly-stale data),
+// letting a deleted/withdrawn tournament's notifications survive the rebuild.
+export function cancelTournamentNotifications(tournamentId: string): Promise<void> {
+  rescheduleInFlight = rescheduleInFlight
+    .catch(() => {})
+    .then(() => doCancelTournament(tournamentId));
+  return rescheduleInFlight;
+}
+
+async function doCancelTournament(tournamentId: string): Promise<void> {
   if (Platform.OS === 'web') return;
   const all = await Notifications.getAllScheduledNotificationsAsync();
   const mine = all.filter(n => n.content.data?.tournamentId === tournamentId);
@@ -348,12 +404,31 @@ export async function cancelTournamentNotifications(tournamentId: string): Promi
 // Cancels any scheduled notification whose tournamentId is not in the provided set.
 // Run once on app launch to clean up orphaned notifications from tournaments deleted
 // before the per-delete cancellation fix was in place.
-export async function cancelOrphanedNotifications(validTournamentIds: Set<string>): Promise<void> {
+//
+// Routed through the same rescheduleInFlight chain as rescheduleAllNotifications so
+// the two operations queue instead of interleaving: cancelOrphanedNotifications reads
+// a fresh getAllScheduledNotificationsAsync() snapshot, and doRescheduleAll does a full
+// cancelAll+rebuild — if both run concurrently, one can act on a snapshot the other has
+// already invalidated (e.g. cancelling a notification doRescheduleAll just scheduled).
+export function cancelOrphanedNotifications(validTournamentIds: Set<string>): Promise<void> {
+  rescheduleInFlight = rescheduleInFlight
+    .catch(() => {})
+    .then(() => doCancelOrphaned(validTournamentIds));
+  return rescheduleInFlight;
+}
+
+async function doCancelOrphaned(validTournamentIds: Set<string>): Promise<void> {
   if (Platform.OS === 'web') return;
   const all = await Notifications.getAllScheduledNotificationsAsync();
+  // Also cancel tombstoned tournaments even if they're still in validTournamentIds —
+  // covers the window where an offline-queued delete hasn't flushed and a server
+  // refetch resurrects the row before the queue catches up.
+  const deletedIds = await getDeletedTournamentIds();
   const orphans = all.filter(n => {
     const tid = n.content.data?.tournamentId as string | undefined;
-    return tid !== undefined && !validTournamentIds.has(tid);
+    if (tid === undefined) return false;
+    if (deletedIds.has(tid)) return true;
+    return !validTournamentIds.has(tid);
   });
   await Promise.all(orphans.map(n => Notifications.cancelScheduledNotificationAsync(n.identifier)));
 }
