@@ -19,7 +19,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useAppQuery } from '@/hooks/useAppQuery';
-import { apiPatchTournament, apiAddTournament, apiDeleteTournament } from '@/lib/api';
+import { apiPatchTournament, apiPatchTournamentIfUnchanged, apiAddTournament, apiDeleteTournament } from '@/lib/api';
 import { DatePickerField } from '@/components/ui/date-picker-field';
 import { CourtIcon } from '@/components/ui/court-icon';
 import { AgentIcon } from '@/components/ui/agent-icon';
@@ -38,6 +38,13 @@ import { playerNameFilter } from '@/utils/text';
 import { SwipeableRow } from '@/components/ui/SwipeableRow';
 import { estimateTripCost } from '@/utils/trip-estimate';
 import { fetchTripCostEstimate, TripCostEstimate } from '@/utils/trip-ai';
+import { parseAmount } from '../../utils/import-expenses';
+
+// Supervisor contact fields come from scraped data — validate strictly before
+// handing them to Linking.openURL so a malformed value can't smuggle extra
+// URL syntax (e.g. "?body=", additional schemes) into the mailto:/tel: intent.
+const isSafeEmail = (e: string) => /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(e);
+const isSafePhone = (p: string) => /^[+0-9()\-.\s]{4,25}$/.test(p);
 
 const TOURNAMENTS_WALKTHROUGH = [
   { icon: '➕', title: 'Add a Tournament', body: 'Tap + to add your first tournament. Tourly calculates all deadlines automatically from the start date.' },
@@ -109,6 +116,13 @@ function getPill(t: any): { type: string; label: string } | null {
   if (wd < 0) return null;
   if (wd === 0) return { type: 'withdraw', label: 'Withdraw today' };
   return { type: 'withdraw', label: `Withdraw in ${wd}d` };
+}
+
+// Tournaments always start on a Monday (ITF/ATP domain rule) — validated
+// before any save that writes startDate.
+function isMonday(iso: string): boolean {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d).getDay() === 1;
 }
 
 function calcEndDate(startDateStr: string): string {
@@ -276,6 +290,7 @@ function WithdrawDialog({ name, undoing, onConfirm, onCancel, t }: {
 // ─── Shared form constants ────────────────────────────────────────────────────
 
 const SURFACES   = ['clay', 'hard', 'grass'];
+const VALID_SURFACES = ['clay', 'hard', 'grass'];
 const CATEGORY_GROUPS = [
   { label: 'ITF Men', items: ['M15', 'M25'] },
   { label: 'ITF Women', items: ['W15', 'W25', 'W35', 'W50', 'W75', 'W100'] },
@@ -478,6 +493,7 @@ function RankingImpactSection({ tournament }: { tournament: any }) {
   const [editing, setEditing] = useState(false);
   const [rankBefore, setRankBefore] = useState(String(tournament.rankingBefore ?? ''));
   const [rankAfter, setRankAfter] = useState(String(tournament.rankingAfter ?? ''));
+  const [saving, setSaving] = useState(false);
   const demoCtx = useDemoData();
 
   const totalPoints = (tournament.matchResults ?? []).reduce((s: number, r: any) => s + (r.points ?? 0), 0) + (tournament.pointsEarned ?? 0);
@@ -486,13 +502,25 @@ function RankingImpactSection({ tournament }: { tournament: any }) {
   const change = rb > 0 && ra > 0 ? rb - ra : 0;
 
   async function save() {
-    const updates = { rankingBefore: parseInt(rankBefore) || null, rankingAfter: parseInt(rankAfter) || null };
-    if (DEMO_MODE) {
-      demoCtx?.patchTournament(tournament.id, updates);
-    } else {
-      await apiPatchTournament(tournament.id, updates);
+    if (saving) return;
+    const rbVal = parseInt(rankBefore, 10);
+    const raVal = parseInt(rankAfter, 10);
+    if (rankBefore.trim() && (!Number.isFinite(rbVal) || rbVal <= 0)) { Alert.alert('Invalid ranking', 'Ranking before must be a positive number.'); return; }
+    if (rankAfter.trim() && (!Number.isFinite(raVal) || raVal <= 0)) { Alert.alert('Invalid ranking', 'Ranking after must be a positive number.'); return; }
+    setSaving(true);
+    try {
+      const updates = { rankingBefore: rankBefore.trim() ? rbVal : null, rankingAfter: rankAfter.trim() ? raVal : null };
+      if (DEMO_MODE) {
+        demoCtx?.patchTournament(tournament.id, updates);
+      } else {
+        await apiPatchTournament(tournament.id, updates);
+      }
+      setEditing(false);
+    } catch (e: any) {
+      Alert.alert(t('common.couldNotSave'), e?.message ?? t('common.tryAgain'));
+    } finally {
+      setSaving(false);
     }
-    setEditing(false);
   }
 
   return (
@@ -525,9 +553,11 @@ function RankingImpactSection({ tournament }: { tournament: any }) {
               <Text style={{ fontSize: 11, fontWeight: '700', color: T.textTertiary, letterSpacing: 0.6, marginBottom: 8, marginTop: 14 }}>{t('tournament.rankingAfter')}</Text>
               <TextInput style={det.editInput} value={rankAfter} onChangeText={setRankAfter}
                 placeholder="e.g. 420" placeholderTextColor={T.textTertiary} keyboardType="numeric" />
-              <TouchableOpacity onPress={save} activeOpacity={0.8}
-                style={{ backgroundColor: T.teal, borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 14 }}>
-                <Text style={{ color: T.textPrimary, fontSize: 15, fontWeight: '700' }}>{t('common.save')}</Text>
+              <TouchableOpacity onPress={save} activeOpacity={0.8} disabled={saving}
+                style={{ backgroundColor: T.teal, borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 14, opacity: saving ? 0.7 : 1 }}>
+                {saving
+                  ? <ActivityIndicator color={T.textPrimary} />
+                  : <Text style={{ color: T.textPrimary, fontSize: 15, fontWeight: '700' }}>{t('common.save')}</Text>}
               </TouchableOpacity>
             </View>
           </>
@@ -687,8 +717,13 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
     if (!editState) return;
     if (!editState.name.trim()) { setEditError('Tournament name is required.'); return; }
     if (!editState.startDate)   { setEditError('Start date is required.'); return; }
+    if (!isMonday(editState.startDate)) { setEditError('Tournament start date must be a Monday.'); return; }
+    if (!VALID_SURFACES.includes(editState.surface)) { setEditError('Invalid surface selected.'); return; }
     setSaving(true); setEditError('');
     const editCalc = calcDeadlines(editState.startDate, editState.category);
+    // parseAmount handles both "1.234,56" and "1,234.56" formats correctly and
+    // returns null for empty/invalid input — treat that as 0, same as the old
+    // `|| 0` fallback. Clamp to a minimum of 0 so negative prize money can't slip in.
     const updates = {
       name: editState.name.trim(),
       country: editState.country,
@@ -700,13 +735,17 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
       signUpDeadline: editOverrides.signUp ? editState.signUpDeadline : editCalc.signUpDeadline,
       withdrawalDeadline: editOverrides.withdrawal ? editState.withdrawalDeadline : editCalc.withdrawalDeadline,
       freezeDeadline: editOverrides.freeze ? editState.freezeDeadline : editCalc.freezeDeadline,
-      // Accept comma decimals — locale decimal-pad keyboards only offer ","
-      singlesPrizeMoney: parseFloat(editState.singlesPrizeMoney.replace(',', '.')) || 0,
-      doublesPrizeMoney: parseFloat(editState.doublesPrizeMoney.replace(',', '.')) || 0,
+      singlesPrizeMoney: Math.max(0, parseAmount(editState.singlesPrizeMoney) ?? 0),
+      doublesPrizeMoney: Math.max(0, parseAmount(editState.doublesPrizeMoney) ?? 0),
       taxWithholdingPct: editState.taxWithholdingPct.trim()
-        ? Math.min(100, Math.max(0, parseFloat(editState.taxWithholdingPct.replace(',', '.')) || 0))
+        ? Math.min(100, Math.max(0, parseAmount(editState.taxWithholdingPct) ?? 0))
         : null,
     };
+    if (updates.endDate && updates.endDate < updates.startDate) {
+      setEditError('End date cannot be before the start date.');
+      setSaving(false);
+      return;
+    }
     try {
       if (DEMO_MODE) {
         demoCtx?.patchTournament(tournament.id, updates);
@@ -735,7 +774,7 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
       }
       onClose();
     } catch (e: any) {
-      Alert.alert('Could not save', e?.message ?? 'Please try again.');
+      Alert.alert(t('common.couldNotSave'), e?.message ?? t('common.tryAgain'));
     } finally { setSavingAction(null); }
   }
 
@@ -756,7 +795,7 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
       setShowWithdraw(false);
       onClose();
     } catch (e: any) {
-      Alert.alert('Could not save', e?.message ?? 'Please try again.');
+      Alert.alert(t('common.couldNotSave'), e?.message ?? t('common.tryAgain'));
     } finally { setSavingAction(null); }
   }
 
@@ -872,7 +911,7 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
 
               <Text style={det.sectionLabel}>{t('tournament.dates').toUpperCase()}</Text>
               <Text style={det.editDateLabel}>{t('tournament.startDateHint')}</Text>
-              <DatePickerField value={editState.startDate} onChange={(v) => setEF('startDate', v)} placeholder="YYYY-MM-DD" />
+              <DatePickerField value={editState.startDate} onChange={(v) => setEF('startDate', v)} placeholder="YYYY-MM-DD" lang={lang} />
 
               <Text style={det.sectionLabel}>{t('tournament.deadlinesAuto')}</Text>
               {getStoredDeadlineFields(editState.category).map(({ field, label }) => {
@@ -889,7 +928,7 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
                     </TouchableOpacity>
                   </View>
                   {editOverrides[ok] ? (
-                    <DatePickerField value={editState[field]} onChange={(v) => setEF(field as keyof EditState, v)} placeholder="YYYY-MM-DD" />
+                    <DatePickerField value={editState[field]} onChange={(v) => setEF(field as keyof EditState, v)} placeholder="YYYY-MM-DD" lang={lang} />
                   ) : (
                     <Text style={det.deadlinePreviewText}>
                       {editState[field as keyof EditState] ? fmtDeadline(editState[field as keyof EditState]) : t('tournament.selectStartFirst')}
@@ -1102,14 +1141,14 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
                     {(tournament.singlesPrizeMoney ?? 0) > 0 && (
                       <View style={det.prizeRow}>
                         <Text style={det.prizeLabel}>{t('prize.singles')}</Text>
-                        <Text style={det.prizeAmount}>${tournament.singlesPrizeMoney.toLocaleString()}</Text>
+                        <Text style={det.prizeAmount}>{fmt(tournament.singlesPrizeMoney)}</Text>
                       </View>
                     )}
                     {(tournament.singlesPrizeMoney ?? 0) > 0 && (tournament.doublesPrizeMoney ?? 0) > 0 && <View style={det.deadlineDivider} />}
                     {(tournament.doublesPrizeMoney ?? 0) > 0 && (
                       <View style={det.prizeRow}>
                         <Text style={det.prizeLabel}>{t('prize.doubles')}</Text>
-                        <Text style={det.prizeAmount}>${tournament.doublesPrizeMoney.toLocaleString()}</Text>
+                        <Text style={det.prizeAmount}>{fmt(tournament.doublesPrizeMoney)}</Text>
                       </View>
                     )}
                     {splitPrize > 0 && <View style={det.deadlineDivider} />}
@@ -1189,7 +1228,7 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
               {/* ── Tournament Contact ── */}
               {(tournament.supervisorName || tournament.supervisorEmail || tournament.supervisorPhone) && (
                 <>
-                  <Text style={[det.sectionLabel, { marginTop: 16 }]}>CONTACTO DEL TORNEO</Text>
+                  <Text style={[det.sectionLabel, { marginTop: 16 }]}>{t('tournament.contactSection')}</Text>
                   <View style={{ backgroundColor: '#1A1A2E', borderRadius: 12, padding: 16, marginBottom: 16 }}>
                     {tournament.supervisorName ? (
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: tournament.supervisorEmail || tournament.supervisorPhone ? 12 : 0 }}>
@@ -1200,7 +1239,7 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
                     {tournament.supervisorEmail ? (
                       <TouchableOpacity
                         style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: tournament.supervisorPhone ? 12 : 0 }}
-                        onPress={() => Linking.openURL('mailto:' + tournament.supervisorEmail)}
+                        onPress={() => { if (isSafeEmail(tournament.supervisorEmail)) Linking.openURL('mailto:' + tournament.supervisorEmail); }}
                         activeOpacity={0.7}
                       >
                         <IconSymbol name="envelope" size={15} color={T.textTertiary} />
@@ -1210,7 +1249,7 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
                     {tournament.supervisorPhone ? (
                       <TouchableOpacity
                         style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}
-                        onPress={() => Linking.openURL('tel:' + tournament.supervisorPhone)}
+                        onPress={() => { if (isSafePhone(tournament.supervisorPhone)) Linking.openURL('tel:' + tournament.supervisorPhone); }}
                         activeOpacity={0.7}
                       >
                         <IconSymbol name="phone" size={15} color={T.textTertiary} />
@@ -1218,7 +1257,7 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
                       </TouchableOpacity>
                     ) : null}
                     <Text style={{ fontSize: 11, fontStyle: 'italic', color: T.textTertiary, marginTop: 12, lineHeight: 16 }}>
-                      Contacta al supervisor para confirmar inscripciones presenciales
+                      {t('tournament.contactSupervisorHint')}
                     </Text>
                   </View>
                 </>
@@ -1521,6 +1560,8 @@ export function AddTournamentModal({ onClose, defaultStartDate }: { onClose: () 
   async function handleSaveManual() {
     if (!f.name.trim()) { setError(t('tournaments.nameRequired')); return; }
     if (!f.startDate)   { setError(t('tournaments.dateRequired')); return; }
+    if (!isMonday(f.startDate)) { setError('Tournament start date must be a Monday.'); setSaving(false); return; }
+    if (f.endDate && f.endDate < f.startDate) { setError('End date cannot be before the start date.'); setSaving(false); return; }
     setSaving(true); setError('');
     const finalCalc = calcDeadlines(f.startDate, f.category);
     const finalSignUp = overrides.signUp ? f.signUpDeadline : finalCalc.signUpDeadline;
@@ -1814,7 +1855,7 @@ function TournamentDiscoveryModal({
       });
       onClose();
     } catch (e: any) {
-      Alert.alert('Could not add tournament', e?.message ?? 'Please try again.');
+      Alert.alert(t('common.couldNotAddTournament'), e?.message ?? t('common.tryAgain'));
     }
   }
 
@@ -1872,7 +1913,7 @@ function TournamentDiscoveryModal({
       await apiPatchTournament(tournament.id, updates);
       onClose();
     } catch (e: any) {
-      Alert.alert('Could not add tournament', e?.message ?? 'Please try again.');
+      Alert.alert(t('common.couldNotAddTournament'), e?.message ?? t('common.tryAgain'));
     }
   }
 
@@ -1894,7 +1935,7 @@ function TournamentDiscoveryModal({
       setShowRestModal(false);
       setRestMonday(''); setRestNote('');
     } catch (e: any) {
-      Alert.alert('Could not save rest week', e?.message ?? 'Please try again.');
+      Alert.alert(t('common.couldNotSaveRestWeek'), e?.message ?? t('common.tryAgain'));
     }
     setSavingRest(false);
   }
@@ -1917,7 +1958,7 @@ function TournamentDiscoveryModal({
       setShowTrainingModal(false);
       setTrainStart(''); setTrainEnd(''); setTrainLabel(''); setTrainNote('');
     } catch (e: any) {
-      Alert.alert('Could not save training block', e?.message ?? 'Please try again.');
+      Alert.alert(t('common.couldNotSaveTrainingBlock'), e?.message ?? t('common.tryAgain'));
     }
     setSavingTrain(false);
   }
@@ -1953,12 +1994,12 @@ function TournamentDiscoveryModal({
                 <TouchableOpacity
                   style={{ flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center', backgroundColor: browseMode === 'itf' ? '#5B5BD6' : 'transparent' }}
                   onPress={() => setBrowseMode('itf')} activeOpacity={0.8}>
-                  <Text style={{ fontSize: 13, fontWeight: '600', color: browseMode === 'itf' ? '#FFF' : '#777' }}>Browse ITF</Text>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: browseMode === 'itf' ? '#FFF' : '#777' }}>{t('discovery.browseItf')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={{ flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center', backgroundColor: browseMode === 'challenger' ? '#5B5BD6' : 'transparent' }}
                   onPress={() => setBrowseMode('challenger')} activeOpacity={0.8}>
-                  <Text style={{ fontSize: 13, fontWeight: '600', color: browseMode === 'challenger' ? '#FFF' : '#777' }}>Browse Challenger</Text>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: browseMode === 'challenger' ? '#FFF' : '#777' }}>{t('discovery.browseChallenger')}</Text>
                 </TouchableOpacity>
               </View>
 
@@ -2418,7 +2459,7 @@ export default function TournamentsScreen() {
         }
       }
     } catch (e: any) {
-      Alert.alert('Could not delete', e?.message ?? 'Please try again.');
+      Alert.alert(t('common.couldNotDelete'), e?.message ?? t('common.tryAgain'));
     } finally {
       setRemovingTournaments(false);
     }
@@ -2452,7 +2493,7 @@ export default function TournamentsScreen() {
         await cancelTournamentNotifications(trn.id);
       }
     } catch (e: any) {
-      Alert.alert('Could not save', e?.message ?? 'Please try again.');
+      Alert.alert(t('common.couldNotSave'), e?.message ?? t('common.tryAgain'));
     }
   }
 
@@ -2496,15 +2537,24 @@ export default function TournamentsScreen() {
       if (!trn.startDate || !trn.category || reconciledRef.current.has(trn.id)) continue;
       reconciledRef.current.add(trn.id);
       const correct = calcDeadlines(trn.startDate, trn.category);
+      const candidate: any = {};
+      if (!trn.signUpDeadline)     candidate.signUpDeadline     = correct.signUpDeadline;
+      if (!trn.withdrawalDeadline) candidate.withdrawalDeadline = correct.withdrawalDeadline;
+      if (!trn.freezeDeadline)     candidate.freezeDeadline     = correct.freezeDeadline;
+      // Diff against the tournament's CURRENT values so this write is a no-op
+      // when nothing actually changed.
       const updates: any = {};
-      if (!trn.signUpDeadline)     updates.signUpDeadline     = correct.signUpDeadline;
-      if (!trn.withdrawalDeadline) updates.withdrawalDeadline = correct.withdrawalDeadline;
-      if (!trn.freezeDeadline)     updates.freezeDeadline     = correct.freezeDeadline;
+      for (const key of Object.keys(candidate)) {
+        if (candidate[key] !== trn[key]) updates[key] = candidate[key];
+      }
       if (Object.keys(updates).length === 0) continue;
       if (DEMO_MODE) {
         demoCtx?.patchTournament(trn.id, updates);
       } else {
-        apiPatchTournament(trn.id, updates).catch(() => {});
+        // Guarded on updated_at: if the user edited this tournament anywhere
+        // else since this data was fetched, the write no-ops rather than
+        // clobbering their edit. Missing deadlines get filled on a later pass.
+        apiPatchTournamentIfUnchanged(trn.id, updates, trn.updatedAt ?? null).catch(() => {});
       }
     }
   }, [data?.tournaments]);
@@ -2903,7 +2953,7 @@ export default function TournamentsScreen() {
             <Pressable style={styles.dialogBackdrop} onPress={() => setShowDeleteConfirm(false)}>
               <Pressable style={styles.dialog} onPress={() => {}}>
                 <Text style={styles.dialogTitle}>Delete {count} tournament{count !== 1 ? 's' : ''}?</Text>
-                <Text style={styles.dialogBody}>This cannot be undone.</Text>
+                <Text style={styles.dialogBody}>This cannot be undone. Match results and ranking data recorded for {count !== 1 ? 'these tournaments' : 'this tournament'} will also be permanently deleted.</Text>
                 <View style={styles.dialogActions}>
                   <TouchableOpacity style={styles.cancelBtn} onPress={() => setShowDeleteConfirm(false)} activeOpacity={0.7}>
                     <Text style={styles.cancelBtnText}>{t('common.cancel')}</Text>
@@ -2930,7 +2980,7 @@ export default function TournamentsScreen() {
           <Pressable style={styles.dialogBackdrop} onPress={() => setSwipeDeleteTrn(null)}>
             <Pressable style={styles.dialog} onPress={() => {}}>
               <Text style={styles.dialogTitle}>Delete 1 tournament?</Text>
-              <Text style={styles.dialogBody}>{swipeDeleteTrn.name} — this cannot be undone.</Text>
+              <Text style={styles.dialogBody}>{swipeDeleteTrn.name} — this cannot be undone. Match results and ranking data recorded for this tournament will also be permanently deleted.</Text>
               <View style={styles.dialogActions}>
                 <TouchableOpacity style={styles.cancelBtn} onPress={() => setSwipeDeleteTrn(null)} activeOpacity={0.7}>
                   <Text style={styles.cancelBtnText}>{t('common.cancel')}</Text>

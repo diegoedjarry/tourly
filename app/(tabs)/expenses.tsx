@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { LoadingLogo } from '@/components/ui/LoadingLogo';
 import {
   ScrollView,
+  FlatList,
   View,
   StyleSheet,
   TouchableOpacity,
@@ -50,6 +51,7 @@ import { smartDefaultCurrency, fmtCurrency } from '@/utils/currency';
 import { toUsd } from '@/utils/fx';
 import { SwipeableRow } from '@/components/ui/SwipeableRow';
 import * as Haptics from 'expo-haptics';
+import { parseAmount } from '@/utils/import-expenses';
 
 const EXPENSES_WALKTHROUGH = [
   { icon: '💸', title: 'Log Your First Expense', body: 'Tap + to log your first expense. Link it to a tournament to track your weekly costs and see which tournaments give the best financial return.' },
@@ -466,12 +468,14 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
   }
 
   async function handleSave() {
-    // Accept comma decimals — locale decimal-pad keyboards only offer ","
-    const amt = parseFloat(amount.replace(',', '.'));
-    if (isNaN(amt) || amt <= 0) { setError(t('expense.validAmount')); return; }
+    // parseAmount correctly handles both "1.234,56" and "1,234.56" formats
+    // (a naive .replace(',', '.') only swaps the first comma and silently
+    // truncates pasted US-formatted amounts by ~1000x).
+    const amt = parseAmount(amount) ?? NaN;
+    if (!Number.isFinite(amt) || amt <= 0 || amt >= 100_000_000) { setError(t('expense.validAmount')); return; }
     const finalCategory = customMode ? customText.trim() : category;
     if (!finalCategory) { setError(t('expense.selectCategory')); return; }
-    if (!isMonthlyFixed && !date) { setError(t('expense.selectDate')); return; }
+    if (!isMonthlyFixed && (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date))) { setError(t('expense.selectDate')); return; }
     setSaving(true);
     setError('');
 
@@ -765,7 +769,7 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
                     const matched = matchTournamentByDate(v, tournaments);
                     setTournamentId(matched ?? '');
                   }
-                }} />
+                }} lang={lang} />
               </View>
             )}
 
@@ -908,10 +912,12 @@ function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => v
   }
 
   async function handleSave() {
-    // Accept comma decimals — locale decimal-pad keyboards only offer ","
-    const amt = parseFloat(amount.replace(',', '.'));
-    if (isNaN(amt) || amt <= 0) { setError(t('expense.validAmount')); return; }
-    if (!isMonthlyFixed && !date) { setError(t('expense.selectDate')); return; }
+    // parseAmount correctly handles both "1.234,56" and "1,234.56" formats
+    // (a naive .replace(',', '.') only swaps the first comma and silently
+    // truncates pasted US-formatted amounts by ~1000x).
+    const amt = parseAmount(amount) ?? NaN;
+    if (!Number.isFinite(amt) || amt <= 0 || amt >= 100_000_000) { setError(t('expense.validAmount')); return; }
+    if (!isMonthlyFixed && (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date))) { setError(t('expense.selectDate')); return; }
     const finalCategory = customMode ? customText.trim() : category;
     if (!finalCategory) { setError(t('expense.selectCategory')); return; }
     setSaving(true); setError('');
@@ -1075,7 +1081,7 @@ function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => v
             {/* ── Date (regular mode only) ── */}
             {!isMonthlyFixed && (
               <View style={form.section}>
-                <DatePickerField label="date" value={date} onChange={setDate} />
+                <DatePickerField label="date" value={date} onChange={setDate} lang={lang} />
               </View>
             )}
 
@@ -1173,7 +1179,7 @@ function ExpenseActionSheet({ expense, onEdit, onDelete, onLink, onCancel }: {
 
           <TouchableOpacity style={sheet.row} onPress={onLink} activeOpacity={0.75}>
             <Text style={sheet.rowIcon}>{isLinked ? '🔗' : '🏆'}</Text>
-            <Text style={sheet.rowLabel}>{isLinked ? 'Unlink from Tournament' : 'Link to Tournament'}</Text>
+            <Text style={sheet.rowLabel}>{isLinked ? t('expenses.unlinkFromTournament') : t('expenses.linkToTournament')}</Text>
             <Text style={[sheet.rowArrow, { color: T.accent }]}>›</Text>
           </TouchableOpacity>
 
@@ -1209,6 +1215,7 @@ type TournamentOption = {
 function LinkTournamentModal({ expenses, tournaments, onClose }: {
   expenses: any[]; tournaments: any[]; onClose: () => void;
 }) {
+  const { t } = useLanguage();
   const demoCtx = useDemoData();
   // null = still loading; [] = loaded with no scraped results
   const [scrapedOptions, setScrapedOptions] = useState<TournamentOption[] | null>(
@@ -1222,41 +1229,45 @@ function LinkTournamentModal({ expenses, tournaments, onClose }: {
   // Start immediately on mount so data arrives as the slide animation completes.
   useEffect(() => {
     if (DEMO_MODE) return;
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!user) { setScrapedOptions([]); return; }
-      supabase.from('profiles').select('atp_player_name').eq('id', user.id).single()
-        .then(({ data: prof }) => {
-          if (!prof?.atp_player_name) { setScrapedOptions([]); return; }
-          const nameParts = prof.atp_player_name.trim().split(/\s+/).slice(0, 2).join(' ');
-          supabase.from('player_profiles').select('match_history')
-            .or(playerNameFilter(nameParts))
-            .order('last_updated', { ascending: false }).limit(1)
-            .then(({ data }) => {
-              if (!data?.[0]?.match_history) { setScrapedOptions([]); return; }
-              const history: any[] = data[0].match_history;
-              const seen = new Set<string>();
-              const opts: TournamentOption[] = [];
-              history.forEach((m: any) => {
-                const name = m.tournamentName ?? '';
-                const startDate = m.date ?? '';
-                if (!name || !startDate) return;
-                // Current year only; match_history entries are played matches so
-                // startDate < today is sufficient — no need for the +6-day end-of-week guard
-                // that was silently dropping tournaments stored with mid-week dates (e.g. Quito).
-                if (!startDate.startsWith(String(currentYear))) return;
-                if (startDate >= todayStr) return;
-                const key = `${name}|${startDate}`;
-                if (seen.has(key)) return;
-                seen.add(key);
-                opts.push({ name, startDate, surface: m.surface });
-              });
-              setScrapedOptions(opts);
-            }, () => setScrapedOptions([]));
-        }, () => setScrapedOptions([]));
-    }).catch((err) => {
-      console.warn('[expenses] scraped history fetch failed', err);
-      setScrapedOptions([]);
-    });
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (cancelled) return;
+        if (!user) { setScrapedOptions([]); return; }
+        const { data: prof } = await supabase.from('profiles').select('atp_player_name').eq('id', user.id).single();
+        if (cancelled) return;
+        if (!prof?.atp_player_name) { setScrapedOptions([]); return; }
+        const nameParts = prof.atp_player_name.trim().split(/\s+/).slice(0, 2).join(' ');
+        const { data } = await supabase.from('player_profiles').select('match_history')
+          .or(playerNameFilter(nameParts))
+          .order('last_updated', { ascending: false }).limit(1);
+        if (cancelled) return;
+        if (!data?.[0]?.match_history) { setScrapedOptions([]); return; }
+        const history: any[] = data[0].match_history;
+        const seen = new Set<string>();
+        const opts: TournamentOption[] = [];
+        history.forEach((m: any) => {
+          const name = m.tournamentName ?? '';
+          const startDate = m.date ?? '';
+          if (!name || !startDate) return;
+          // Current year only; match_history entries are played matches so
+          // startDate < today is sufficient — no need for the +6-day end-of-week guard
+          // that was silently dropping tournaments stored with mid-week dates (e.g. Quito).
+          if (!startDate.startsWith(String(currentYear))) return;
+          if (startDate >= todayStr) return;
+          const key = `${name}|${startDate}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+          opts.push({ name, startDate, surface: m.surface });
+        });
+        if (!cancelled) setScrapedOptions(opts);
+      } catch (err) {
+        console.warn('[expenses] scraped history fetch failed', err);
+        if (!cancelled) setScrapedOptions([]);
+      }
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   const pastTournaments = useMemo(() => {
@@ -1295,9 +1306,14 @@ function LinkTournamentModal({ expenses, tournaments, onClose }: {
     try {
       if (!opt) {
         // Unlink all
-        for (const exp of expenses) {
-          if (DEMO_MODE) { demoCtx?.patchExpense?.(exp.id, { tournamentId: null }); }
-          else { await apiUpdateExpense(exp.id, { tournamentId: null }); }
+        if (DEMO_MODE) {
+          for (const exp of expenses) demoCtx?.patchExpense?.(exp.id, { tournamentId: null });
+        } else {
+          const ids = expenses.map((e: any) => e.id);
+          if (ids.length > 0) {
+            const { error } = await supabase.from('expenses').update({ tournament_id: null }).in('id', ids);
+            if (error) throw error;
+          }
         }
         onClose();
         return;
@@ -1327,17 +1343,21 @@ function LinkTournamentModal({ expenses, tournaments, onClose }: {
         });
         tournamentId = row?.id;
       }
-      for (const exp of expenses) {
-        if (DEMO_MODE) {
-          // Only real ids — a tournament name is not a valid link target.
-          if (opt.id) demoCtx?.patchExpense?.(exp.id, { tournamentId: opt.id });
-        } else if (tournamentId) {
-          await apiUpdateExpense(exp.id, { tournamentId });
+      if (DEMO_MODE) {
+        // Only real ids — a tournament name is not a valid link target.
+        if (opt.id) {
+          for (const exp of expenses) demoCtx?.patchExpense?.(exp.id, { tournamentId: opt.id });
+        }
+      } else if (tournamentId) {
+        const ids = expenses.map((e: any) => e.id);
+        if (ids.length > 0) {
+          const { error } = await supabase.from('expenses').update({ tournament_id: tournamentId }).in('id', ids);
+          if (error) throw error;
         }
       }
       onClose();
     } catch (e: any) {
-      Alert.alert('Could not link expenses', e?.message ?? 'Please try again.');
+      Alert.alert(t('common.couldNotLinkExpenses'), e?.message ?? t('common.tryAgain'));
     } finally {
       setLinking(false);
     }
@@ -1350,7 +1370,7 @@ function LinkTournamentModal({ expenses, tournaments, onClose }: {
       <Pressable style={sheet.backdrop} onPress={onClose}>
         <Pressable style={[sheet.container, { maxHeight: '75%' }]} onPress={() => {}}>
           <View style={sheet.handle} />
-          <Text style={[sheet.title, { marginBottom: 4 }]}>Link to Tournament</Text>
+          <Text style={[sheet.title, { marginBottom: 4 }]}>{t('expenses.linkToTournament')}</Text>
           {expenses.length > 1 && (
             <Text style={{ fontSize: 12, color: '#6060A0', marginBottom: 8, textAlign: 'center' }}>
               {expenses.length} expenses will be linked
@@ -1359,7 +1379,7 @@ function LinkTournamentModal({ expenses, tournaments, onClose }: {
           {anyLinked && !isLoading && (
             <TouchableOpacity style={sheet.row} onPress={() => link(null)} activeOpacity={0.75} disabled={linking}>
               <Text style={sheet.rowIcon}>🔗</Text>
-              <Text style={[sheet.rowLabel, { color: T.red }]}>Remove tournament link</Text>
+              <Text style={[sheet.rowLabel, { color: T.red }]}>{t('expenses.removeTournamentLink')}</Text>
               <Text style={[sheet.rowArrow, { color: T.red }]}>›</Text>
             </TouchableOpacity>
           )}
@@ -1436,9 +1456,9 @@ function PrizeRow({ label, icon, amount, onSave }: {
 
   async function handleSave() {
     if (saving) return; // guard against double-fire from onBlur + onPress
-    const val = parseFloat(input.replace(',', '.'));
+    const val = parseAmount(input) ?? NaN;
     setEditing(false);
-    if (!isNaN(val) && val >= 0) {
+    if (Number.isFinite(val) && val >= 0 && val < 100_000_000) {
       setDisplayAmount(val); // optimistic — show immediately
       setSaving(true);
       try { await onSave(val); }
@@ -1595,7 +1615,7 @@ export function TournamentExpenseDetail({ tournament, onClose, allTournaments }:
         await apiDeleteExpense(expense.id);
       }
     } catch (e: any) {
-      Alert.alert('Could not delete', e?.message ?? 'Please try again.');
+      Alert.alert(tr('common.couldNotDelete'), e?.message ?? tr('common.tryAgain'));
     } finally { setDeleting(false); setDeleteExpense(null); }
   }
 
@@ -1810,6 +1830,14 @@ function PasteFromNotesModal({ tournaments, onClose }: {
   async function handleImport() {
     const toImport = parsed.filter(p => p.selected);
     if (toImport.length === 0) { setError('Select at least one expense to import.'); return; }
+    const invalid = toImport.filter(p =>
+      !Number.isFinite(p.amount) || p.amount <= 0 ||
+      (p.date != null && !/^\d{4}-\d{2}-\d{2}$/.test(p.date))
+    );
+    if (invalid.length > 0) {
+      setError(`${invalid.length} selected item(s) have an invalid amount or date. Deselect them or fix the source text and re-parse.`);
+      return;
+    }
     setImporting(true);
     setError('');
     const isAuto = tournamentId === '__auto__';
@@ -1837,7 +1865,7 @@ function PasteFromNotesModal({ tournaments, onClose }: {
         }
         onClose();
       } else {
-        await Promise.all(toImport.map(async item => {
+        const results = await Promise.allSettled(toImport.map(async item => {
           const isFixed = FIXED_CATS.has(item.category.toLowerCase());
           let tId: string | undefined;
           if (isAuto && !isFixed) {
@@ -1860,6 +1888,14 @@ function PasteFromNotesModal({ tournaments, onClose }: {
             isCoachExpense: false,
           });
         }));
+        const failedIndices = results.map((r, i) => r.status === 'rejected' ? i : -1).filter(i => i >= 0);
+        if (failedIndices.length > 0) {
+          const failedItems = failedIndices.map(i => toImport[i]);
+          setParsed(prev => prev.filter(p => failedItems.some(f => f.id === p.id)));
+          setError(`${toImport.length - failedIndices.length} imported, ${failedIndices.length} failed — review and retry.`);
+          setImporting(false);
+          return;
+        }
         generateInsight.mutate({ trigger: 'expense_logged' });
         onClose();
       }
@@ -2351,6 +2387,7 @@ const drillStyles = StyleSheet.create({
 // ─── Prize Money Modal ────────────────────────────────────────────────────────
 
 function PrizeMoneyModal({ tournaments, onClose }: { tournaments: any[]; onClose: () => void }) {
+  const { t } = useLanguage();
   const demoCtx = useDemoData();
   const today = new Date(); today.setHours(23, 59, 59, 999);
   const eligibleTournaments = tournaments.filter((t: any) => {
@@ -2368,8 +2405,8 @@ function PrizeMoneyModal({ tournaments, onClose }: { tournaments: any[]; onClose
   const selectedTournament = eligibleTournaments.find((t: any) => t.id === tournamentId);
 
   async function handleSave() {
-    const singles = parseFloat(singlesAmount.replace(',', '.')) || 0;
-    const doubles = parseFloat(doublesAmount.replace(',', '.')) || 0;
+    const singles = Math.max(0, parseAmount(singlesAmount) ?? 0);
+    const doubles = Math.max(0, parseAmount(doublesAmount) ?? 0);
     if (singles === 0 && doubles === 0) { setError('Enter at least one amount.'); return; }
     setSaving(true); setError('');
     try {
@@ -2384,7 +2421,7 @@ function PrizeMoneyModal({ tournaments, onClose }: { tournaments: any[]; onClose
         await apiPatchTournament(tournamentId, updates);
       }
       onClose();
-    } catch (e: any) { setError(e?.message ?? 'Failed to save.'); setSaving(false); }
+    } catch (e: any) { setError(e?.message ?? t('common.couldNotSave')); setSaving(false); }
   }
 
   return (
@@ -2392,17 +2429,17 @@ function PrizeMoneyModal({ tournaments, onClose }: { tournaments: any[]; onClose
       <SafeAreaView style={form.safe}>
         <View style={form.header}>
           <TouchableOpacity onPress={onClose} style={form.backBtn} activeOpacity={0.7}>
-            <Text style={form.backText}>← Back</Text>
+            <Text style={form.backText}>{t('common.back')}</Text>
           </TouchableOpacity>
-          <Text style={form.headerTitle}>Prize Money</Text>
+          <Text style={form.headerTitle}>{t('prize.prizeMoney')}</Text>
           <View style={form.backBtn} />
         </View>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
         <ScrollView style={form.scroll} contentContainerStyle={form.scrollContent} keyboardShouldPersistTaps="handled">
-          <Text style={form.sectionLabel}>TOURNAMENT</Text>
+          <Text style={form.sectionLabel}>{t('expense.tournament')}</Text>
           <TouchableOpacity style={form.dropdown} onPress={() => setDropdownOpen(!dropdownOpen)} activeOpacity={0.7}>
             <Text style={selectedTournament ? form.dropdownValue : form.dropdownPlaceholder} numberOfLines={1}>
-              {selectedTournament ? selectedTournament.name : 'Select tournament'}
+              {selectedTournament ? selectedTournament.name : t('expense.selectTournament')}
             </Text>
             <Text style={form.dropdownChevron}>{dropdownOpen ? '▲' : '▼'}</Text>
           </TouchableOpacity>
@@ -2424,7 +2461,7 @@ function PrizeMoneyModal({ tournaments, onClose }: { tournaments: any[]; onClose
             </View>
           )}
 
-          <Text style={form.sectionLabel}>SINGLES PRIZE MONEY</Text>
+          <Text style={form.sectionLabel}>{t('prize.singlesPrizeMoney')}</Text>
           <View style={form.amountRow}>
             <Text style={form.currencySign}>$</Text>
             <TextInput
@@ -2437,7 +2474,7 @@ function PrizeMoneyModal({ tournaments, onClose }: { tournaments: any[]; onClose
             />
           </View>
 
-          <Text style={form.sectionLabel}>DOUBLES PRIZE MONEY</Text>
+          <Text style={form.sectionLabel}>{t('prize.doublesPrizeMoney')}</Text>
           <View style={form.amountRow}>
             <Text style={form.currencySign}>$</Text>
             <TextInput
@@ -2453,7 +2490,7 @@ function PrizeMoneyModal({ tournaments, onClose }: { tournaments: any[]; onClose
           {error ? <Text style={form.error}>{error}</Text> : null}
 
           <TouchableOpacity style={form.saveBtn} onPress={handleSave} activeOpacity={0.85} disabled={saving}>
-            {saving ? <ActivityIndicator color={T.textPrimary} /> : <Text style={form.saveBtnText}>Save Prize Money</Text>}
+            {saving ? <ActivityIndicator color={T.textPrimary} /> : <Text style={form.saveBtnText}>{t('prize.savePrizeMoney')}</Text>}
           </TouchableOpacity>
         </ScrollView>
         </KeyboardAvoidingView>
@@ -2779,6 +2816,13 @@ const snack = StyleSheet.create({
   undo: { fontSize: 13, fontWeight: '800', color: T.teal, marginLeft: 16 },
 });
 
+type DrillRow =
+  | { type: 'month'; key: string; label: string; idx: number; total: number }
+  | { type: 'groupHeader'; key: string; title: string; gi: number }
+  // isLast: last expense of its group — carries the 12px trailing space the
+  // pre-virtualization per-group wrapper View used to provide.
+  | { type: 'expense'; key: string; exp: any; isLast: boolean };
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function ExpensesScreen() {
@@ -2840,7 +2884,7 @@ export default function ExpensesScreen() {
     pendingDeleteRef.current = null;
     setPendingDeleteId(null);
     if (DEMO_MODE) { demoCtx?.deleteExpense(pending.id); }
-    else { apiDeleteExpense(pending.id).catch((e: any) => Alert.alert('Could not delete', e?.message ?? 'Please try again.')); }
+    else { apiDeleteExpense(pending.id).catch((e: any) => Alert.alert(t('common.couldNotDelete'), e?.message ?? t('common.tryAgain'))); }
   }
 
   function requestUndoableDelete(expense: any) {
@@ -2849,7 +2893,7 @@ export default function ExpensesScreen() {
       pendingDeleteRef.current = null;
       setPendingDeleteId(null);
       if (DEMO_MODE) { demoCtx?.deleteExpense(expense.id); }
-      else { apiDeleteExpense(expense.id).catch((e: any) => Alert.alert('Could not delete', e?.message ?? 'Please try again.')); }
+      else { apiDeleteExpense(expense.id).catch((e: any) => Alert.alert(t('common.couldNotDelete'), e?.message ?? t('common.tryAgain'))); }
     }, 5000);
     pendingDeleteRef.current = { id: expense.id, timer };
     setPendingDeleteId(expense.id);
@@ -2871,20 +2915,22 @@ export default function ExpensesScreen() {
 
   useEffect(() => {
     if (DEMO_MODE) return;
+    let cancelled = false;
     supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!user) return;
+      if (!user || cancelled) return;
       supabase.from('profiles').select('atp_player_name').eq('id', user.id).single()
         .then(({ data: prof }) => {
-          if (!prof?.atp_player_name) return;
+          if (!prof?.atp_player_name || cancelled) return;
           const nameParts = prof.atp_player_name.trim().split(/\s+/).slice(0, 2).join(' ');
           supabase.from('player_profiles').select('match_history')
             .or(playerNameFilter(nameParts))
             .order('last_updated', { ascending: false }).limit(1)
             .then(({ data: rows }) => {
-              if (rows?.[0]?.match_history) setAtpMatchHistory(rows[0].match_history);
+              if (!cancelled && rows?.[0]?.match_history) setAtpMatchHistory(rows[0].match_history);
             });
         });
     });
+    return () => { cancelled = true; };
   }, []);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const selectMode = selectedIds.size > 0;
@@ -2897,7 +2943,7 @@ export default function ExpensesScreen() {
     });
   }
 
-  async function deleteSelected() {
+  async function doDeleteSelected() {
     setDeleting(true);
     try {
       for (const id of selectedIds) {
@@ -2905,11 +2951,23 @@ export default function ExpensesScreen() {
         else { await apiDeleteExpense(id); }
       }
     } catch (e: any) {
-      Alert.alert('Could not delete', e?.message ?? 'Please try again.');
+      Alert.alert(t('common.couldNotDelete'), e?.message ?? t('common.tryAgain'));
     } finally {
       setDeleting(false);
       setSelectedIds(new Set());
     }
+  }
+
+  function deleteSelected() {
+    const count = selectedIds.size;
+    Alert.alert(
+      `Delete ${count} expense${count !== 1 ? 's' : ''}?`,
+      'This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: () => doDeleteSelected() },
+      ],
+    );
   }
 
   async function confirmDeleteGeneral(expense: any) {
@@ -2921,7 +2979,7 @@ export default function ExpensesScreen() {
         await apiDeleteExpense(expense.id);
       }
     } catch (e: any) {
-      Alert.alert('Could not delete', e?.message ?? 'Please try again.');
+      Alert.alert(t('common.couldNotDelete'), e?.message ?? t('common.tryAgain'));
     } finally { setDeleting(false); setDeleteExpense(null); }
   }
 
@@ -2968,7 +3026,11 @@ export default function ExpensesScreen() {
   }, [openTournament, isLoading]);
 
   const tournaments = (data?.tournaments ?? []).filter((t: any) => !t.isWithdrawn);
-  const expenses = data?.expenses ?? [];
+  const rawExpenses = data?.expenses ?? [];
+  // Exclude the row mid-undo-window so totals/budget/runway never briefly
+  // count an expense the user just swiped away (previously only the Recent
+  // list filtered it out, leaving summary numbers inconsistent for 5s).
+  const expenses = pendingDeleteId ? rawExpenses.filter((e: any) => e.id !== pendingDeleteId) : rawExpenses;
   const activeTournament = useMemo(() => findActiveTournament(tournaments), [tournaments]);
 
   // id → display name map — must live AFTER tournaments is declared
@@ -3121,10 +3183,11 @@ export default function ExpensesScreen() {
     if (yearOffset === 0 && annualBudget > 0) {
       const today = new Date(); today.setHours(0, 0, 0, 0);
       const cutoff = new Date(today.getTime() - 28 * 86400000);
-      const cutIso = cutoff.toISOString().slice(0, 10);
-      const todayIso = today.toISOString().slice(0, 10);
-      const recentSpend = effectiveSum(expenses.filter((e: any) => e.date && e.date >= cutIso && e.date <= todayIso));
-      const recentInflow = income.reduce((s: number, i: any) => i.date && i.date >= cutIso && i.date <= todayIso ? s + incomeUsd(i) : s, 0);
+      const fmtLocalIso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const cutIso = fmtLocalIso(cutoff);
+      const todayLocalIso = fmtLocalIso(today);
+      const recentSpend = effectiveSum(expenses.filter((e: any) => e.date && e.date >= cutIso && e.date <= todayLocalIso));
+      const recentInflow = income.reduce((s: number, i: any) => i.date && i.date >= cutIso && i.date <= todayLocalIso ? s + incomeUsd(i) : s, 0);
       const burnPerDay = (runwayNetMode ? Math.max(0, recentSpend - recentInflow) : recentSpend) / 28;
       const remaining = annualBudget - (runwayNetMode ? spent - inflow : spent);
       if (burnPerDay > 0 && remaining > 0) {
@@ -3342,7 +3405,7 @@ export default function ExpensesScreen() {
 
             {/* ── Recent expenses (flat, cross-category) ── */}
             <RecentExpensesSection
-              expenses={pendingDeleteId ? expenses.filter((e: any) => e.id !== pendingDeleteId) : expenses}
+              expenses={expenses}
               onOpen={(e) => setActionExpense(e)}
               onRequestDelete={requestUndoableDelete}
             />
@@ -3464,7 +3527,7 @@ export default function ExpensesScreen() {
                     onLongPress={() => {
                       Alert.alert(t('expenses.income'), i.source ?? '', [
                         { text: t('common.cancel'), style: 'cancel' },
-                        { text: t('common.delete'), style: 'destructive', onPress: () => apiDeleteIncome(i.id).catch(() => {}) },
+                        { text: t('common.delete'), style: 'destructive', onPress: () => apiDeleteIncome(i.id).catch((e: any) => Alert.alert(t('common.couldNotDelete'), e?.message ?? t('common.tryAgain'))) },
                       ]);
                     }}>
                     <View style={{ flex: 1 }}>
@@ -3547,12 +3610,12 @@ export default function ExpensesScreen() {
               />
               <Text style={{ fontSize: 11, color: T.textTertiary, textAlign: 'center', marginTop: 6 }}>USD</Text>
               <TouchableOpacity
-                style={[styles.budgetSaveBtn, !(parseFloat(budgetInput.replace(',', '.')) > 0) && { opacity: 0.5 }]}
-                disabled={!(parseFloat(budgetInput.replace(',', '.')) > 0)}
+                style={[styles.budgetSaveBtn, !((parseAmount(budgetInput) ?? 0) > 0) && { opacity: 0.5 }]}
+                disabled={!((parseAmount(budgetInput) ?? 0) > 0)}
                 activeOpacity={0.8}
                 onPress={async () => {
-                  const n = parseFloat(budgetInput.replace(',', '.'));
-                  if (!(n > 0) || !_prof?.id) { setShowBudgetSheet(false); return; }
+                  const n = parseAmount(budgetInput) ?? 0;
+                  if (!(n > 0) || n >= 100_000_000 || !_prof?.id) { setShowBudgetSheet(false); return; }
                   setShowBudgetSheet(false);
                   const { error } = await supabase.from('profiles').update({ annual_budget: n }).eq('id', _prof.id);
                   if (!error) queryClient.invalidateQueries();
@@ -3601,15 +3664,15 @@ export default function ExpensesScreen() {
               />
               <Text style={{ fontSize: 11, color: T.textTertiary, textAlign: 'center', marginTop: 6 }}>USD</Text>
               <View style={{ marginTop: 8 }}>
-                <DatePickerField value={incomeDate} onChange={setIncomeDate} />
+                <DatePickerField value={incomeDate} onChange={setIncomeDate} lang={lang} />
               </View>
               <TouchableOpacity
-                style={[styles.budgetSaveBtn, (incomeSaving || !(parseFloat(incomeAmount.replace(',', '.')) > 0)) && { opacity: 0.5 }]}
-                disabled={incomeSaving || !(parseFloat(incomeAmount.replace(',', '.')) > 0)}
+                style={[styles.budgetSaveBtn, (incomeSaving || !((parseAmount(incomeAmount) ?? 0) > 0)) && { opacity: 0.5 }]}
+                disabled={incomeSaving || !((parseAmount(incomeAmount) ?? 0) > 0)}
                 activeOpacity={0.8}
                 onPress={async () => {
-                  const amt = parseFloat(incomeAmount.replace(',', '.'));
-                  if (!(amt > 0)) return;
+                  const amt = parseAmount(incomeAmount) ?? 0;
+                  if (!(amt > 0) || amt >= 100_000_000) return;
                   setIncomeSaving(true);
                   try {
                     await apiAddIncome({
@@ -3623,9 +3686,10 @@ export default function ExpensesScreen() {
                     });
                     setShowIncomeSheet(false);
                     setIncomeSource(''); setIncomeAmount('');
-                    setIncomeDate(new Date().toISOString().slice(0, 10));
-                  } catch {
+                    setIncomeDate(todayIso());
+                  } catch (e: any) {
                     // optimistic layer handles rollback; keep the sheet open so the user can retry
+                    Alert.alert(t('common.couldNotSave'), e?.message ?? t('common.tryAgain'));
                   } finally {
                     setIncomeSaving(false);
                   }
@@ -3683,6 +3747,22 @@ export default function ExpensesScreen() {
           }
         }
 
+        // Flat row model for the virtualized drill-down list
+        const drillRows: DrillRow[] = [];
+        if (period === 'year' && spentMonth === null) {
+          monthRows.forEach(({ label, idx, total }) => {
+            drillRows.push({ type: 'month', key: `m-${idx}`, label, idx, total });
+          });
+        } else {
+          grouped.forEach((group, gi) => {
+            const title = group.tournament ? (group.tournament.city ?? group.tournament.name) : 'Other expenses';
+            drillRows.push({ type: 'groupHeader', key: `g-${gi}`, title, gi });
+            group.exps.forEach((exp: any, ei: number) => {
+              drillRows.push({ type: 'expense', key: `e-${exp.id}`, exp, isLast: ei === group.exps.length - 1 });
+            });
+          });
+        }
+
         return (
           <Modal transparent animationType="slide" onRequestClose={closeSpent}>
             <Pressable style={styles.choiceBackdrop} onPress={closeSpent}>
@@ -3705,46 +3785,54 @@ export default function ExpensesScreen() {
                   : <Text style={{ fontSize: 12, color: '#5B5BD6', textAlign: 'center', marginBottom: 12 }}>{selectedSpentIds.size} selected</Text>
                 }
 
-                <ScrollView showsVerticalScrollIndicator={false}>
-                  {/* Month picker */}
-                  {period === 'year' && spentMonth === null && monthRows.map(({ label, idx, total }) => (
-                    <TouchableOpacity key={idx} onPress={() => setSpentMonth(idx)} activeOpacity={0.7}
-                      style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#2A2A4A' }}>
-                      <Text style={{ fontSize: 15, fontWeight: '600', color: '#FAFAFA' }}>{label}</Text>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                        <Text style={{ fontSize: 15, fontWeight: '700', color: '#E24B4A' }}>{fmt(total)}</Text>
-                        <Text style={{ color: '#6060A0' }}>›</Text>
-                      </View>
-                    </TouchableOpacity>
-                  ))}
-
-                  {/* Expense list grouped by tournament */}
-                  {(period !== 'year' || spentMonth !== null) && grouped.map((group, gi) => (
-                    <View key={gi} style={{ marginBottom: 12 }}>
-                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#A0A0C8', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 6, marginTop: gi > 0 ? 8 : 0 }}>
-                        {group.tournament ? (group.tournament.city ?? group.tournament.name) : 'Other expenses'}
-                      </Text>
-                      {group.exps.map((exp: any) => {
-                        const sel = selectedSpentIds.has(exp.id);
-                        return (
-                          <TouchableOpacity key={exp.id} activeOpacity={0.7}
-                            onPress={() => setSelectedSpentIds(prev => { const n = new Set(prev); n.has(exp.id) ? n.delete(exp.id) : n.add(exp.id); return n; })}
-                            style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, paddingHorizontal: 4, borderRadius: 8, backgroundColor: sel ? 'rgba(91,91,214,0.12)' : 'transparent', marginBottom: 2 }}>
-                            <View style={{ width: 18, height: 18, borderRadius: 9, borderWidth: 2, borderColor: sel ? '#5B5BD6' : '#3A3A5A', backgroundColor: sel ? '#5B5BD6' : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
-                              {sel && <Text style={{ color: '#FFF', fontSize: 10, fontWeight: '700' }}>✓</Text>}
-                            </View>
-                            <View style={{ flex: 1 }}>
-                              <Text style={{ fontSize: 13, fontWeight: '600', color: '#FAFAFA' }}>{exp.category}</Text>
-                              <Text style={{ fontSize: 11, color: '#A0A0C8' }}>{exp.date}</Text>
-                            </View>
-                            <Text style={{ fontSize: 14, fontWeight: '700', color: '#E24B4A' }}>{fmtRowAmount(exp)}</Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                  ))}
-                  <View style={{ height: 80 }} />
-                </ScrollView>
+                <FlatList
+                  data={drillRows}
+                  keyExtractor={(r) => r.key}
+                  showsVerticalScrollIndicator={false}
+                  initialNumToRender={20}
+                  windowSize={10}
+                  ListFooterComponent={<View style={{ height: 80 }} />}
+                  extraData={selectedSpentIds}
+                  renderItem={({ item }) => {
+                    if (item.type === 'month') {
+                      const { label, idx, total } = item;
+                      return (
+                        <TouchableOpacity onPress={() => setSpentMonth(idx)} activeOpacity={0.7}
+                          style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#2A2A4A' }}>
+                          <Text style={{ fontSize: 15, fontWeight: '600', color: '#FAFAFA' }}>{label}</Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                            <Text style={{ fontSize: 15, fontWeight: '700', color: '#E24B4A' }}>{fmt(total)}</Text>
+                            <Text style={{ color: '#6060A0' }}>›</Text>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    }
+                    if (item.type === 'groupHeader') {
+                      const { title, gi } = item;
+                      return (
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#A0A0C8', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 6, marginTop: gi > 0 ? 8 : 0 }}>
+                          {title}
+                        </Text>
+                      );
+                    }
+                    const { exp } = item;
+                    const sel = selectedSpentIds.has(exp.id);
+                    return (
+                      <TouchableOpacity activeOpacity={0.7}
+                        onPress={() => setSelectedSpentIds(prev => { const n = new Set(prev); n.has(exp.id) ? n.delete(exp.id) : n.add(exp.id); return n; })}
+                        style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, paddingHorizontal: 4, borderRadius: 8, backgroundColor: sel ? 'rgba(91,91,214,0.12)' : 'transparent', marginBottom: item.isLast ? 12 : 2 }}>
+                        <View style={{ width: 18, height: 18, borderRadius: 9, borderWidth: 2, borderColor: sel ? '#5B5BD6' : '#3A3A5A', backgroundColor: sel ? '#5B5BD6' : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
+                          {sel && <Text style={{ color: '#FFF', fontSize: 10, fontWeight: '700' }}>✓</Text>}
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: 13, fontWeight: '600', color: '#FAFAFA' }}>{exp.category}</Text>
+                          <Text style={{ fontSize: 11, color: '#A0A0C8' }}>{exp.date}</Text>
+                        </View>
+                        <Text style={{ fontSize: 14, fontWeight: '700', color: '#E24B4A' }}>{fmtRowAmount(exp)}</Text>
+                      </TouchableOpacity>
+                    );
+                  }}
+                />
 
                 {/* Action footer */}
                 {selectedSpentIds.size > 0 && (
@@ -3910,7 +3998,7 @@ export default function ExpensesScreen() {
                                 }
                                 setSelectedPrizeIds(new Set());
                               } catch (e: any) {
-                                Alert.alert('Could not clear prize money', e?.message ?? 'Please try again.');
+                                Alert.alert(t('common.couldNotClearPrizeMoney'), e?.message ?? t('common.tryAgain'));
                               }
                             },
                           },
@@ -4092,7 +4180,7 @@ export default function ExpensesScreen() {
                           </View>
                         )}
                         <View style={{ flex: 1, marginRight: 12 }}>
-                          <Text style={drillStyles.rowNote} numberOfLines={1}>{e.note || 'No description'}</Text>
+                          <Text style={drillStyles.rowNote} numberOfLines={1}>{e.note || t('expenses.noDescription')}</Text>
                           {/* Show specific sub-category when the drill group name differs (e.g. Travel Coach → Coach Flight) */}
                           {e.category && normalizeCat(e.category) !== drillCategory.cat && (
                             <Text style={drillStyles.rowSubcat} numberOfLines={1}>{e.category}</Text>

@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react';
 import {
   View, ScrollView, TouchableOpacity, StyleSheet, Dimensions,
-  TextInput, Platform, KeyboardAvoidingView,
+  TextInput, Platform, KeyboardAvoidingView, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -11,6 +11,7 @@ import { TourlyLogo } from '@/components/ui/tourly-logo';
 import { supabase } from '@/lib/supabase'; // used for sign-out in handleBackToLogin
 import { triggerScraperOnce } from '@/hooks/useScraperTrigger';
 import { T } from '@/constants/theme';
+import { useLanguage } from '@/hooks/useLanguage';
 
 // Set by ProfileSetupScreen so finishOnboarding can fire the scraper
 let _pendingPlayerName = '';
@@ -39,21 +40,22 @@ function Dots({ total, current }: { total: number; current: number }) {
 // ─── Screen 1: Welcome ────────────────────────────────────────────────────────
 
 function WelcomeScreen({ onNext, onBack }: { onNext: () => void; onBack: () => void }) {
+  const { t } = useLanguage();
   return (
     <SafeAreaView style={[s.safe, { backgroundColor: T.cardElevated }]}>
       <View style={s.centered}>
         <TourlyLogo width={240} height={64} />
         <View style={{ marginTop: 40, alignItems: 'center', gap: 8 }}>
-          <Text style={s.tagline1}>&ldquo;Every city, every court, every dollar.&rdquo;</Text>
-          <Text style={s.tagline2}>Take control of your tour.</Text>
+          <Text style={s.tagline1}>{t('onboarding.tagline1')}</Text>
+          <Text style={s.tagline2}>{t('onboarding.tagline2')}</Text>
         </View>
       </View>
       <View style={s.welcomeBottom}>
         <TouchableOpacity style={s.primaryBtn} onPress={onNext} activeOpacity={0.85}>
-          <Text style={s.primaryBtnText}>Get Started</Text>
+          <Text style={s.primaryBtnText}>{t('onboarding.getStarted')}</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={onBack} activeOpacity={0.7} style={{ alignItems: 'center', marginTop: 16 }}>
-          <Text style={s.linkText}>← Back to login</Text>
+          <Text style={s.linkText}>← {t('onboarding.backToLogin')}</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -63,24 +65,25 @@ function WelcomeScreen({ onNext, onBack }: { onNext: () => void; onBack: () => v
 // ─── Screen 2: The Problem ────────────────────────────────────────────────────
 
 function ProblemScreen({ onNext, onBack }: { onNext: () => void; onBack: () => void }) {
+  const { t } = useLanguage();
   return (
     <SafeAreaView style={s.safe}>
       <TouchableOpacity onPress={onBack} style={s.backBtn} activeOpacity={0.7}>
-        <Text style={s.backText}>‹ Back</Text>
+        <Text style={s.backText}>‹ {t('onboarding.back')}</Text>
       </TouchableOpacity>
       <View style={[s.centered, { paddingHorizontal: 32 }]}>
         <Text style={s.bigStat}>$30,000+</Text>
         <Text style={s.problemMain}>
-          The average professional tennis player loses approximately this much or more every year competing at world level.
+          {t('onboarding.problemMain')}
         </Text>
         <Text style={s.problemSub}>
-          Tourly exists to help you understand every dollar — and make smarter decisions on tour.
+          {t('onboarding.problemSub')}
         </Text>
       </View>
       <View style={s.bottomRow}>
         <Dots total={5} current={0} />
         <TouchableOpacity style={s.nextBtn} onPress={onNext} activeOpacity={0.85}>
-          <Text style={s.nextBtnText}>Next →</Text>
+          <Text style={s.nextBtnText}>{t('onboarding.next')} →</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -89,42 +92,44 @@ function ProblemScreen({ onNext, onBack }: { onNext: () => void; onBack: () => v
 
 // ─── Screens 3–6: Feature slides (horizontal swipe) ──────────────────────────
 
-const FEATURE_SLIDES = [
-  {
-    icon: '🔔',
-    title: 'Never Miss a Deadline',
-    desc: 'Tourly automatically calculates every ITF and ATP Challenger entry, withdrawal, and freeze deadline the moment you add a tournament. Get notified before it\'s too late.',
-    mockup: [
-      { label: 'Entry deadline', pill: 'TODAY', pillColor: '#E24B4A' },
-      { label: 'Withdrawal deadline', pill: '3 days', pillColor: '#F59E0B' },
-      { label: 'Freeze deadline', pill: '14 days', pillColor: '#555' },
-    ],
-  },
-  {
-    icon: '💸',
-    title: 'Track Every Dollar',
-    desc: 'Log flights, hotels, meals, coach travel and more. See exactly where your money goes and which tournaments give you the best financial return.',
-    mockup: [
-      { label: 'Flights', pct: 41 },
-      { label: 'Hotel', pct: 28 },
-      { label: 'Meals', pct: 18 },
-      { label: 'Coach', pct: 13 },
-    ],
-  },
-  {
-    icon: '✦',
-    title: 'Your Financial Coach',
-    desc: 'Tourly analyzes your data and surfaces insights automatically — cost per ranking point, coach impact, surface efficiency, and 57 more personalized insights.',
-    mockup: null,
-    insightText: 'Your clay tournaments cost 40% more than hard court but earn 3× more prize money.',
-  },
-  {
-    icon: '🗺️',
-    title: 'Plan Your Season',
-    desc: 'See your entire season on one calendar. The world map shows your tournaments as glowing dots — identifying nearby events you can combine into one trip to save on flights.',
-    mockup: null,
-  },
-];
+function getFeatureSlides(t: (key: any) => string) {
+  return [
+    {
+      icon: '🔔',
+      title: t('onboarding.feature1Title'),
+      desc: t('onboarding.feature1Desc'),
+      mockup: [
+        { label: t('onboarding.feature1EntryDeadline'), pill: t('onboarding.feature1Today'), pillColor: '#E24B4A' },
+        { label: t('onboarding.feature1WithdrawalDeadline'), pill: t('onboarding.feature1ThreeDays'), pillColor: '#F59E0B' },
+        { label: t('onboarding.feature1FreezeDeadline'), pill: t('onboarding.feature1FourteenDays'), pillColor: '#555' },
+      ],
+    },
+    {
+      icon: '💸',
+      title: t('onboarding.feature2Title'),
+      desc: t('onboarding.feature2Desc'),
+      mockup: [
+        { label: t('onboarding.feature2Flights'), pct: 41 },
+        { label: t('onboarding.feature2Hotel'), pct: 28 },
+        { label: t('onboarding.feature2Meals'), pct: 18 },
+        { label: t('onboarding.feature2Coach'), pct: 13 },
+      ],
+    },
+    {
+      icon: '✦',
+      title: t('onboarding.feature3Title'),
+      desc: t('onboarding.feature3Desc'),
+      mockup: null,
+      insightText: t('onboarding.feature3Insight'),
+    },
+    {
+      icon: '🗺️',
+      title: t('onboarding.feature4Title'),
+      desc: t('onboarding.feature4Desc'),
+      mockup: null,
+    },
+  ];
+}
 
 function FeatureMockupAlerts({ items }: { items: { label: string; pill: string; pillColor: string }[] }) {
   return (
@@ -183,8 +188,10 @@ function FeatureMockupMap() {
 }
 
 function FeaturesCarousel({ startIndex, onNext, onBack }: { startIndex: number; onNext: () => void; onBack: () => void }) {
+  const { t } = useLanguage();
   const scrollRef = useRef<ScrollView>(null);
   const [idx, setIdx] = useState(startIndex);
+  const featureSlides = getFeatureSlides(t);
 
   function handleScroll(e: any) {
     const newIdx = Math.round(e.nativeEvent.contentOffset.x / W);
@@ -192,7 +199,7 @@ function FeaturesCarousel({ startIndex, onNext, onBack }: { startIndex: number; 
   }
 
   function handleNext() {
-    if (idx < FEATURE_SLIDES.length - 1) {
+    if (idx < featureSlides.length - 1) {
       scrollRef.current?.scrollTo({ x: (idx + 1) * W, animated: true });
       setIdx(idx + 1);
     } else {
@@ -209,12 +216,10 @@ function FeaturesCarousel({ startIndex, onNext, onBack }: { startIndex: number; 
     }
   }
 
-  const slide = FEATURE_SLIDES[idx];
-
   return (
     <SafeAreaView style={s.safe}>
       <TouchableOpacity onPress={handleBack} style={s.backBtn} activeOpacity={0.7}>
-        <Text style={s.backText}>‹ Back</Text>
+        <Text style={s.backText}>‹ {t('onboarding.back')}</Text>
       </TouchableOpacity>
 
       <ScrollView
@@ -226,7 +231,7 @@ function FeaturesCarousel({ startIndex, onNext, onBack }: { startIndex: number; 
         scrollEventThrottle={16}
         style={{ flex: 1 }}
       >
-        {FEATURE_SLIDES.map((slide, i) => (
+        {featureSlides.map((slide, i) => (
           <View key={i} style={{ width: W, paddingHorizontal: 24 }}>
             {/* Mockup area */}
             <View style={{ height: 200, justifyContent: 'center', marginTop: 8 }}>
@@ -246,7 +251,7 @@ function FeaturesCarousel({ startIndex, onNext, onBack }: { startIndex: number; 
       <View style={s.bottomRow}>
         <Dots total={5} current={idx + 1} />
         <TouchableOpacity style={s.nextBtn} onPress={handleNext} activeOpacity={0.85}>
-          <Text style={s.nextBtnText}>{idx === FEATURE_SLIDES.length - 1 ? 'Continue →' : 'Next →'}</Text>
+          <Text style={s.nextBtnText}>{idx === featureSlides.length - 1 ? t('onboarding.continue') : t('onboarding.next')} →</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -261,7 +266,29 @@ const STRINGING_OPTS = ['Yes', 'No'];
 const ROLES = ['Player', 'Coach', 'Other'];
 
 function ProfileSetupScreen({ onNext, onBack }: { onNext: () => void; onBack: () => void }) {
+  const { t } = useLanguage();
   const updateProfile = useUpdateProfile();
+
+  const SURFACE_LABELS: Record<string, string> = {
+    Clay: t('onboarding.profile.surfaceClay'),
+    Hard: t('onboarding.profile.surfaceHard'),
+    Grass: t('onboarding.profile.surfaceGrass'),
+  };
+  const COACH_LABELS: Record<string, string> = {
+    Always: t('onboarding.profile.coachAlways'),
+    Sometimes: t('onboarding.profile.coachSometimes'),
+    Never: t('onboarding.profile.coachNever'),
+  };
+  const STRINGING_LABELS: Record<string, string> = {
+    Yes: t('onboarding.profile.yes'),
+    No: t('onboarding.profile.no'),
+  };
+  const ROLE_LABELS: Record<string, string> = {
+    Player: t('onboarding.profile.rolePlayer'),
+    Coach: t('onboarding.profile.roleCoach'),
+    Other: t('onboarding.profile.roleOther'),
+  };
+
   const [role, setRole] = useState('Player');
   const [surface, setSurface] = useState('');
   const [city, setCity] = useState('');
@@ -284,7 +311,7 @@ function ProfileSetupScreen({ onNext, onBack }: { onNext: () => void; onBack: ()
     onNext();
   }
 
-  function PillGroup({ options, value, onChange }: { options: string[]; value: string; onChange: (v: string) => void }) {
+  function PillGroup({ options, value, onChange, labels }: { options: string[]; value: string; onChange: (v: string) => void; labels?: Record<string, string> }) {
     return (
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
         {options.map(opt => (
@@ -294,7 +321,7 @@ function ProfileSetupScreen({ onNext, onBack }: { onNext: () => void; onBack: ()
             style={[s.pill, value === opt && s.pillActive]}
             activeOpacity={0.8}
           >
-            <Text style={[s.pillText, value === opt && s.pillTextActive]}>{opt}</Text>
+            <Text style={[s.pillText, value === opt && s.pillTextActive]}>{labels ? labels[opt] : opt}</Text>
           </TouchableOpacity>
         ))}
       </View>
@@ -304,42 +331,42 @@ function ProfileSetupScreen({ onNext, onBack }: { onNext: () => void; onBack: ()
   return (
     <SafeAreaView style={s.safe}>
       <TouchableOpacity onPress={onBack} style={s.backBtn} activeOpacity={0.7}>
-        <Text style={s.backText}>‹ Back</Text>
+        <Text style={s.backText}>‹ {t('onboarding.back')}</Text>
       </TouchableOpacity>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={{ padding: 24, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
           <View style={s.profileCard}>
-            <Text style={s.profileTitle}>Set Up Your Profile</Text>
-            <Text style={s.profileSub}>Help Tourly personalize your experience</Text>
+            <Text style={s.profileTitle}>{t('onboarding.profile.title')}</Text>
+            <Text style={s.profileSub}>{t('onboarding.profile.subtitle')}</Text>
 
-            <Text style={s.fieldLabel}>Role</Text>
-            <PillGroup options={ROLES} value={role} onChange={setRole} />
+            <Text style={s.fieldLabel}>{t('onboarding.profile.role')}</Text>
+            <PillGroup options={ROLES} value={role} onChange={setRole} labels={ROLE_LABELS} />
 
-            <Text style={[s.fieldLabel, { marginTop: 16 }]}>Primary surface</Text>
-            <PillGroup options={SURFACES} value={surface} onChange={setSurface} />
+            <Text style={[s.fieldLabel, { marginTop: 16 }]}>{t('onboarding.profile.primarySurface')}</Text>
+            <PillGroup options={SURFACES} value={surface} onChange={setSurface} labels={SURFACE_LABELS} />
 
-            <Text style={[s.fieldLabel, { marginTop: 16 }]}>Home base city</Text>
-            <TextInput style={s.input} value={city} onChangeText={setCity} placeholder="e.g. Buenos Aires" placeholderTextColor="#555" />
+            <Text style={[s.fieldLabel, { marginTop: 16 }]}>{t('onboarding.profile.homeCity')}</Text>
+            <TextInput style={s.input} value={city} onChangeText={setCity} placeholder={t('onboarding.profile.homeCityPlaceholder')} placeholderTextColor="#555" />
 
-            <Text style={[s.fieldLabel, { marginTop: 16 }]}>Annual tournament budget (USD)</Text>
-            <TextInput style={s.input} value={budget} onChangeText={setBudget} keyboardType="numeric" placeholder="e.g. 25000" placeholderTextColor="#555" />
+            <Text style={[s.fieldLabel, { marginTop: 16 }]}>{t('onboarding.profile.annualBudget')}</Text>
+            <TextInput style={s.input} value={budget} onChangeText={setBudget} keyboardType="numeric" placeholder={t('onboarding.profile.budgetPlaceholder')} placeholderTextColor="#555" />
 
-            <Text style={[s.fieldLabel, { marginTop: 16 }]}>Travel with coach</Text>
-            <PillGroup options={COACH_OPTS} value={coachTravel} onChange={setCoachTravel} />
+            <Text style={[s.fieldLabel, { marginTop: 16 }]}>{t('onboarding.profile.travelWithCoach')}</Text>
+            <PillGroup options={COACH_OPTS} value={coachTravel} onChange={setCoachTravel} labels={COACH_LABELS} />
 
-            <Text style={[s.fieldLabel, { marginTop: 16 }]}>Travel with stringing machine</Text>
-            <PillGroup options={STRINGING_OPTS} value={stringing} onChange={setStringing} />
+            <Text style={[s.fieldLabel, { marginTop: 16 }]}>{t('onboarding.profile.travelWithStringing')}</Text>
+            <PillGroup options={STRINGING_OPTS} value={stringing} onChange={setStringing} labels={STRINGING_LABELS} />
 
-            <Text style={s.fieldLabel}>Your full name *</Text>
+            <Text style={s.fieldLabel}>{t('onboarding.profile.fullName')} *</Text>
             <Text style={{ fontSize: 12, color: '#666', marginBottom: 8 }}>
-              Enter your name exactly as it appears on atptour.com — Tourly will link your match history automatically.
+              {t('onboarding.profile.fullNameHint')}
             </Text>
             <View style={{ position: 'relative' }}>
               <TextInput
                 style={s.input}
                 value={playerName}
                 onChangeText={setPlayerName}
-                placeholder="e.g. Nicolas Jarry"
+                placeholder={t('onboarding.profile.fullNamePlaceholder')}
                 placeholderTextColor="#555"
                 autoCorrect={false}
                 autoCapitalize="words"
@@ -356,7 +383,7 @@ function ProfileSetupScreen({ onNext, onBack }: { onNext: () => void; onBack: ()
           disabled={!playerName.trim() || updateProfile.isPending}
           activeOpacity={0.85}
         >
-          <Text style={s.primaryBtnText}>Continue</Text>
+          <Text style={s.primaryBtnText}>{t('onboarding.continue')}</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -428,11 +455,18 @@ export default function WalkthroughScreen() {
   const router = useRouter();
   const updateProfile = useUpdateProfile();
   const [step, setStep] = useState(0);
+  const { t } = useLanguage();
 
-  async function finishOnboarding() {
-    try { await updateProfile.mutateAsync({ onboarding_complete: true }); } catch {}
+  async function finishOnboarding(): Promise<boolean> {
+    try {
+      await updateProfile.mutateAsync({ onboarding_complete: true });
+    } catch {
+      Alert.alert(t('common.couldNotSaveProfile'), t('common.tryAgain'));
+      return false;
+    }
     // Fire scraper once — non-blocking, does not delay navigation
     if (_pendingPlayerName) triggerScraperOnce(_pendingPlayerName);
+    return true;
   }
 
   async function handleBackToLogin() {
@@ -470,12 +504,10 @@ export default function WalkthroughScreen() {
     <ReadyScreen
       key="ready"
       onAddTournament={async () => {
-        await finishOnboarding();
-        router.replace('/(tabs)/tournaments');
+        if (await finishOnboarding()) router.replace('/(tabs)/tournaments');
       }}
       onExplore={async () => {
-        await finishOnboarding();
-        router.replace('/(tabs)');
+        if (await finishOnboarding()) router.replace('/(tabs)');
       }}
     />,
   ];

@@ -1,6 +1,9 @@
 // Set EXPO_PUBLIC_DEMO_MODE=true in .env.local for local development.
 // Never set this in production builds.
-export const DEMO_MODE = process.env.EXPO_PUBLIC_DEMO_MODE === 'true';
+// __DEV__ gate: a stray EXPO_PUBLIC_DEMO_MODE=true in a production build must
+// never ship an auth-bypassed app. Demo TestFlight builds need a deliberate
+// code change here, which is the point.
+export const DEMO_MODE = __DEV__ && process.env.EXPO_PUBLIC_DEMO_MODE === 'true';
 
 const T1 = 'd-t1'; // M25 Cuiabá    — ACTIVE today
 const T2 = 'd-t2'; // M25 Buenos Aires

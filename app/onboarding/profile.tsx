@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useUpdateProfile } from '@/hooks/useProfile';
 import { TourlyLogo } from '@/components/ui/tourly-logo';
+import { useLanguage } from '@/hooks/useLanguage';
 
 const ROLES = ['Player', 'Coach', 'Other'];
 const SURFACES = [
@@ -26,6 +27,17 @@ const SURFACES = [
 export default function OnboardingProfileScreen() {
   const router = useRouter();
   const updateProfile = useUpdateProfile();
+  const { t } = useLanguage();
+  const ROLE_LABELS: Record<string, string> = {
+    Player: t('onboarding.profileScreen.rolePlayer'),
+    Coach: t('onboarding.profileScreen.roleCoach'),
+    Other: t('onboarding.profileScreen.roleOther'),
+  };
+  const SURFACE_LABELS: Record<string, string> = {
+    clay: t('onboarding.profileScreen.surfaceClay'),
+    hard: t('onboarding.profileScreen.surfaceHard'),
+    grass: t('onboarding.profileScreen.surfaceGrass'),
+  };
 
   async function handleSkip() {
     // Mark onboarding complete so we never land here again on re-login
@@ -53,8 +65,8 @@ export default function OnboardingProfileScreen() {
         onboarding_complete: true,
       } as any);
       router.replace('/(tabs)');
-    } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Could not save profile. Please try again.');
+    } catch {
+      Alert.alert(t('common.couldNotSaveProfile'), t('common.tryAgain'));
     }
   }
 
@@ -68,26 +80,26 @@ export default function OnboardingProfileScreen() {
           <View style={s.logo}><TourlyLogo width={180} height={48} /></View>
 
           <TouchableOpacity style={s.skipBtn} onPress={handleSkip} activeOpacity={0.7}>
-            <Text style={s.skipText}>Already set up? Skip â†’</Text>
+            <Text style={s.skipText}>{t('onboarding.profileScreen.skip')} →</Text>
           </TouchableOpacity>
 
           <View style={s.card}>
-            <Text style={s.title}>Tourly Walkthrough</Text>
-            <Text style={s.subtitle}>Tell us about yourself so we can personalize your experience.</Text>
+            <Text style={s.title}>{t('onboarding.profileScreen.title')}</Text>
+            <Text style={s.subtitle}>{t('onboarding.profileScreen.subtitle')}</Text>
 
             {/* Full name */}
-            <Text style={s.label}>FULL NAME</Text>
+            <Text style={s.label}>{t('onboarding.profileScreen.fullName')}</Text>
             <TextInput
               style={s.input}
               value={name}
               onChangeText={setName}
-              placeholder="Your full name"
+              placeholder={t('onboarding.profileScreen.fullNamePlaceholder')}
               placeholderTextColor="#A0A0B8"
               autoCapitalize="words"
             />
 
             {/* Role */}
-            <Text style={s.label}>ROLE</Text>
+            <Text style={s.label}>{t('onboarding.profileScreen.role')}</Text>
             <View style={s.pillRow}>
               {ROLES.map(r => (
                 <TouchableOpacity
@@ -95,35 +107,35 @@ export default function OnboardingProfileScreen() {
                   style={[s.pill, role === r && s.pillActive]}
                   onPress={() => setRole(r)}
                   activeOpacity={0.7}>
-                  <Text style={[s.pillText, role === r && s.pillTextActive]}>{r}</Text>
+                  <Text style={[s.pillText, role === r && s.pillTextActive]}>{ROLE_LABELS[r]}</Text>
                 </TouchableOpacity>
               ))}
             </View>
 
             {/* Home base city */}
-            <Text style={s.label}>HOME BASE CITY</Text>
+            <Text style={s.label}>{t('onboarding.profileScreen.homeCity')}</Text>
             <TextInput
               style={s.input}
               value={city}
               onChangeText={setCity}
-              placeholder="ex. Santiago"
+              placeholder={t('onboarding.profileScreen.homeCityPlaceholder')}
               placeholderTextColor="#A0A0B8"
               autoCapitalize="words"
             />
 
             {/* Annual budget */}
-            <Text style={s.label}>ANNUAL TOURNAMENT BUDGET (USD)</Text>
+            <Text style={s.label}>{t('onboarding.profileScreen.annualBudget')}</Text>
             <TextInput
               style={s.input}
               value={budget}
               onChangeText={setBudget}
-              placeholder="ex. 25000"
+              placeholder={t('onboarding.profileScreen.budgetPlaceholder')}
               placeholderTextColor="#A0A0B8"
               keyboardType="number-pad"
             />
 
             {/* Primary surface */}
-            <Text style={s.label}>PRIMARY SURFACE</Text>
+            <Text style={s.label}>{t('onboarding.profileScreen.primarySurface')}</Text>
             <View style={s.pillRow}>
               {SURFACES.map(sf => (
                 <TouchableOpacity
@@ -134,7 +146,7 @@ export default function OnboardingProfileScreen() {
                   ]}
                   onPress={() => setSurface(surface === sf.key ? '' : sf.key)}
                   activeOpacity={0.7}>
-                  <Text style={[s.pillText, surface === sf.key && { color: sf.color }]}>{sf.label}</Text>
+                  <Text style={[s.pillText, surface === sf.key && { color: sf.color }]}>{SURFACE_LABELS[sf.key]}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -147,7 +159,7 @@ export default function OnboardingProfileScreen() {
               {updateProfile.isPending ? (
                 <ActivityIndicator color="#FFFFFF" size="small" />
               ) : (
-                <Text style={s.btnText}>Continue â†’</Text>
+                <Text style={s.btnText}>{t('onboarding.profileScreen.continue')} →</Text>
               )}
             </TouchableOpacity>
           </View>

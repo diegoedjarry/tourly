@@ -16,7 +16,7 @@ import { useLanguage } from '@/hooks/useLanguage';
 import { getMonthAbbr } from '@/lib/i18n';
 import { supabase } from '@/lib/supabase';
 import { LoadingLogo, LoadingFade } from '@/components/ui/LoadingLogo';
-import { countryFlag } from '@/utils/countryFlag';
+import { countryFlag, nameToIso2 } from '@/utils/countryFlag';
 
 type Surface = 'clay' | 'hard' | 'grass';
 
@@ -247,12 +247,16 @@ function CostByCountry({ tournaments, expenses }: { tournaments: any[]; expenses
 
     const byCountry: Record<string, any[]> = {};
     for (const t of past) {
-      const key = (t.country as string).toUpperCase();
+      const key = nameToIso2(t.country) ?? (t.country as string).toUpperCase();
       if (!byCountry[key]) byCountry[key] = [];
       byCountry[key].push(t);
     }
 
-    return Object.entries(byCountry).map(([country, ts]) => {
+    return Object.entries(byCountry).map(([key, ts]) => {
+      // Display the original (non-normalized) country string from the first
+      // tournament in the group — the key is a canonical ISO-2 code used only
+      // for grouping "USA"/"United States"/etc. into the same bucket.
+      const country = ts[0].country as string;
       let totalSpent = 0, totalPrize = 0, totalDays = 0;
 
       const enriched = ts.map((t: any) => {
@@ -332,15 +336,15 @@ function CostByCountry({ tournaments, expenses }: { tournaments: any[]; expenses
           </View>
           <View style={ds.surfaceStats}>
             <View style={ds.surfaceStat}>
-              <Text style={ds.surfaceStatLabel}>$/day</Text>
+              <Text style={ds.surfaceStatLabel}>{t('insights.perDay')}</Text>
               <Text style={[ds.surfaceStatValue, { color: T.accent }]}>{fmtFull(d.perDay)}</Text>
             </View>
             <View style={ds.surfaceStat}>
-              <Text style={ds.surfaceStatLabel}>Avg. total</Text>
+              <Text style={ds.surfaceStatLabel}>{t('insights.avgSpend')}</Text>
               <Text style={ds.surfaceStatValue}>{fmtFull(d.avgSpent)}</Text>
             </View>
             <View style={ds.surfaceStat}>
-              <Text style={ds.surfaceStatLabel}>Avg. prize</Text>
+              <Text style={ds.surfaceStatLabel}>{t('insights.avgPrize')}</Text>
               <Text style={[ds.surfaceStatValue, { color: T.green }]}>{fmtFull(d.avgPrize)}</Text>
             </View>
           </View>

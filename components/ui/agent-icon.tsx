@@ -11,6 +11,11 @@ const logo = require('@/assets/images/agent-logo.png');
 
 export function AgentIcon({ size = 24 }: AgentIconProps) {
   return (
-    <Image source={logo} style={{ width: size, height: size }} resizeMode="contain" />
+    <Image
+      source={logo}
+      style={{ width: size, height: size }}
+      resizeMode="contain"
+      accessible={false}
+    />
   );
 }

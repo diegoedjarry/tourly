@@ -16,6 +16,7 @@ const COLLAPSED_HEIGHT = SCREEN_HEIGHT * 0.45;
 const EXPANDED_HEIGHT = SCREEN_HEIGHT * 0.92;
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { CITY_COORDS, COUNTRY_CENTERS } from './map-data';
+import { useLanguage } from '@/hooks/useLanguage';
 import { T } from '@/constants/theme';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -187,6 +188,7 @@ export function TournamentMap({
   onClose,
 }: TournamentMapProps) {
   const mapRef = useRef<MapView>(null);
+  const { t } = useLanguage();
   const [selectedGroup, setSelectedGroup] = useState<any[] | null>(null);
   const slideAnim = useRef(new Animated.Value(300)).current;
   const sheetHeight = useRef(new Animated.Value(COLLAPSED_HEIGHT)).current;
@@ -411,7 +413,13 @@ export function TournamentMap({
           <Text style={styles.emptyTitle}>No tournaments added yet</Text>
           <Text style={styles.emptySubtitle}>Add tournaments to see them on your map</Text>
           {onAddTournament && (
-            <TouchableOpacity style={styles.addBtn} onPress={onAddTournament} activeOpacity={0.8}>
+            <TouchableOpacity
+              style={styles.addBtn}
+              onPress={onAddTournament}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel={t('a11y.addTournament')}
+            >
               <Text style={styles.addBtnText}>+</Text>
             </TouchableOpacity>
           )}
@@ -429,6 +437,8 @@ export function TournamentMap({
             })
           }
           activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel={t('a11y.showAllOnMap')}
         >
           <Text style={styles.resetIcon}>⊕</Text>
         </TouchableOpacity>
@@ -436,7 +446,13 @@ export function TournamentMap({
 
       {/* Close button (if onClose provided — e.g. used inside a Modal) */}
       {onClose && (
-        <TouchableOpacity style={styles.closeBtn} onPress={onClose} activeOpacity={0.8}>
+        <TouchableOpacity
+          style={styles.closeBtn}
+          onPress={onClose}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel={t('a11y.closeMap')}
+        >
           <Text style={styles.closeBtnText}>✕</Text>
         </TouchableOpacity>
       )}

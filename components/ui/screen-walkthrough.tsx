@@ -62,11 +62,11 @@ export function ScreenWalkthrough({ steps, visible, onDismiss }: Props) {
 
           <View style={s.btnRow}>
             {!isLast && (
-              <TouchableOpacity onPress={handleSkip} activeOpacity={0.7}>
+              <TouchableOpacity onPress={handleSkip} activeOpacity={0.7} accessibilityRole="button">
                 <Text style={s.skipText}>{t('walkthrough.skip')}</Text>
               </TouchableOpacity>
             )}
-            <TouchableOpacity style={s.nextBtn} onPress={handleNext} activeOpacity={0.85}>
+            <TouchableOpacity style={s.nextBtn} onPress={handleNext} activeOpacity={0.85} accessibilityRole="button">
               <Text style={s.nextText}>{isLast ? t('walkthrough.gotIt') : t('walkthrough.next')}</Text>
             </TouchableOpacity>
           </View>

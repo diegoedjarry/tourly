@@ -733,7 +733,7 @@ export default function SettingsScreen() {
           <View style={s.row}>
             <Text style={s.rowLabel}>{t('settings.preferredRegions')}</Text>
             <View style={s.rowRight}>
-              <Text style={s.rowValue}>South America</Text>
+              <Text style={s.rowValue}>{t('settings.southAmerica')}</Text>
               <Text style={s.rowArrow}>›</Text>
             </View>
           </View>
@@ -799,7 +799,7 @@ export default function SettingsScreen() {
                 {deletingAccount ? (
                   <ActivityIndicator color={T.red} size="small" />
                 ) : (
-                  <Text style={[s.rowLabel, { color: T.red, opacity: 0.7 }]}>Delete Account</Text>
+                  <Text style={[s.rowLabel, { color: T.red, opacity: 0.7 }]}>{t('settings.deleteAccount')}</Text>
                 )}
               </TouchableOpacity>
             </>
@@ -815,7 +815,13 @@ export default function SettingsScreen() {
         title={t('settings.fullName')}
         value={editValue}
         onChange={setEditValue}
-        onSave={() => saveAndClose('full_name', editValue.trim())}
+        onSave={() => {
+          if (!editValue.trim()) {
+            showAlert('Error', 'Name cannot be empty.');
+            return;
+          }
+          saveAndClose('full_name', editValue.trim());
+        }}
         onClose={() => setEditField(null)}
         autoCapitalize="words"
       />
@@ -833,7 +839,16 @@ export default function SettingsScreen() {
         title={t('settings.ranking')}
         value={editValue}
         onChange={setEditValue}
-        onSave={() => saveAndClose('ranking', editValue ? parseInt(editValue, 10) : null)}
+        onSave={() => {
+          if (!editValue.trim()) { saveAndClose('ranking', null); return; }
+          const cleaned = editValue.replace(/[.,]/g, ''); // strip thousands separators
+          const parsed = parseInt(cleaned, 10);
+          if (!Number.isFinite(parsed) || parsed < 0) {
+            showAlert('Error', 'Enter a valid ranking (a positive whole number).');
+            return;
+          }
+          saveAndClose('ranking', parsed);
+        }}
         onClose={() => setEditField(null)}
         keyboardType="number-pad"
         placeholder="ex. 450"
@@ -843,7 +858,16 @@ export default function SettingsScreen() {
         title={t('settings.annualBudget')}
         value={editValue}
         onChange={setEditValue}
-        onSave={() => saveAndClose('annual_budget', editValue ? parseInt(editValue, 10) : null)}
+        onSave={() => {
+          if (!editValue.trim()) { saveAndClose('annual_budget', null); return; }
+          const cleaned = editValue.replace(/[.,]/g, ''); // strip thousands separators
+          const parsed = parseInt(cleaned, 10);
+          if (!Number.isFinite(parsed) || parsed < 0) {
+            showAlert('Error', 'Enter a valid budget (a positive whole number).');
+            return;
+          }
+          saveAndClose('annual_budget', parsed);
+        }}
         onClose={() => setEditField(null)}
         keyboardType="number-pad"
         placeholder="ex. 25000"
@@ -929,7 +953,7 @@ export default function SettingsScreen() {
           <View style={s.modalOverlay}>
             <View style={s.modalCard}>
               <Text style={s.modalTitle}>{t('settings.dateOfBirth')}</Text>
-              <DatePickerField value={editValue} onChange={v => { saveAndClose('date_of_birth', v || null); }} placeholder="Select date" />
+              <DatePickerField value={editValue} onChange={v => { saveAndClose('date_of_birth', v || null); }} placeholder="Select date" lang={lang} />
               <TouchableOpacity style={s.modalCancel} onPress={() => setEditField(null)}>
                 <Text style={s.modalCancelText}>{t('common.cancel')}</Text>
               </TouchableOpacity>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Modal, TextInput,
 } from 'react-native';
@@ -20,9 +20,10 @@ function toIso(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-function formatDisplay(iso: string): string {
+function formatDisplay(iso: string, lang: 'en' | 'es' = 'en'): string {
   const d = parseIso(iso);
-  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  const locale = lang === 'es' ? 'es-CL' : 'en-GB';
+  return d.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -33,13 +34,19 @@ interface Props {
   onChange: (iso: string) => void;
   optional?: boolean;   // show "optional" hint next to label
   placeholder?: string;
+  lang?: 'en' | 'es';
 }
 
-export function DatePickerField({ label, value, onChange, optional, placeholder }: Props) {
+export function DatePickerField({ label, value, onChange, optional, placeholder, lang = 'en' }: Props) {
   const [show, setShow] = useState(false);
   const [tempDate, setTempDate] = useState<Date>(() => parseIso(value));
+  const [webText, setWebText] = useState(value);
 
-  const display = value ? formatDisplay(value) : '';
+  useEffect(() => {
+    setWebText(value);
+  }, [value]);
+
+  const display = value ? formatDisplay(value, lang) : '';
 
   function openPicker() {
     setTempDate(parseIso(value));
@@ -56,10 +63,10 @@ export function DatePickerField({ label, value, onChange, optional, placeholder 
         <View style={s.input}>
           <TextInput
             style={[s.valueText, { flex: 1, outlineStyle: 'none' } as any]}
-            value={value}
+            value={webText}
             onChangeText={(text) => {
-              if (/^\d{4}-\d{2}-\d{2}$/.test(text)) onChange(text);
-              else onChange(text);
+              setWebText(text);
+              if (/^\d{4}-\d{2}-\d{2}$/.test(text) || text === '') onChange(text);
             }}
             placeholder={placeholder || 'YYYY-MM-DD'}
             placeholderTextColor="#BBBBBB"
@@ -68,7 +75,10 @@ export function DatePickerField({ label, value, onChange, optional, placeholder 
             type="date"
             value={value}
             onChange={(e) => {
-              if (e.target.value) onChange(e.target.value);
+              if (e.target.value) {
+                setWebText(e.target.value);
+                onChange(e.target.value);
+              }
             }}
             style={{
               position: 'absolute',

@@ -24,6 +24,27 @@ serve(async (req) => {
       });
     }
 
+    // --- Per-user daily rate limit ---
+    // No Anthropic call here — this guards server CPU/memory (SheetJS parsing
+    // of up to ~7.5MB uploads), so the cap is generous vs. the AI functions.
+    const RATE_LIMIT_PER_DAY = 50;
+    const FN_NAME = 'parse-excel';
+    const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    // Opportunistic prune so ai_usage never grows unbounded.
+    await supabase.from('ai_usage').delete().eq('user_id', user.id).lt('called_at', dayAgo);
+    const { count } = await supabase
+      .from('ai_usage')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', user.id)
+      .eq('function_name', FN_NAME)
+      .gte('called_at', dayAgo);
+    if ((count ?? 0) >= RATE_LIMIT_PER_DAY) {
+      return new Response(JSON.stringify({ error: 'Daily limit reached', rate_limited: true }), {
+        status: 429, headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    await supabase.from('ai_usage').insert({ user_id: user.id, function_name: FN_NAME });
+
     const { base64, fileName } = await req.json();
     if (!base64) {
       return new Response(JSON.stringify({ error: 'No file data provided' }), {

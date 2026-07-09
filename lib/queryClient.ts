@@ -23,6 +23,13 @@ export const queryClient = new QueryClient({
 // previous user's session).
 const SKIP_RESTORE_KEYS = new Set(['profile']);
 
+// Persisting the full q.state per entry (fetch metadata, errors, etc.) made the
+// stored blob grow with every query variant ever seen. Persist only the data
+// payload per query, and refuse to write past a hard size cap — a cold start
+// without cache is strictly better than multi-MB AsyncStorage reads/writes on
+// every mutation for a full season of data.
+const MAX_PERSIST_BYTES = 2_000_000;
+
 export function persistCacheToMmkv() {
   // Restore persisted cache on startup
   AsyncStorage.getItem(CACHE_KEY).then((raw) => {
@@ -36,8 +43,10 @@ export function persistCacheToMmkv() {
         // ['profile', userId].
         const rootKey = Array.isArray(entry.queryKey) ? entry.queryKey[0] : entry.queryKey;
         if (SKIP_RESTORE_KEYS.has(rootKey)) return;
-        if (entry.state?.data) {
-          queryClient.setQueryData(entry.queryKey, entry.state.data);
+        // New format stores `data` directly; old format nested it in `state`.
+        const data = entry.data ?? entry.state?.data;
+        if (data) {
+          queryClient.setQueryData(entry.queryKey, data);
         }
       });
     } catch {}
@@ -48,12 +57,15 @@ export function persistCacheToMmkv() {
     if (persistTimer) clearTimeout(persistTimer);
     persistTimer = setTimeout(() => {
       try {
-        const entries = queryClient.getQueryCache().getAll().map(q => ({
-          queryKey: q.queryKey,
-          queryHash: q.queryHash,
-          state: q.state,
-        }));
-        AsyncStorage.setItem(CACHE_KEY, JSON.stringify(entries)).catch(() => {});
+        const entries = queryClient.getQueryCache().getAll()
+          .filter(q => q.state.data !== undefined)
+          .map(q => ({
+            queryKey: q.queryKey,
+            data: q.state.data,
+          }));
+        const serialized = JSON.stringify(entries);
+        if (serialized.length > MAX_PERSIST_BYTES) return;
+        AsyncStorage.setItem(CACHE_KEY, serialized).catch(() => {});
       } catch {}
     }, 2000);
   });

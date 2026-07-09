@@ -169,6 +169,25 @@ serve(async (req) => {
       }
     }
 
+    // --- Per-user daily rate limit (cost control for the Anthropic call) ---
+    // Deliberately AFTER the cache check: serving a cached estimate costs
+    // nothing, so only calls that will actually hit Anthropic consume quota.
+    const RATE_LIMIT_PER_DAY = 10;
+    const FN_NAME = 'estimate-trip-cost';
+    const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    // Opportunistic prune so ai_usage never grows unbounded.
+    await supabase.from('ai_usage').delete().eq('user_id', user.id).lt('called_at', dayAgo);
+    const { count } = await supabase
+      .from('ai_usage')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', user.id)
+      .eq('function_name', FN_NAME)
+      .gte('called_at', dayAgo);
+    if ((count ?? 0) >= RATE_LIMIT_PER_DAY) {
+      return json({ error: 'Daily limit reached', rate_limited: true }, 429);
+    }
+    await supabase.from('ai_usage').insert({ user_id: user.id, function_name: FN_NAME });
+
     // ── Gather context ───────────────────────────────────────────────────────
     const [{ data: trn }, { data: profile }, { data: myTournaments }, { data: myExpenses }] = await Promise.all([
       supabase.from('tournaments').select('*').eq('id', tournamentId).eq('user_id', user.id).single(),

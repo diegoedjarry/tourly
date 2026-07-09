@@ -409,7 +409,7 @@ export default function AlertsScreen() {
       }
       setPendingWithdraw(null);
     } catch (e: any) {
-      Alert.alert('Could not withdraw', e?.message ?? 'Please try again.');
+      Alert.alert(t('common.couldNotWithdraw'), e?.message ?? t('common.tryAgain'));
     } finally {
       setWithdrawing(false);
     }

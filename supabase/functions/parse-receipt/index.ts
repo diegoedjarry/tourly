@@ -113,6 +113,23 @@ serve(async (req) => {
     const { data: { user }, error: authError } = await supabase.auth.getUser(jwt);
     if (authError || !user) return json({ error: 'Unauthorized' }, 401);
 
+    // --- Per-user daily rate limit (cost control for the Anthropic call) ---
+    const RATE_LIMIT_PER_DAY = 40;
+    const FN_NAME = 'parse-receipt';
+    const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    // Opportunistic prune so ai_usage never grows unbounded.
+    await supabase.from('ai_usage').delete().eq('user_id', user.id).lt('called_at', dayAgo);
+    const { count } = await supabase
+      .from('ai_usage')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', user.id)
+      .eq('function_name', FN_NAME)
+      .gte('called_at', dayAgo);
+    if ((count ?? 0) >= RATE_LIMIT_PER_DAY) {
+      return fallback('Daily receipt limit reached — enter this one manually');
+    }
+    await supabase.from('ai_usage').insert({ user_id: user.id, function_name: FN_NAME });
+
     const body = await req.json().catch(() => null);
     const imageBase64: string | undefined = body?.image_base64;
     const mediaType: string | undefined = body?.media_type;

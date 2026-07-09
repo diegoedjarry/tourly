@@ -9,18 +9,12 @@ import { useAppQuery } from '@/hooks/useAppQuery';
 import { DEMO_MODE } from '@/config/demo';
 import { useLanguage } from '@/hooks/useLanguage';
 import { T } from '@/constants/theme';
+import { getInitials } from '@/utils/name';
 
 const FLAG: Record<string, string> = {
   AR:'🇦🇷',AU:'🇦🇺',BR:'🇧🇷',CL:'🇨🇱',CO:'🇨🇴',DE:'🇩🇪',EC:'🇪🇨',ES:'🇪🇸',
   FR:'🇫🇷',GB:'🇬🇧',IT:'🇮🇹',MX:'🇲🇽',PE:'🇵🇪',PT:'🇵🇹',US:'🇺🇸',UY:'🇺🇾',
 };
-
-function getInitials(name: string | null | undefined): string {
-  if (!name) return '?';
-  const parts = name.trim().split(/\s+/);
-  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
-  return parts[0].substring(0, 2).toUpperCase();
-}
 
 function fmt(n: number): string {
   return `$${Math.abs(n).toLocaleString('en-US')}`;

@@ -28,7 +28,7 @@ import { T, SURFACE_STRIPE } from '@/constants/theme';
 import { TourlyLogo } from '@/components/ui/tourly-logo';
 import { LoadingLogo } from '@/components/ui/LoadingLogo';
 import { useLanguage } from '@/hooks/useLanguage';
-
+import { getInitials } from '@/utils/name';
 
 
 function daysUntil(dateStr: string | undefined): number | null {
@@ -109,13 +109,7 @@ export default function HomeScreen() {
   const { isOnline, pendingCount } = useOfflineSync();
   const { t } = useLanguage();
   const { data: profileData } = useProfile();
-  const profileInitials = (() => {
-    const n = profileData?.full_name;
-    if (!n) return '?';
-    const parts = n.trim().split(/\s+/);
-    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
-    return parts[0].substring(0, 2).toUpperCase();
-  })();
+  const profileInitials = getInitials(profileData?.full_name);
   const hasGeneratedRef = useRef(false);
 
   const [scrapedMatchHistory, setScrapedMatchHistory] = useState<any[]>([]);

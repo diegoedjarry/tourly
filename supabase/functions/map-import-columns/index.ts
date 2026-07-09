@@ -29,6 +29,25 @@ serve(async (req) => {
       });
     }
 
+    // --- Per-user daily rate limit (cost control for the Anthropic call) ---
+    const RATE_LIMIT_PER_DAY = 20;
+    const FN_NAME = 'map-import-columns';
+    const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    // Opportunistic prune so ai_usage never grows unbounded.
+    await supabase.from('ai_usage').delete().eq('user_id', user.id).lt('called_at', dayAgo);
+    const { count } = await supabase
+      .from('ai_usage')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', user.id)
+      .eq('function_name', FN_NAME)
+      .gte('called_at', dayAgo);
+    if ((count ?? 0) >= RATE_LIMIT_PER_DAY) {
+      return new Response(JSON.stringify({ error: 'Daily limit reached', rate_limited: true }), {
+        status: 429, headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    await supabase.from('ai_usage').insert({ user_id: user.id, function_name: FN_NAME });
+
     const { headers, sampleRows } = await req.json();
     if (!headers || !sampleRows) {
       return new Response(JSON.stringify({ error: 'Missing headers or sampleRows' }), {

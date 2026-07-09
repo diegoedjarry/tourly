@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { Text } from '@/components/ui/text';
 import { AgentIcon } from '@/components/ui/agent-icon';
+import { useLanguage } from '@/hooks/useLanguage';
 import { T } from '@/constants/theme';
 
 export interface InsightItem {
@@ -36,6 +37,7 @@ function relativeDate(iso: string): string {
 
 export function FloatingInsight({ insights, locked }: FloatingInsightProps) {
   const [open, setOpen] = useState(false);
+  const { t } = useLanguage();
 
   // Only show the 2 most recent insights
   const shown = (insights ?? []).slice(0, 2);
@@ -48,6 +50,8 @@ export function FloatingInsight({ insights, locked }: FloatingInsightProps) {
         style={s.fab}
         onPress={() => setOpen(true)}
         activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel={t('a11y.aiInsights')}
       >
         {hasInsights ? (
           <AgentIcon size={26} />
@@ -75,7 +79,13 @@ export function FloatingInsight({ insights, locked }: FloatingInsightProps) {
                 <Text style={s.headerTitle}>AI Coaching</Text>
                 <Text style={s.headerSub}>Your latest personalized insights</Text>
               </View>
-              <TouchableOpacity onPress={() => setOpen(false)} activeOpacity={0.7} style={s.closeBtn}>
+              <TouchableOpacity
+                onPress={() => setOpen(false)}
+                activeOpacity={0.7}
+                style={s.closeBtn}
+                accessibilityRole="button"
+                accessibilityLabel={t('common.close')}
+              >
                 <Text style={s.closeBtnText}>✕</Text>
               </TouchableOpacity>
             </View>

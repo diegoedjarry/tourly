@@ -79,6 +79,10 @@ const MONTH_MAP: Record<string, number> = {
   dic: 12, diciembre: 12, dec: 12, december: 12,
 };
 
+function daysInMonth(year: number, month: number): number {
+  return new Date(year, month, 0).getDate(); // month is 1-indexed here
+}
+
 function extractDate(text: string): string | null {
   for (const pattern of DATE_PATTERNS) {
     const m = text.match(pattern);
@@ -88,8 +92,8 @@ function extractDate(text: string): string | null {
       const day = parseInt(m[1]);
       const monthStr = m[2].toLowerCase().slice(0, 3);
       const month = MONTH_MAP[monthStr];
-      if (!month || day < 1 || day > 31) continue;
       const year = m[3] ? (m[3].length === 2 ? 2000 + parseInt(m[3]) : parseInt(m[3])) : new Date().getFullYear();
+      if (!month || month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month)) continue;
       return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     }
 
@@ -97,7 +101,7 @@ function extractDate(text: string): string | null {
       const y = parseInt(m[1]);
       const mo = parseInt(m[2]);
       const d = parseInt(m[3]);
-      if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
+      if (mo >= 1 && mo <= 12 && d >= 1 && d <= daysInMonth(y, mo)) {
         return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
       }
     }
@@ -110,14 +114,22 @@ function extractDate(text: string): string | null {
 
       // If one part must be a day (>12), it disambiguates the format.
       if (a > 12 && b <= 12) {
-        return `${y}-${String(b).padStart(2, '0')}-${String(a).padStart(2, '0')}`;
+        if (b >= 1 && b <= 12 && a >= 1 && a <= daysInMonth(y, b)) {
+          return `${y}-${String(b).padStart(2, '0')}-${String(a).padStart(2, '0')}`;
+        }
+        continue;
       }
       if (b > 12 && a <= 12) {
-        return `${y}-${String(a).padStart(2, '0')}-${String(b).padStart(2, '0')}`;
+        if (a >= 1 && a <= 12 && b >= 1 && b <= daysInMonth(y, a)) {
+          return `${y}-${String(a).padStart(2, '0')}-${String(b).padStart(2, '0')}`;
+        }
+        continue;
       }
       // Ambiguous — default to DD/MM, consistent with the file-import parser.
       if (a <= 12 && b <= 12) {
-        return `${y}-${String(b).padStart(2, '0')}-${String(a).padStart(2, '0')}`;
+        if (b >= 1 && b <= 12 && a >= 1 && a <= daysInMonth(y, b)) {
+          return `${y}-${String(b).padStart(2, '0')}-${String(a).padStart(2, '0')}`;
+        }
       }
     }
   }
@@ -168,7 +180,8 @@ function cleanDescription(seg: string): string {
 function looksLikeHeader(line: string): boolean {
   const l = line.toLowerCase();
   const kws = ['date', 'fecha', 'category', 'categoria', 'categoría', 'description', 'descripcion', 'descripción', 'merchant', 'amount', 'monto', 'currency', 'moneda', 'payment', 'notes', 'notas'];
-  return kws.filter(k => l.includes(k)).length >= 3;
+  const hits = kws.filter(k => new RegExp(`\\b${k}\\b`, 'i').test(l)).length;
+  return hits >= 3 && extractAmount(line) == null;
 }
 
 export function parseNotes(text: string): ParsedExpense[] {

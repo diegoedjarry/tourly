@@ -6,6 +6,7 @@ const ITF3_TO_ISO2: Record<string, string> = {
   'KOR':'KR','IND':'IN','CHI':'CL','COL':'CO','PER':'PE','MEX':'MX','CAN':'CA',
   'RSA':'ZA','EGY':'EG','MAR':'MA','TUN':'TN','SVK':'SK','SLO':'SI','TUR':'TR',
   'ISR':'IL','THA':'TH','MAS':'MY','INA':'ID','PHI':'PH','UZB':'UZ','NGR':'NG',
+  'KOS':'XK','TPE':'TW','HKG':'HK','PUR':'PR',
 };
 
 // Maps full country names (as stored in ITF/Supabase) → 2-letter ISO code
@@ -17,14 +18,14 @@ const NAME_TO_ISO2: Record<string, string> = {
   'czechia':'CZ','denmark':'DK','dominican republic':'DO','ecuador':'EC','egypt':'EG',
   'estonia':'EE','finland':'FI','france':'FR','georgia':'GE','germany':'DE',
   'great britain':'GB','united kingdom':'GB','greece':'GR','guatemala':'GT','honduras':'HN',
-  'hungary':'HU','india':'IN','indonesia':'ID','iran, i.r.':'IR','ireland':'IE',
+  'hong kong':'HK','hungary':'HU','india':'IN','indonesia':'ID','iran, i.r.':'IR','ireland':'IE',
   'israel':'IL','italy':'IT','japan':'JP','jordan':'JO','kazakhstan':'KZ','kenya':'KE',
-  'korea, rep.':'KR','south korea':'KR','latvia':'LV','lebanon':'LB','lithuania':'LT',
+  'korea, rep.':'KR','south korea':'KR','kosovo':'XK','latvia':'LV','lebanon':'LB','lithuania':'LT',
   'luxembourg':'LU','malaysia':'MY','malta':'MT','mexico':'MX','moldova':'MD',
   'republic of moldova':'MD','montenegro':'ME','morocco':'MA','netherlands':'NL',
   'new zealand':'NZ','nigeria':'NG','north macedonia':'MK','norway':'NO','pakistan':'PK',
   'panama':'PA','paraguay':'PY','peru':'PE','philippines':'PH','poland':'PL',
-  'portugal':'PT','romania':'RO','russia':'RU','saudi arabia':'SA','serbia':'RS',
+  'portugal':'PT','puerto rico':'PR','romania':'RO','russia':'RU','saudi arabia':'SA','serbia':'RS',
   'singapore':'SG','slovak republic':'SK','slovakia':'SK','slovenia':'SI',
   'south africa':'ZA','spain':'ES','sweden':'SE','switzerland':'CH','taiwan':'TW',
   'thailand':'TH','tunisia':'TN','turkey':'TR','turkiye':'TR','ukraine':'UA',
@@ -33,7 +34,9 @@ const NAME_TO_ISO2: Record<string, string> = {
 };
 
 function toEmoji(iso2: string): string {
-  return String.fromCodePoint(...[...iso2.toUpperCase()].map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
+  const normalized = iso2.toUpperCase();
+  if (!/^[A-Z]{2}$/.test(normalized)) return '🏳️';
+  return String.fromCodePoint(...[...normalized].map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
 }
 
 /** Resolve any country string (full name, 2-letter ISO, 3-letter ITF) → 2-letter ISO code, or null. */
