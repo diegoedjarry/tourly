@@ -1950,14 +1950,20 @@ async def main(*, players_only: bool = False) -> int:
         print("\n> Phase 2: Player Profiles — reading from profiles table")
         profile_players = await fetch_players_to_scrape(integrator.sb)
 
+    if len(profile_players) > 1:
+        # Rotate start position daily: the WAF often clamps mid-run, so a fixed
+        # order starves the same tail players every day.
+        off = datetime.now(timezone.utc).date().toordinal() % len(profile_players)
+        profile_players = profile_players[off:] + profile_players[:off]
+
     if profile_players:
         # A single player's gate tripping (e.g. Tennis Abstract 403ing that one
         # slug) doesn't fail the whole run — the empty-match-history guard
         # already preserves that player's existing data, so nothing was lost.
-        # Only fail the phase if EVERY player came back empty, which signals a
-        # systemic break (TA layout change, blanket IP block) rather than
-        # one-off per-player flakiness.
-        player_results: list[bool] = []
+        # Only fail the phase if EVERY player came back empty (after the second
+        # pass below), which signals a systemic break (TA layout change,
+        # blanket IP block) rather than one-off per-player flakiness.
+        results_by_name: dict[str, bool] = {}
         for i, pname in enumerate(profile_players):
             if i > 0:
                 # Space out TA requests between players so the WAF is less
@@ -1966,12 +1972,29 @@ async def main(*, players_only: bool = False) -> int:
             print(f"\n> Phase 2: Player Profile — {pname}")
             try:
                 ok = await run_player_phase(integrator, pname)
-                player_results.append(ok)
+                results_by_name[pname] = ok
             except Exception as e:
                 print(f"✗  Player scraper ({pname}): {e}")
-                player_results.append(False)
-        if player_results and not any(player_results):
-            print(f"\n❌  ALL {len(player_results)} player(s) failed their liveness gate — "
+                results_by_name[pname] = False
+
+        # Second pass: WAF blocks are transient (mid-run recovery has been
+        # observed), so give failed players one more shot after a cooldown.
+        failed = [n for n in profile_players if not results_by_name[n]]
+        if failed:
+            print(f"\n> Phase 2 second pass: {len(failed)} player(s) tripped their gate — cooling down 90s for the WAF, then retrying once...")
+            await asyncio.sleep(90)
+            for i, pname in enumerate(failed):
+                if i > 0:
+                    await asyncio.sleep(random.uniform(8, 15))
+                print(f"\n> Phase 2 (retry): Player Profile — {pname}")
+                try:
+                    ok = await run_player_phase(integrator, pname)
+                    results_by_name[pname] = results_by_name[pname] or ok
+                except Exception as e:
+                    print(f"✗  Player scraper retry ({pname}): {e}")
+
+        if results_by_name and not any(results_by_name.values()):
+            print(f"\n❌  ALL {len(results_by_name)} player(s) failed their liveness gate — "
                   f"treating as a systemic failure (not just per-player flakiness).")
             any_failure = True
     else:
