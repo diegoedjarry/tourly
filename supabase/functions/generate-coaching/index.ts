@@ -103,7 +103,7 @@ serve(async (req) => {
     const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
     const response = await anthropic.messages.create({
-      model: 'claude-3-5-sonnet-20241022',
+      model: 'claude-sonnet-5',
       max_tokens: 150,
       messages: [
         {

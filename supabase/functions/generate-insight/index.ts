@@ -270,7 +270,7 @@ ${dataContext}`;
     }
 
     const response = await anthropic.messages.create({
-      model: 'claude-3-5-sonnet-20241022',
+      model: 'claude-sonnet-5',
       max_tokens: 400,
       system: 'You are a financial coaching AI for professional tennis players. Generate specific, data-driven insights in conversational English. Respond with valid JSON only — no markdown, no code blocks, no explanation.',
       messages: [{ role: 'user', content: prompt }],
