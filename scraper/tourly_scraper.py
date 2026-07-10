@@ -902,6 +902,34 @@ class TennisAbstractScraper:
                 working_slug = slug
                 break  # found a valid player page
 
+        # ── Step 2b: jsfrags direct fallback when the player page is blocked ──
+        # The WAF clamps cgi-bin/player.cgi but keeps serving static .js
+        # (observed 2026-07-10: every player page 403'd mid-run while
+        # curr_rank_atp.js fetches kept succeeding). The match data lives in
+        # static jsfrags too, so try {slug}.js directly before giving up.
+        if working_slug is None and not match_rows:
+            async with AsyncSession(impersonate="chrome120") as client:
+                for slug in slugs:
+                    frag_url = f"{self.TA_BASE}/jsfrags/{slug}.js"
+                    rf = await self._ta_get(client, frag_url, headers, f"jsfrags {slug}")
+                    if rf is None or rf.status_code != 200:
+                        continue
+                    frag_html = rf.text
+                    # The frag is: var player_frag = `...html...`
+                    frag_content_m = re.search(r"var\s+player_frag\s*=\s*`([\s\S]*?)`", frag_html)
+                    if not frag_content_m:
+                        continue
+                    frag_content = frag_content_m.group(1)
+                    rows = self._parse_html_table(frag_content, "recent-results")
+                    if not rows:
+                        continue
+                    match_rows    = rows
+                    year_end_rows = self._parse_html_table(frag_content, "year-end-rankings")
+                    print(f"   ✓  jsfrags direct fallback hit for {slug} (player page blocked)")
+                    print(f"   Match rows: {len(match_rows)}, year-end rows: {len(year_end_rows)}")
+                    working_slug = slug
+                    break
+
         # ── Step 3: fallback ranking from curr_rank_atp.js ───────────────────
         if current_ranking is None:
             current_ranking = await self._lookup_curr_rank(player_name)
@@ -1616,6 +1644,15 @@ class TourlyDataIntegrator:
             elif existing_mh and self._match_history_key(new_mh) == self._match_history_key(existing_mh):
                 print(f"=  match_history unchanged for '{player_name}' ({len(new_mh)} tournaments) — skipping write.")
                 return "unchanged"
+
+            # Partial-update semantics: a failed lookup must never null out a
+            # previously good value (2026-07-10: a fully-403'd run wrote
+            # current_ranking=None over Logan Zapp's stored 1365). Strip any
+            # None / empty-list / empty-dict fields so the upsert only touches
+            # columns the scrape actually produced; player_name/last_updated
+            # always have values, so the upsert stays valid.
+            data = {k: v for k, v in data.items()
+                    if not (v is None or (isinstance(v, (list, dict)) and not v))}
 
             self.sb.table("player_profiles").upsert(data, on_conflict="player_name").execute()
             print(f"✓  Player profile synced for '{player_name}'.")
