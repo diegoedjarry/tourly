@@ -13,6 +13,7 @@ Required env vars:
 
 import asyncio
 import os
+import random
 import re
 import sys
 
@@ -766,6 +767,47 @@ class TennisAbstractScraper:
         self.last_row_valid_count: int = 0
         self.last_row_invalid_count: int = 0
 
+    # ── WAF-aware GET helper ──────────────────────────────────────────────────
+
+    async def _ta_get(self, client, url: str, headers: dict, label: str):
+        """GET with the TA WAF dance: one 429 wait-and-retry on the same session,
+        one 403 retry on a fresh session with a different TLS fingerprint
+        (TA's WAF keys on fingerprint + session, so retrying the blocked
+        session rarely helps). Returns the final Response, or None if every
+        attempt raised."""
+        try:
+            r = await client.get(url, headers=headers, timeout=20)
+        except Exception as e:
+            print(f"   ⚠  HTTP error for {label}: {e}")
+            return None
+
+        if r.status_code == 429:
+            print(f"   ⚠  Rate limited — waiting 30s...")
+            await asyncio.sleep(30)
+            try:
+                r = await client.get(url, headers=headers, timeout=20)
+            except Exception as e:
+                print(f"   ⚠  HTTP error for {label}: {e}")
+                return None
+
+        # 403s from Tennis Abstract have been observed to be intermittent
+        # bot-detection rather than a hard per-IP block (a later slug/player
+        # in the same run can succeed) — one retry with backoff before
+        # giving up. The retry uses a FRESH session with a different TLS
+        # fingerprint: TA's WAF keys on the fingerprint + session, so
+        # retrying on the same blocked session rarely helps.
+        if r.status_code == 403:
+            print(f"   ⚠  {label}: HTTP 403 — retrying once with a fresh fingerprint after 20s...")
+            await asyncio.sleep(20)
+            try:
+                async with AsyncSession(impersonate="chrome131") as retry_client:
+                    r = await retry_client.get(url, headers=headers, timeout=20)
+            except Exception as e:
+                print(f"   ⚠  HTTP error for {label} on retry: {e}")
+                return None
+
+        return r
+
     # ── public entry point ────────────────────────────────────────────────────
 
     async def scrape_player(self, player_name: str, store_name: Optional[str] = None) -> Optional[dict]:
@@ -808,29 +850,13 @@ class TennisAbstractScraper:
         async with AsyncSession(impersonate="chrome120") as client:
             for slug in slugs:
                 url = f"{self.TA_BASE}/cgi-bin/player.cgi?p={slug}"
-                try:
-                    r = await client.get(url, headers=headers, timeout=20)
-                except Exception as e:
-                    print(f"   ⚠  HTTP error for {slug}: {e}")
-                    continue
-
-                if r.status_code == 429:
-                    print(f"   ⚠  Rate limited — waiting 30s...")
-                    await asyncio.sleep(30)
-                    r = await client.get(url, headers=headers, timeout=20)
-
                 # 403s from Tennis Abstract have been observed to be intermittent
                 # bot-detection rather than a hard per-IP block (a later slug/player
-                # in the same run can succeed) — one retry with backoff before
-                # giving up on this slug.
-                if r.status_code == 403:
-                    print(f"   ⚠  {slug}: HTTP 403 — retrying once after 15s...")
-                    await asyncio.sleep(15)
-                    try:
-                        r = await client.get(url, headers=headers, timeout=20)
-                    except Exception as e:
-                        print(f"   ⚠  HTTP error for {slug} on retry: {e}")
-                        continue
+                # in the same run can succeed) — _ta_get retries once with backoff
+                # before giving up on this slug.
+                r = await self._ta_get(client, url, headers, slug)
+                if r is None:
+                    continue
 
                 if r.status_code != 200:
                     print(f"   {slug}: HTTP {r.status_code} — skipping")
@@ -858,21 +884,20 @@ class TennisAbstractScraper:
                 frag_filename = frag_m.group(1) if frag_m else f"{slug}.js"
                 frag_url = f"{self.TA_BASE}/jsfrags/{frag_filename}"
                 print(f"   Fetching jsfrags: {frag_url}")
-                try:
-                    rf = await client.get(frag_url, headers=headers, timeout=20)
-                    if rf.status_code == 200:
-                        frag_html = rf.text
-                        # The frag is: var player_frag = `...html...`
-                        frag_content_m = re.search(r"var\s+player_frag\s*=\s*`([\s\S]*?)`", frag_html)
-                        if frag_content_m:
-                            frag_content = frag_content_m.group(1)
-                            match_rows    = self._parse_html_table(frag_content, "recent-results")
-                            year_end_rows = self._parse_html_table(frag_content, "year-end-rankings")
-                            print(f"   Match rows: {len(match_rows)}, year-end rows: {len(year_end_rows)}")
-                    else:
-                        print(f"   ⚠  jsfrags HTTP {rf.status_code} — no match history for {slug}")
-                except Exception as e:
-                    print(f"   ⚠  jsfrags fetch error: {e}")
+                rf = await self._ta_get(client, frag_url, headers, f"jsfrags {slug}")
+                if rf is None:
+                    print(f"   ⚠  jsfrags fetch error — no match history for {slug}")
+                elif rf.status_code == 200:
+                    frag_html = rf.text
+                    # The frag is: var player_frag = `...html...`
+                    frag_content_m = re.search(r"var\s+player_frag\s*=\s*`([\s\S]*?)`", frag_html)
+                    if frag_content_m:
+                        frag_content = frag_content_m.group(1)
+                        match_rows    = self._parse_html_table(frag_content, "recent-results")
+                        year_end_rows = self._parse_html_table(frag_content, "year-end-rankings")
+                        print(f"   Match rows: {len(match_rows)}, year-end rows: {len(year_end_rows)}")
+                else:
+                    print(f"   ⚠  jsfrags HTTP {rf.status_code} — no match history for {slug}")
 
                 working_slug = slug
                 break  # found a valid player page
@@ -1825,6 +1850,18 @@ async def run_player_phase(integrator: TourlyDataIntegrator, player_name: str) -
 # guaranteed 403/no-match, tripping the liveness gate for no reason.
 NON_PLAYER_NAMES = {"reviewer ios", "reviewer", "test", "test account"}
 
+
+def _norm_player_name(name: str) -> str:
+    """
+    Normalise a player name for NON_PLAYER_NAMES comparison: NFKC-fold unicode
+    (turns non-breaking/narrow spaces into plain spaces), collapse internal
+    whitespace runs, lowercase. A DB value like "Reviewer iOS " must match
+    the plain-ascii blocklist entry "reviewer ios".
+    """
+    import unicodedata
+    folded = unicodedata.normalize("NFKC", name or "")
+    return " ".join(folded.split()).lower()
+
 async def fetch_players_to_scrape(supabase: Client) -> list[str]:
     """
     Returns all player names to scrape, in priority order:
@@ -1838,7 +1875,7 @@ async def fetch_players_to_scrape(supabase: Client) -> list[str]:
         res = supabase.table("player_profiles").select("player_name").execute()
         for row in res.data or []:
             n = (row.get("player_name") or "").strip()
-            if n and n.lower() not in NON_PLAYER_NAMES:
+            if n and _norm_player_name(n) not in NON_PLAYER_NAMES:
                 names.append(n)
     except Exception as e:
         print(f"   ⚠  Could not fetch from player_profiles: {e}")
@@ -1846,12 +1883,13 @@ async def fetch_players_to_scrape(supabase: Client) -> list[str]:
     # Source 2: app users with atp_player_name not already covered
     try:
         res2 = supabase.from_("profiles").select("atp_player_name").neq("atp_player_name", None).execute()
-        existing_lower = {n.lower() for n in names}
+        existing_norm = {_norm_player_name(n) for n in names}
         for row in res2.data or []:
             n = (row.get("atp_player_name") or "").strip()
-            if n and n.lower() not in existing_lower and n.lower() not in NON_PLAYER_NAMES:
+            norm = _norm_player_name(n)
+            if n and norm not in existing_norm and norm not in NON_PLAYER_NAMES:
                 names.append(n)
-                existing_lower.add(n.lower())
+                existing_norm.add(norm)
     except Exception as e:
         print(f"   ⚠  Could not fetch from profiles: {e}")
 
@@ -1920,7 +1958,11 @@ async def main(*, players_only: bool = False) -> int:
         # systemic break (TA layout change, blanket IP block) rather than
         # one-off per-player flakiness.
         player_results: list[bool] = []
-        for pname in profile_players:
+        for i, pname in enumerate(profile_players):
+            if i > 0:
+                # Space out TA requests between players so the WAF is less
+                # likely to flag the run.
+                await asyncio.sleep(random.uniform(8, 15))
             print(f"\n> Phase 2: Player Profile — {pname}")
             try:
                 ok = await run_player_phase(integrator, pname)

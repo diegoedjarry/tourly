@@ -5,6 +5,14 @@ on:
     # Every Monday at 06:00 UTC (after weekend results are posted)
     - cron: '0 6 * * 1'
   workflow_dispatch:
+    inputs:
+      # Declared because the trigger-player-scrape edge function dispatches this
+      # workflow with { player_name } — GitHub rejects dispatches carrying
+      # undeclared inputs with a 422, so this block must stay in sync with it.
+      player_name:
+        description: 'Scrape only this player (sets PLAYER_NAME for the run)'
+        required: false
+        type: string
 
 jobs:
   scrape-profiles:
@@ -35,10 +43,23 @@ jobs:
           pip install -r requirements.txt
           playwright install chromium --with-deps
 
+      - name: Run offline regression tests
+        # Deterministic, network-free, no secrets — catches parser/points/
+        # cross-check regressions BEFORE the live scrape runs and writes.
+        env:
+          SUPABASE_URL: https://example.supabase.co
+          SUPABASE_SERVICE_KEY: ci-dummy
+        shell: bash -e {0}
+        run: |
+          cd scraper
+          python test_regression.py
+          python test_crosscheck.py
+
       - name: Run Tourly scraper (ITF calendar, Challenger calendar, player profiles)
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          PLAYER_NAME: ${{ inputs.player_name }}
         shell: bash -e {0}
         # tourly_scraper.py exits 1 if any phase raised or its liveness gate
         # (rows_found below threshold) tripped — no `|| true` / `|| echo` here,

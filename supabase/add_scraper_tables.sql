@@ -59,6 +59,17 @@ create table if not exists public.player_profiles (
   created_at          timestamptz not null default now()
 );
 
+-- The scraper upserts with on_conflict=player_name (tourly_scraper.py
+-- upsert_player_profile) — Postgres requires a unique index on that column or
+-- every upsert fails with "no unique or exclusion constraint matching the ON
+-- CONFLICT specification". Prod already has this; kept here (idempotently) so
+-- fresh environments match.
+do $$ begin
+  alter table public.player_profiles
+    add constraint player_profiles_player_name_key unique (player_name);
+exception when duplicate_table or duplicate_object then null;
+end $$;
+
 -- RLS: each user owns their own profile row (matched by ipin stored in profiles.ipin_number)
 alter table public.player_profiles enable row level security;
 

@@ -201,8 +201,10 @@ def _ts_to_date(ts: Optional[int]) -> Optional[str]:
 
 async def _resolve_player_id(client: AsyncSession, player_name: str) -> Optional[int]:
     """Resolve a player name to a Sofascore team-entity id via search.
-    Prefers an exact (case/diacritic-insensitive) name match; falls back to
-    the first tennis player result."""
+    Requires an exact (case/diacritic-insensitive) name match; only falls back
+    to an unmatched result when it is the SINGLE tennis-player hit — guessing
+    among several candidates risks cross-checking against the wrong player
+    (common surnames), producing false HIGH discrepancies."""
     try:
         r = await client.get(
             f"{SOFASCORE_API}/search/all",
@@ -228,7 +230,9 @@ async def _resolve_player_id(client: AsyncSession, player_name: str) -> Optional
     for ent in tennis_players:
         if names_match(ent.get("name", ""), player_name):
             return ent.get("id")
-    return tennis_players[0].get("id")
+    if len(tennis_players) == 1:
+        return tennis_players[0].get("id")
+    return None  # multiple candidates, none matches — skip cross-check, don't guess
 
 
 async def fetch_player_results(player_name: str, since_date: Optional[str] = None) -> Optional[list[MatchResult]]:

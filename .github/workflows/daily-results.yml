@@ -38,6 +38,18 @@ jobs:
           pip install -r requirements.txt
           playwright install chromium --with-deps
 
+      - name: Run offline regression tests
+        # Deterministic, network-free, no secrets — catches parser/points/
+        # cross-check regressions BEFORE the live scrape runs and writes.
+        env:
+          SUPABASE_URL: https://example.supabase.co
+          SUPABASE_SERVICE_KEY: ci-dummy
+        shell: bash -e {0}
+        run: |
+          cd scraper
+          python test_regression.py
+          python test_crosscheck.py
+
       - name: Run Tourly scraper (player profiles only)
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}

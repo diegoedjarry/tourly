@@ -1,6 +1,13 @@
-playwright>=1.44.0
-playwright-stealth>=1.0.6
-supabase>=2.4.0
-curl_cffi>=0.7.0
-python-dotenv>=1.0.0
-pydantic>=2.0.0
+
+# Upper-bounded pins: CI installs fresh on every run, so an unbounded ">=X"
+# means any future major release (supabase v3, pydantic v3, ...) lands in the
+# daily workflow unreviewed and can break it overnight. Bump bounds on purpose,
+# not by surprise.
+playwright>=1.44.0,<2
+# Floor at 2.0: the code imports `Stealth` (class API), which does not exist
+# in 1.x (only stealth_sync/stealth_async) — a 1.x resolve is an ImportError.
+playwright-stealth>=2.0.0,<3
+supabase>=2.4.0,<3
+curl_cffi>=0.7.0,<1
+python-dotenv>=1.0.0,<2
+pydantic>=2.0.0,<3
