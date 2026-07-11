@@ -378,6 +378,8 @@ const strings = {
   'expenses.sectionBudget': { en: 'Budget', es: 'Presupuesto' },
   'expenses.sectionTournaments': { en: 'Tournaments', es: 'Torneos' },
   'expenses.byCategory': { en: 'By category', es: 'Por categoría' },
+  'expenses.noExpensesYet': { en: 'No expenses in this period yet', es: 'Aún no hay gastos en este período' },
+  'expenses.seeMore': { en: 'See more ›', es: 'Ver más ›' },
   'expenses.ofSpend': { en: 'of spend', es: 'del gasto' },
   'expenses.cashInflow': { en: 'Prize + income', es: 'Premios + ingresos' },
   'expenses.noCashData': { en: 'No money movement in this period yet', es: 'Aún no hay movimientos en este período' },

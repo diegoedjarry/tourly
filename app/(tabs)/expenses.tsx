@@ -19,7 +19,6 @@ import {
   Alert,
 } from 'react-native';
 import { Text } from '@/components/ui/text';
-import { PieChart } from 'react-native-gifted-charts';
 import Svg, { Path, Line as SvgLine, Rect, Defs, ClipPath, Circle } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -29,7 +28,7 @@ import { apiAddExpense, apiUpdateExpense, apiDeleteExpense, apiPatchTournament, 
 import { useIncome } from '@/hooks/useIncome';
 import { useQueryClient } from '@tanstack/react-query';
 import { CashFlowChart } from '@/components/ui/CashFlowChart';
-import { CostLadder } from '@/components/ui/CostLadder';
+import { ExpenseBreakdown } from '@/components/ui/ExpenseBreakdown';
 import { RunwayCard } from '@/components/ui/RunwayCard';
 import { DatePickerField } from '@/components/ui/date-picker-field';
 import { T } from '@/constants/theme';
@@ -2159,215 +2158,6 @@ function buildPieData(expensesRaw: any[]) {
   }) };
 }
 
-function CategoryBreakdown({ expenses, onSelectCategory }: {
-  expenses: any[]; onSelectCategory: (cat: string, color: string) => void;
-}) {
-  const { total, slices } = buildPieData(expenses);
-  if (slices.length === 0) return null;
-
-  return (
-    <View style={ch.card}>
-      <Text style={ch.cardTitle}>By category</Text>
-      <View style={ch.pieRow}>
-        <PieChart
-          data={slices.map(s => ({
-            ...s,
-            text: total > 0 && (s.value / total) >= 0.12 ? `${Math.round((s.value / total) * 100)}%` : '',
-          }))}
-          donut
-          radius={75}
-          innerRadius={46}
-          showText
-          textColor="#FFFFFF"
-          textSize={10}
-          fontWeight="700"
-          labelsPosition="mid"
-          centerLabelComponent={() => (
-            <View style={ch.pieCenter}>
-              <AgentIcon size={78} color={T.bg} />
-            </View>
-          )}
-        />
-        <View style={ch.legend}>
-          {slices.map((s, i) => (
-            <TouchableOpacity key={i} style={ch.legendRow} activeOpacity={0.6}
-              onPress={() => onSelectCategory(s.label, s.color)}>
-              <View style={[ch.legendDot, { backgroundColor: s.color }]} />
-              <Text style={ch.legendLabel} numberOfLines={1}>{s.label}</Text>
-              <Text style={ch.legendAmt}>${s.value.toFixed(0)}</Text>
-              <Text style={{ color: T.textMuted, fontSize: 14 }}>›</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
-    </View>
-  );
-}
-
-function TournamentBreakdown({ expenses: expensesRaw, tournaments, onTap }: {
-  expenses: any[]; tournaments: any[]; onTap: (t: any) => void;
-}) {
-  const { t } = useLanguage();
-  const [showGeneral, setShowGeneral] = useState(false);
-  const expenses = effectiveExpenses(expensesRaw);
-  const rows = useMemo(() => {
-    const byTournament: Record<string, number> = {};
-    const unlinked = { total: 0, count: 0 };
-    const unlinkedExpenses: any[] = [];
-    for (const e of expenses) {
-      if (e.tournamentId) {
-        byTournament[e.tournamentId] = (byTournament[e.tournamentId] ?? 0) + effectiveUsd(e);
-      } else {
-        unlinked.total += effectiveUsd(e);
-        unlinked.count++;
-        unlinkedExpenses.push(e);
-      }
-    }
-    const mapped = Object.entries(byTournament)
-      .map(([id, total]) => {
-        const t = tournaments.find((t: any) => t.id === id);
-        return t ? { id, name: t.name, country: t.country, surface: t.surface, startDate: t.startDate, total, tournament: t } : null;
-      })
-      .filter(Boolean)
-      .sort((a: any, b: any) => (b.startDate ?? '').localeCompare(a.startDate ?? ''));
-    return { mapped: mapped as any[], unlinked, unlinkedExpenses };
-  }, [expenses, tournaments]);
-
-  // Group the unlinked expenses by category for the drill sheet: each group
-  // subtotal descending, expenses newest-first within a group — mirrors the
-  // ordering conventions of buildPieData/drillCategory elsewhere in this file.
-  const generalGroups = useMemo(() => {
-    const byCat: Record<string, any[]> = {};
-    for (const e of rows.unlinkedExpenses) {
-      const cat = groupCategory(normalizeCat(e.category ?? 'Other'));
-      (byCat[cat] ??= []).push(e);
-    }
-    return Object.entries(byCat)
-      .map(([cat, items]) => ({
-        cat,
-        total: items.reduce((s, e) => s + effectiveUsd(e), 0),
-        items: [...items].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? '')),
-      }))
-      .sort((a, b) => b.total - a.total);
-  }, [rows.unlinkedExpenses]);
-
-  if (rows.mapped.length === 0 && rows.unlinked.count === 0) return null;
-
-  return (
-    <View style={tb.card}>
-      <Text style={tb.title}>BY TOURNAMENT</Text>
-      {rows.mapped.map((r: any) => {
-        const surfaceBg = SURFACE_BG[(r.surface as Surface)] ?? T.card;
-        return (
-          <TouchableOpacity key={r.id} style={[tb.row, { backgroundColor: surfaceBg }]} activeOpacity={0.7} onPress={() => onTap(r.tournament)}>
-            <View style={tb.rowLeft}>
-              <Text style={tb.rowName} numberOfLines={1}>
-                {r.country ? countryFlag(r.country) + ' ' : ''}{r.name}
-              </Text>
-              {r.startDate && <Text style={tb.rowDate}>{r.startDate}</Text>}
-            </View>
-            <Text style={tb.rowAmount}>${Math.round(r.total).toLocaleString()}</Text>
-          </TouchableOpacity>
-        );
-      })}
-      {rows.unlinked.count > 0 && (
-        <TouchableOpacity style={tb.row} activeOpacity={0.7} onPress={() => setShowGeneral(true)}>
-          <View style={tb.rowLeft}>
-            <Text style={tb.rowName}>General expenses</Text>
-            <Text style={tb.rowDate}>{rows.unlinked.count} item{rows.unlinked.count !== 1 ? 's' : ''}</Text>
-          </View>
-          <Text style={tb.rowAmount}>${Math.round(rows.unlinked.total).toLocaleString()}</Text>
-        </TouchableOpacity>
-      )}
-
-      {showGeneral && (() => {
-        const closeSheet = () => setShowGeneral(false);
-        return (
-          <Modal transparent animationType="slide" onRequestClose={closeSheet}>
-            <Pressable style={drillStyles.backdrop} onPress={closeSheet}>
-              <Pressable style={drillStyles.sheet} onPress={() => {}}>
-                <View style={drillStyles.handle} />
-                <View style={drillStyles.header}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={drillStyles.title}>{t('expenses.generalExpenses')}</Text>
-                  </View>
-                  <Text style={drillStyles.total}>${Math.round(rows.unlinked.total).toLocaleString()}</Text>
-                </View>
-                <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
-                  {generalGroups.length === 0 ? (
-                    <Text style={drillStyles.empty}>No expenses in this category.</Text>
-                  ) : generalGroups.map((g) => (
-                    <View key={g.cat}>
-                      <View style={tbGeneral.groupHeader}>
-                        <Text style={tbGeneral.groupHeaderLabel}>{g.cat}</Text>
-                        <Text style={tbGeneral.groupHeaderTotal}>{fmt(g.total)}</Text>
-                      </View>
-                      {g.items.map((e: any, i: number) => (
-                        <View key={e.id ?? i} style={drillStyles.row}>
-                          <View style={{ flex: 1, marginRight: 12 }}>
-                            <Text style={drillStyles.rowNote} numberOfLines={1}>{e.note || e.merchant || t('expenses.noDescription')}</Text>
-                            <Text style={drillStyles.rowDate}>{e.date}</Text>
-                          </View>
-                          <View style={{ alignItems: 'flex-end' }}>
-                            <Text style={drillStyles.rowAmt}>{fmtRowAmount(e)}</Text>
-                            {e.currency && e.currency !== 'USD' && e.amountUsd != null && (
-                              <Text style={{ fontSize: 11, color: T.textTertiary, marginTop: 1 }}>≈ {fmt(e.amountUsd)}</Text>
-                            )}
-                          </View>
-                        </View>
-                      ))}
-                    </View>
-                  ))}
-                </ScrollView>
-                <TouchableOpacity style={drillStyles.closeBtn} onPress={closeSheet} activeOpacity={0.7}>
-                  <Text style={drillStyles.closeBtnText}>{t('common.close')}</Text>
-                </TouchableOpacity>
-              </Pressable>
-            </Pressable>
-          </Modal>
-        );
-      })()}
-    </View>
-  );
-}
-
-const tbGeneral = StyleSheet.create({
-  groupHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 14, paddingBottom: 6 },
-  groupHeaderLabel: { fontSize: 12, fontWeight: '700', color: T.textTertiary, letterSpacing: 0.4, textTransform: 'uppercase' },
-  groupHeaderTotal: { fontSize: 12, fontWeight: '700', color: T.textTertiary },
-});
-
-const tb = StyleSheet.create({
-  card: { backgroundColor: T.card, borderRadius: 16, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: T.cardBorder },
-  title: { fontSize: 11, fontWeight: '600', color: T.textTertiary, letterSpacing: 0.6, marginBottom: 12 },
-  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10, marginBottom: 4 },
-  rowLeft: { flex: 1, marginRight: 12 },
-  rowName: { fontSize: 14, fontWeight: '600', color: T.textPrimary },
-  rowDate: { fontSize: 11, color: T.textTertiary, marginTop: 2 },
-  rowAmount: { fontSize: 14, fontWeight: '700', color: T.textPrimary },
-});
-
-const ch = StyleSheet.create({
-  card: { backgroundColor: T.card, borderRadius: 16, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: T.cardBorder },
-  cardTitle: { fontSize: 11, fontWeight: '600', color: T.textTertiary, letterSpacing: 0.6, textTransform: 'uppercase' },
-  chartHeader: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 14 },
-  chartNetAmount: { fontSize: 22, fontWeight: '700' },
-  netGreen: { color: T.green },
-  netRed: { color: T.red },
-  xLabel: { fontSize: 9, color: T.textTertiary, textAlign: 'center', marginTop: 2 },
-  xLabelToday: { color: T.textPrimary, fontWeight: '700' },
-  tooltip: { backgroundColor: T.tealMuted, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, alignItems: 'center' },
-  tooltipText: { fontWeight: '700', fontSize: 13 },
-  pieRow: { flexDirection: 'row', alignItems: 'center', gap: 20 },
-  pieCenter: { alignItems: 'center' },
-  pieCenterAmount: { fontSize: 14, fontWeight: '700', color: T.textPrimary, marginTop: 2 },
-  legend: { flex: 1, gap: 8 },
-  legendRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  legendDot: { width: 8, height: 8, borderRadius: 4, flexShrink: 0 },
-  legendLabel: { flex: 1, fontSize: 12, color: T.textSecondary, textTransform: 'capitalize' },
-  legendAmt: { fontSize: 12, fontWeight: '600', color: T.textPrimary },
-});
-
 const drillStyles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' },
   sheet: {
@@ -2894,7 +2684,6 @@ export default function ExpensesScreen() {
   const demoCtx = useDemoData();
   const [drillCategory, setDrillCategory] = useState<{ cat: string; color: string } | null>(null);
   // ── Financial sections state (cash-flow hero, budget runway, income ledger) ──
-  const [donutOpen, setDonutOpen] = useState(false);
   const [runwayNetMode, setRunwayNetMode] = useState(false);
   const [showIncomeSheet, setShowIncomeSheet] = useState(false);
   const [incomeType, setIncomeType] = useState<'sponsor' | 'federation' | 'stipend' | 'other'>('sponsor');
@@ -3156,45 +2945,8 @@ export default function ExpensesScreen() {
     return { months, netSeries };
   }, [expenses, tournaments, income, period, monthOffset, yearOffset, lang]);
 
-  // ── Tournament cost ladder rows (period-scoped, category-stacked) ──
-  const ladderRows = useMemo(() => {
-    const byT = new Map<string, Record<string, number>>();
-    for (const e of effectiveExpenses(periodExpenses)) {
-      if (!e.tournamentId) continue;
-      const cat = groupCategory(normalizeCat(e.category ?? 'Other'));
-      const b = byT.get(e.tournamentId) ?? {};
-      b[cat] = (b[cat] ?? 0) + effectiveUsd(e);
-      byT.set(e.tournamentId, b);
-    }
-    // One shared label→color map across ALL rows: per-row positional fallback
-    // would give the same custom category different colors in different bars,
-    // contradicting the legend.
-    const colorByLabel = new Map<string, string>();
-    let fallbackIdx = 0;
-    for (const cats of byT.values()) {
-      for (const label of Object.keys(cats)) {
-        if (colorByLabel.has(label)) continue;
-        const preset = CAT_PIE_COLORS[label.toLowerCase()];
-        colorByLabel.set(label, preset ?? PIE_FALLBACK[fallbackIdx++ % PIE_FALLBACK.length]);
-      }
-    }
-    const rows: any[] = [];
-    for (const [id, cats] of byT.entries()) {
-      const trn = tournaments.find((x: any) => x.id === id);
-      if (!trn) continue;
-      const segments = Object.entries(cats).sort((a, b) => b[1] - a[1]).map(([label, value]) => ({
-        label, value,
-        color: colorByLabel.get(label)!,
-      }));
-      rows.push({
-        id, name: trn.name,
-        flag: trn.country ? countryFlag(trn.country) : undefined,
-        total: segments.reduce((s, x) => s + x.value, 0),
-        segments,
-      });
-    }
-    return rows;
-  }, [periodExpenses, tournaments]);
+  // ── Expense breakdown: by-category donut ──
+  const expenseBreakdown = useMemo(() => buildPieData(periodExpenses), [periodExpenses]);
 
   // ── Budget runway (calendar-year scope; projection only for the current year) ──
   const annualBudget = _prof?.annual_budget ?? 0;
@@ -3505,7 +3257,9 @@ export default function ExpensesScreen() {
             <CashFlowChart
               months={cashFlow.months}
               netSeries={cashFlow.netSeries}
-              labels={{ spend: t('expenses.spent'), inflow: t('expenses.cashInflow'), net: t('expenses.net') }}
+              labels={{ spend: t('expenses.spent'), inflow: t('expenses.cashInflow'), net: t('expenses.net'), seeMore: t('expenses.seeMore') }}
+              incomeTotal={periodPrizeMoney + periodIncomeTotal}
+              spendTotal={periodSpent}
               emptyLabel={t('expenses.noCashData')}
               highlightIndex={period === 'year'
                 ? (yearOffset === 0 ? new Date().getMonth() : undefined)
@@ -3517,27 +3271,13 @@ export default function ExpensesScreen() {
               } : undefined}
             />
 
-            {/* ── Category donut: one tap deeper, never side-by-side with the hero ── */}
-            <TouchableOpacity style={styles.catToggleRow} onPress={() => setDonutOpen(o => !o)} activeOpacity={0.7}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.catToggleTitle}>{t('expenses.byCategory')}</Text>
-                {(() => {
-                  const { total, slices } = buildPieData(periodExpenses);
-                  if (!slices.length || total <= 0) return null;
-                  const top = slices.reduce((a, b) => (b.value > a.value ? b : a), slices[0]);
-                  return (
-                    <Text style={styles.catToggleSub}>
-                      {top.label} · {Math.round((top.value / total) * 100)}% {t('expenses.ofSpend')}
-                    </Text>
-                  );
-                })()}
-              </View>
-              <Text style={styles.catToggleChevron}>{donutOpen ? '▾' : '▸'}</Text>
-            </TouchableOpacity>
-            {donutOpen && (
-              <CategoryBreakdown expenses={periodExpenses}
-                onSelectCategory={(cat, color) => setDrillCategory({ cat, color })} />
-            )}
+            {/* ── Category donut: always visible, no collapse ── */}
+            <ExpenseBreakdown
+              slices={expenseBreakdown.slices}
+              title={t('expenses.byCategory')}
+              emptyLabel={t('expenses.noExpensesYet')}
+              onSelectCategory={(cat, color) => setDrillCategory({ cat, color })}
+            />
 
             {/* ══ SECTION: BUDGET ══ */}
             <SectionHeader label={t('expenses.sectionBudget')} />
@@ -3610,30 +3350,6 @@ export default function ExpensesScreen() {
 
             {/* ── Monthly Fixed Expenses ── */}
             <MonthlyFixedSection expenses={expenses} />
-
-            {/* ══ SECTION: TOURNAMENTS ══ */}
-            <SectionHeader label={t('expenses.sectionTournaments')} />
-
-            {/* ── Cost ladder: comparable stacked bars, most expensive first ── */}
-            {ladderRows.length > 0 && (
-              <CostLadder rows={ladderRows} maxRows={5}
-                seeAllLabel={t('expenses.seeAll')}
-                onRowPress={(id) => {
-                  const trn = tournaments.find((x: any) => x.id === id);
-                  if (!trn) return;
-                  const tExp = expenses.filter((e: any) => e.tournamentId === id);
-                  setDetailTournament({ ...trn, spent: effectiveSum(tExp), prize: (trn.singlesPrizeMoney ?? 0) + (trn.doublesPrizeMoney ?? 0) });
-                }} />
-            )}
-
-            <TournamentBreakdown expenses={periodExpenses} tournaments={tournaments} onTap={(t) => {
-              const tExp = expenses.filter((e: any) => e.tournamentId === t.id);
-              const spent = effectiveSum(tExp);
-              const singles = t.singlesPrizeMoney ?? 0;
-              const doubles = t.doublesPrizeMoney ?? 0;
-              const prize = singles + doubles;
-              setDetailTournament({ ...t, spent, prize });
-            }} />
 
             {/* ── Financial Insights Grid ── */}
             <SectionHeader label={t('expenses.financialInsights')} />
@@ -4361,14 +4077,8 @@ const styles = StyleSheet.create({
   errorBannerText: { fontSize: 14, color: T.textPrimary, textAlign: 'center', marginBottom: 12, lineHeight: 20 },
   errorBannerBtn: { backgroundColor: T.red, borderRadius: 10, paddingHorizontal: 18, paddingVertical: 10 },
   errorBannerBtnText: { fontSize: 14, fontWeight: '700', color: T.textPrimary },
-  // ── Financial sections (cash-flow donut toggle, budget, income) ──
-  catToggleRow: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: T.card,
-    borderRadius: 14, borderWidth: 1, borderColor: T.cardBorder,
-    paddingHorizontal: 16, paddingVertical: 14, marginBottom: 16,
-  },
+  // ── Financial sections (budget, income) ──
   catToggleTitle: { fontSize: 14, fontWeight: '700', color: T.textPrimary },
-  catToggleSub: { fontSize: 12, color: T.textTertiary, marginTop: 2 },
   catToggleChevron: { fontSize: 16, color: T.textMuted, marginLeft: 8 },
   setBudgetRow: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: T.card,
