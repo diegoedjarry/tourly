@@ -4,7 +4,6 @@ import {
   TouchableOpacity,
   StyleSheet,
   Modal,
-  Animated,
   useWindowDimensions,
 } from 'react-native';
 import { Text } from '@/components/ui/text';

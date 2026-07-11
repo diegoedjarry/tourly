@@ -24,7 +24,6 @@ import { useFirstVisit } from '@/hooks/useFirstVisit';
 import { AgentIcon } from '@/components/ui/agent-icon';
 import { ScreenWalkthrough } from '@/components/ui/screen-walkthrough';
 import { useRouter } from 'expo-router';
-import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useTrainingBlocks, useAddTrainingBlock, useDeleteTrainingBlock } from '@/hooks/useTrainingBlocks';
 import { TournamentMap } from '@/components/ui/tournament-map';
 import { useProfile } from '@/hooks/useProfile';
@@ -141,7 +140,7 @@ export default function CalendarScreen() {
   const DAYS = lang === 'es' ? DAYS_ES : DAYS_EN;
   const MONTHS = lang === 'es' ? MONTHS_ES : MONTHS_EN;
 
-  const { data: _prof } = useProfile();
+  useProfile();
   const [year, setYear]   = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
   const [detailId, setDetailId] = useState<string | null>(null);

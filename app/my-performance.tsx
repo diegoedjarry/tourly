@@ -21,7 +21,7 @@ import { RankingChart } from '@/components/ui/RankingChart';
 import { T } from '@/constants/theme';
 import { usePullToRefresh } from '@/hooks/usePullToRefresh';
 
-const SURFACES: Array<{ key: 'clay' | 'hard'; label: string; color: string }> = [
+const SURFACES: { key: 'clay' | 'hard'; label: string; color: string }[] = [
   { key: 'clay', label: 'Clay', color: '#D4915A' },
   { key: 'hard', label: 'Hard', color: '#5A8CD4' },
 ];
@@ -214,10 +214,10 @@ export default function MyPerformanceScreen() {
   // Match detail modal data — flat individual match rows (not per-tournament)
   const matchModalEntries = useMemo(() => {
     if (!matchModal) return [];
-    const entries: Array<{
+    const entries: {
       tournamentName: string; date: string; surface: string;
       round: string; opponent: string; score: string; isWin: boolean;
-    }> = [];
+    }[] = [];
 
     atpMatchHistory.forEach((m: any) => {
       if (matchModal.surface && m.surface !== matchModal.surface) return;
@@ -376,7 +376,7 @@ export default function MyPerformanceScreen() {
           const totalW = total.wins;
           const totalL = total.losses;
           const pct = totalW + totalL > 0 ? Math.round((totalW / (totalW + totalL)) * 100) : null;
-          const surfaces: Array<{ key: string; label: string; color: string }> = [
+          const surfaces: { key: string; label: string; color: string }[] = [
             { key: 'clay', label: 'Clay', color: '#D4915A' },
             { key: 'hard', label: 'Hard', color: '#5A8CD4' },
             { key: 'grass', label: 'Grass', color: '#5A9E5A' },
@@ -578,7 +578,7 @@ export default function MyPerformanceScreen() {
             };
           });
 
-          const groups: Array<{ label: string; entries: any[] }> = [
+          const groups: { label: string; entries: any[] }[] = [
             {
               label: 'Challenger',
               entries: enriched.filter((e: any) => e.category === 'Challenger')

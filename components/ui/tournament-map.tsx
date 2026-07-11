@@ -10,14 +10,14 @@ import {
   TouchableOpacity,
   Dimensions,
 } from 'react-native';
-
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-const COLLAPSED_HEIGHT = SCREEN_HEIGHT * 0.45;
-const EXPANDED_HEIGHT = SCREEN_HEIGHT * 0.92;
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { CITY_COORDS, COUNTRY_CENTERS } from './map-data';
 import { useLanguage } from '@/hooks/useLanguage';
 import { T } from '@/constants/theme';
+
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+const COLLAPSED_HEIGHT = SCREEN_HEIGHT * 0.45;
+const EXPANDED_HEIGHT = SCREEN_HEIGHT * 0.92;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -83,23 +83,6 @@ function lookupCoords(city?: string, country?: string, name?: string): [number, 
     if (COUNTRY_CENTERS[code]) return COUNTRY_CENTERS[code];
   }
   return null;
-}
-
-function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371;
-  const rad = Math.PI / 180;
-  const dLat = (lat2 - lat1) * rad;
-  const dLon = (lon2 - lon1) * rad;
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function daysBetweenDates(a: string, b: string): number {
-  const [ay, am, ad] = a.split('-').map(Number);
-  const [by, bm, bd] = b.split('-').map(Number);
-  return Math.abs(
-    new Date(ay, am - 1, ad).getTime() - new Date(by, bm - 1, bd).getTime(),
-  ) / 86400000;
 }
 
 function parseLocalDate(str: string | undefined): Date | null {

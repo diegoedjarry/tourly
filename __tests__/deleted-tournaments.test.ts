@@ -1,12 +1,12 @@
-jest.mock('@react-native-async-storage/async-storage', () =>
-  require('@react-native-async-storage/async-storage/jest/async-storage-mock')
-);
-
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   recordDeletedTournament,
   getDeletedTournamentIds,
 } from '@/lib/deleted-tournaments';
+
+jest.mock('@react-native-async-storage/async-storage', () =>
+  require('@react-native-async-storage/async-storage/jest/async-storage-mock')
+);
 
 const STORAGE_KEY = '@tourly_deleted_tournaments';
 const DAY_MS = 24 * 60 * 60 * 1000;

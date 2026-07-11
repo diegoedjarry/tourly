@@ -2,6 +2,8 @@
 // in turn pulls in lib/supabase.ts (for functions unused by parseNotes), which
 // requires @react-native-async-storage/async-storage's native module and real
 // env vars. Stub both so the module can load under plain jest-expo.
+import { parseNotes } from '@/utils/parse-notes';
+
 jest.mock('@react-native-async-storage/async-storage', () => ({
   __esModule: true,
   default: {
@@ -12,8 +14,6 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
 }));
 jest.mock('@/lib/supabase', () => ({ supabase: {} }));
 jest.mock('xlsx', () => ({}));
-
-import { parseNotes } from '@/utils/parse-notes';
 
 describe('parseNotes — ISO dates round-trip exactly', () => {
   it('keeps a YYYY-MM-DD date unchanged (regression: ISO dates were being mangled)', () => {

@@ -1,3 +1,8 @@
+import { queryClient } from '@/lib/queryClient';
+import { recordDeletedTournament } from '@/lib/deleted-tournaments';
+import { apiDeleteTournament } from '@/lib/api';
+import NetInfo from '@react-native-community/netinfo';
+
 jest.mock('@react-native-async-storage/async-storage', () =>
   require('@react-native-async-storage/async-storage/jest/async-storage-mock')
 );
@@ -29,11 +34,6 @@ jest.mock('@/lib/supabase', () => ({
     from: (_table: string) => ({ delete: mockDelete }),
   },
 }));
-
-import { queryClient } from '@/lib/queryClient';
-import { recordDeletedTournament } from '@/lib/deleted-tournaments';
-import { apiDeleteTournament } from '@/lib/api';
-import NetInfo from '@react-native-community/netinfo';
 
 beforeEach(() => {
   jest.clearAllMocks();

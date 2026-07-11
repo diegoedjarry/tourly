@@ -10,6 +10,13 @@
 // `mock` because jest.mock() factories may only reference out-of-scope
 // variables whose names start with "mock" (enforced by babel-plugin-jest-hoist).
 
+import NetInfo from '@react-native-community/netinfo';
+import {
+  apiPatchTournament,
+  apiAddExpense,
+  apiDeleteExpense,
+} from '@/lib/api';
+
 jest.mock('@react-native-async-storage/async-storage', () =>
   require('@react-native-async-storage/async-storage/jest/async-storage-mock')
 );
@@ -67,13 +74,6 @@ jest.mock('@/lib/supabase', () => ({
     },
   },
 }));
-
-import NetInfo from '@react-native-community/netinfo';
-import {
-  apiPatchTournament,
-  apiAddExpense,
-  apiDeleteExpense,
-} from '@/lib/api';
 
 function cacheKey(key: string[]) {
   return JSON.stringify(key);

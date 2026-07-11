@@ -1,3 +1,15 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
+import { queryClient } from '@/lib/queryClient';
+import {
+  enqueue,
+  processQueue,
+  getQueueLength,
+  getFailedQueueLength,
+  clearQueue,
+} from '@/lib/offline-queue';
+import { apiAddExpense, apiAddTournament } from '@/lib/api';
+
 jest.mock('@react-native-async-storage/async-storage', () =>
   require('@react-native-async-storage/async-storage/jest/async-storage-mock')
 );
@@ -47,18 +59,6 @@ jest.mock('@/lib/supabase', () => ({
     },
   },
 }));
-
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import NetInfo from '@react-native-community/netinfo';
-import { queryClient } from '@/lib/queryClient';
-import {
-  enqueue,
-  processQueue,
-  getQueueLength,
-  getFailedQueueLength,
-  clearQueue,
-} from '@/lib/offline-queue';
-import { apiAddExpense, apiAddTournament } from '@/lib/api';
 
 const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 

@@ -32,7 +32,6 @@ import {
   insertExpenses,
   smartParse,
   checkDuplicates,
-  type MappedExpense,
   type ImportResult,
 } from '@/utils/import-expenses';
 import { parseNotes, type ParsedExpense } from '@/utils/parse-notes';
@@ -123,7 +122,7 @@ export default function SettingsScreen() {
   const [showChangeEmail, setShowChangeEmail] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [newEmail, setNewEmail] = useState('');
-  const [currentPassword, setCurrentPassword] = useState('');
+  const [, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [accountLoading, setAccountLoading] = useState(false);

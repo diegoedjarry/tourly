@@ -42,6 +42,8 @@ import { estimateTripCost } from '@/utils/trip-estimate';
 import { fetchTripCostEstimate, TripCostEstimate } from '@/utils/trip-ai';
 import { parseAmount } from '../../utils/import-expenses';
 import { usePullToRefresh } from '@/hooks/usePullToRefresh';
+import { TournamentExpenseDetail } from '@/app/(tabs)/expenses';
+import { LoadingLogo } from '@/components/ui/LoadingLogo';
 
 // Supervisor contact fields come from scraped data — validate strictly before
 // handing them to Linking.openURL so a malformed value can't smuggle extra
@@ -53,8 +55,6 @@ const TOURNAMENTS_WALKTHROUGH = [
   { icon: '➕', title: 'Add a Tournament', body: 'Tap + to add your first tournament. Tourly calculates all deadlines automatically from the start date.' },
   { icon: '📋', title: 'Tournament details', body: 'Tap any tournament to see its full breakdown — deadlines, expenses, prize money, and net result.' },
 ];
-import { TournamentExpenseDetail } from '@/app/(tabs)/expenses';
-import { LoadingLogo } from '@/components/ui/LoadingLogo';
 
 function genId(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -300,7 +300,6 @@ const CATEGORY_GROUPS = [
   { label: 'ATP Challengers', items: ['Challenger 50', 'Challenger 75', 'Challenger 100', 'Challenger 125', 'Challenger 175'] },
   { label: 'ATP Tour', items: ['ATP 250', 'ATP 500', 'Masters 1000', 'Grand Slam'] },
 ];
-const CATEGORIES = CATEGORY_GROUPS.flatMap(g => g.items);
 const COUNTRIES = [
   {code:'AF',name:'Afghanistan'},{code:'AL',name:'Albania'},{code:'DZ',name:'Algeria'},{code:'AD',name:'Andorra'},
   {code:'AO',name:'Angola'},{code:'AG',name:'Antigua and Barbuda'},{code:'AR',name:'Argentina'},{code:'AM',name:'Armenia'},
@@ -1849,7 +1848,6 @@ function TournamentDiscoveryModal({
   const [addingIds, setAddingIds] = useState<Set<string>>(new Set());
 
   const myCalendarIds = new Set(allTournaments.filter((t: any) => t.isInMyList !== false).map((t: any) => t.id));
-  const discoverable = allTournaments.filter((trn: any) => trn.isInMyList === false);
 
   // ITF tournaments from Supabase that user hasn't added yet
   const itfDiscoverable = itfTournaments.filter(t => !myCalendarIds.has(t.id));

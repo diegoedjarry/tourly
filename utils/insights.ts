@@ -522,11 +522,11 @@ function entryDeadlineUrgency(tournaments: any[]): InsightResult | null {
 
 // ─── Priority selector ───────────────────────────────────────────────────────
 
-const INSIGHT_GENERATORS: Array<{
+const INSIGHT_GENERATORS: {
   type: string;
   fn: (t: any[], e: any[]) => InsightResult | null;
   minCooldownHours: number;
-}> = [
+}[] = [
   { type: 'tournament_roi',          fn: tournamentROI,          minCooldownHours: 0 },
   { type: 'points_defense',          fn: (t) => pointsDefenseWarning(t), minCooldownHours: 24 },
   { type: 'spending_spike',          fn: spendingSpike,          minCooldownHours: 72 },
@@ -550,7 +550,7 @@ const INSIGHT_GENERATORS: Array<{
 export function selectInsight(
   tournaments: any[],
   expenses: any[],
-  recentInsights: Array<{ type: string; generated_at: string }>,
+  recentInsights: { type: string; generated_at: string }[],
   forceMonday = false,
 ): InsightResult | null {
   const now = new Date();

@@ -16,7 +16,7 @@ class AsyncStorageStore extends StoreInterface {
     await AsyncStorage.removeItem(key);
   }
 
-  async multiSet(pairs: Array<[string, any]>) {
+  async multiSet(pairs: [string, any][]) {
     await AsyncStorage.multiSet(pairs.map(([k, v]) => [k, JSON.stringify(v)]));
   }
 

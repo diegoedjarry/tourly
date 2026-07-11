@@ -4,18 +4,15 @@ import {
   ScrollView,
   TouchableOpacity,
   StyleSheet,
-  useWindowDimensions,
   RefreshControl,
 } from 'react-native';
 import { Text } from '@/components/ui/text';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import Svg from 'react-native-svg';
 import { useAppQuery } from '@/hooks/useAppQuery';
 import { T } from '@/constants/theme';
 import { totalPrizeMoney } from '@/utils/prize-money';
 import { useLanguage } from '@/hooks/useLanguage';
-import { getMonthAbbr } from '@/lib/i18n';
 import { supabase } from '@/lib/supabase';
 import { LoadingLogo, LoadingFade } from '@/components/ui/LoadingLogo';
 import { countryFlag, nameToIso2 } from '@/utils/countryFlag';
@@ -39,11 +36,6 @@ const CAT_COLORS: Record<string, string> = {
 
 function catColor(cat: string) { return CAT_COLORS[cat] ?? T.textTertiary; }
 
-function fmt(n: number): string {
-  const abs = Math.abs(n);
-  if (abs >= 1000) return `$${(abs / 1000).toFixed(abs >= 10000 ? 0 : 1)}k`;
-  return `$${abs.toLocaleString('en-US')}`;
-}
 function fmtFull(n: number): string {
   return `$${Math.abs(n).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
 }
@@ -137,7 +129,7 @@ function SummaryBox({ text }: { text: string }) {
 
 function WhereMoneyGoes({ expenses, tournaments }: { expenses: any[]; tournaments: any[] }) {
   const [expandedCat, setExpandedCat] = useState<string | null>(null);
-  const { t, lang } = useLanguage();
+  const { t } = useLanguage();
 
   const effExpenses = useMemo(() => effectiveExpenses(expenses), [expenses]);
 
@@ -436,7 +428,6 @@ function TournamentCosts({ tournaments, expenses }: { tournaments: any[]; expens
       )}
       <View style={{ marginTop: summary ? 8 : 16 }}>
         {ranked.map((t, i) => {
-          const sc = SURFACE_COLORS[t.surface as Surface];
           return (
             <TouchableOpacity key={t.id} style={ds.listRow} activeOpacity={0.7}
               onPress={() => router.push({ pathname: '/(tabs)/expenses', params: { openTournament: t.id } })}>

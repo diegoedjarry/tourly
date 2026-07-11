@@ -14,16 +14,12 @@ import {
   Platform,
   ActivityIndicator,
   Switch,
-  useWindowDimensions,
-  PanResponder,
   Alert,
   RefreshControl,
 } from 'react-native';
 import { Text } from '@/components/ui/text';
-import Svg, { Path, Line as SvgLine, Rect, Defs, ClipPath, Circle } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useAppQuery } from '@/hooks/useAppQuery';
 import { apiAddExpense, apiUpdateExpense, apiDeleteExpense, apiPatchTournament, apiAddTournament, apiAddIncome, apiDeleteIncome } from '@/lib/api';
 import { useIncome } from '@/hooks/useIncome';
@@ -55,6 +51,9 @@ import * as Haptics from 'expo-haptics';
 import { parseAmount, insertExpenses, mapPasteNotesToExpenses } from '@/utils/import-expenses';
 import { expenseDupeKey } from '@/utils/categories';
 import { usePullToRefresh } from '@/hooks/usePullToRefresh';
+
+import { countryFlag } from '@/utils/countryFlag';
+import { playerNameFilter } from '@/utils/text';
 
 const EXPENSES_WALKTHROUGH = [
   { icon: '💸', title: 'Log Your First Expense', body: 'Tap + to log your first expense. Link it to a tournament to track your weekly costs and see which tournaments give the best financial return.' },
@@ -160,87 +159,6 @@ function receiptCategoryToChip(receiptCategory: string): string {
   const mapped = RECEIPT_TO_APP_CATEGORY[receiptCategory as keyof typeof RECEIPT_TO_APP_CATEGORY] ?? 'Other';
   return RECEIPT_CAT_TO_CHIP[mapped] ?? mapped;
 }
-
-// ─── Daily-rotating insight messages ──────────────────────────────────────────
-
-const DAY_IDX = Math.floor(Date.now() / 86400000);
-function pickMsg<T>(arr: T[]): T { return arr[DAY_IDX % arr.length]; }
-
-type ID = { net: string; spent: string; earned: string };
-const INSIGHTS: Record<string, Record<string, Array<(d: ID) => string>>> = {
-  week: {
-    profitable: [
-      d => `Up ${d.net} this week. Prize money covering the grind — that's the goal.`,
-      d => `Green week — ${d.net} net positive. Keep this up and the tour starts paying for itself.`,
-      d => `${d.earned} earned, ${d.spent} spent. You're running it right this week.`,
-      d => `Positive week — ${d.net} net. Discipline on court and off it.`,
-      d => `${d.net} ahead this week. This is what building a pro career looks like.`,
-    ],
-    spending: [
-      d => `${d.spent} into the tour this week. Every dollar logged is one you can learn from.`,
-      d => `Investment week — ${d.spent} out. Track it all, the wins will follow.`,
-      d => `${d.spent} spent this week. The best players track every dollar — you're doing it right.`,
-      d => `Heavy week at ${d.spent}. You showed up, competed, and tracked it. That's professional.`,
-      d => `${d.spent} this week. Control what you can — your numbers are sharp.`,
-    ],
-    empty: [
-      () => `Fresh week. Log your first expense and you're already ahead of most players on tour.`,
-      () => `Week just started. Every dollar you track is data that works for you.`,
-      () => `No expenses yet this week — discipline or early days, either way you're on it.`,
-      () => `Clean slate this week. Start logging and build your financial edge.`,
-      () => `New week, new opportunity to track everything. Start now.`,
-    ],
-  },
-  month: {
-    profitable: [
-      d => `${d.net} net positive this month. You're making the numbers work.`,
-      d => `Month's looking green — ${d.net} ahead. Prize money doing its job.`,
-      d => `${d.earned} earned vs ${d.spent} spent this month. You're ahead of the curve.`,
-      d => `Profitable month — ${d.net} net. Not luck, that's discipline.`,
-      d => `Green month. ${d.net} ahead. This is what financial control on tour looks like.`,
-    ],
-    spending: [
-      d => `${d.spent} invested this month. Every court fee, flight, and hotel — you're building something.`,
-      d => `Heavy month at ${d.spent}. You showed up, competed, and tracked it all. That's professional.`,
-      d => `${d.spent} into the tour this month. Every dollar you log is leverage most players don't have.`,
-      d => `${d.spent} this month. The data you're building now tells you exactly where to cut next.`,
-      d => `${d.spent} out this month. Control what you can — your tracking is sharp.`,
-    ],
-    empty: [
-      () => `Month's still fresh. Log your first expense and start building your financial picture.`,
-      () => `No expenses yet this month. Every entry you add puts you ahead of players who wing it.`,
-      () => `Clean month so far. When expenses start rolling in, you'll be ready.`,
-      () => `Month just started — your tracking edge begins with the first entry.`,
-      () => `Fresh month. Log everything and you'll have the full picture at the end.`,
-    ],
-  },
-  year: {
-    profitable: [
-      d => `${d.net} net positive for the year. You're running the tour like a business.`,
-      d => `Year-to-date: ${d.earned} earned, ${d.spent} spent. You're in the green.`,
-      d => `Positive year — ${d.net} ahead. Wins plus discipline equals this.`,
-      d => `Green year. ${d.net} net. Most players don't track this — you do, and it shows.`,
-      d => `${d.net} net this year. You're treating this career like a business. Keep it up.`,
-    ],
-    spending: [
-      d => `${d.spent} invested in your career this year. Every tournament, flight, and string job.`,
-      d => `Big year of investment — ${d.spent} out. Tracking this turns data into decisions.`,
-      d => `${d.spent} into the tour this year. You're treating this like a business — that's the right call.`,
-      d => `Year's been a grind — ${d.spent} out. But every dollar tracked gives you the edge others don't have.`,
-      d => `${d.spent} this year. You know where every dollar went — that's power most players don't have.`,
-    ],
-    empty: [
-      () => `Year on the books. Start logging and build a financial record of your whole season.`,
-      () => `No expenses logged this year yet. Every tournament you track builds your full career picture.`,
-      () => `Year's just getting started. Log everything — at year end, this data tells your whole story.`,
-      () => `Clean year so far. When expenses start rolling, you'll have the fullest picture on tour.`,
-      () => `Fresh year. Track from day one and you'll have the clearest financial picture in the locker room.`,
-    ],
-  },
-};
-
-import { countryFlag } from '@/utils/countryFlag';
-import { playerNameFilter } from '@/utils/text';
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -378,7 +296,6 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
   const [tournamentId, setTournamentId]         = useState(defaultTournamentId ?? autoMatchedId ?? '');
   const [manuallyPicked, setManuallyPicked]     = useState(!!defaultTournamentId);
   const [dropdownOpen, setDropdownOpen]          = useState(false);
-  const [withCoach, setWithCoach]                = useState(false);
   const [category, setCategory]                  = useState('flight');
   const [customMode, setCustomMode]              = useState(false);
   const [customText, setCustomText]              = useState('');
@@ -420,7 +337,6 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tournamentId]);
 
-  const allCategories = withCoach ? [...PERSONAL_CATS, ...COACH_CATS] : PERSONAL_CATS;
   const isCoachExpense = COACH_CATS.includes(category);
   const isFixedCat = FIXED_CATS.has(category.toLowerCase());
 
@@ -888,7 +804,6 @@ function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => v
   const personalCatLabels = PERSONAL_CAT_KEYS.map(k => t(k));
   const coachCatLabels    = COACH_CAT_KEYS.map(k => t(k));
   const demoCtx = useDemoData();
-  const isCoach = COACH_CATS.includes(expense.category);
   const knownCat = [...PERSONAL_CATS, ...COACH_CATS, ...MONTHLY_FIXED_CATS].includes(expense.category);
 
   const expIsFixed = !!(expense.is_monthly_fixed || expense.isMonthlyFixed);
@@ -904,7 +819,6 @@ function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => v
   const [isMonthlyFixed, setIsMonthlyFixed] = useState(expIsFixed);
   const [fixedMonth,     setFixedMonth]     = useState(initMonth);
   const [fixedYear,      setFixedYear]      = useState(initYear);
-  const [withCoach,  setWithCoach]  = useState(isCoach);
   const [category,   setCategory]   = useState(expense.category ?? 'Flights');
   const [customMode, setCustomMode] = useState(!knownCat);
   const [customText, setCustomText] = useState(knownCat ? '' : expense.category ?? '');
@@ -1625,7 +1539,7 @@ export function TournamentExpenseDetail({ tournament, onClose, allTournaments }:
   const [editExpense,     setEditExpense]     = useState<any | null>(null);
   const [deleteExpense,   setDeleteExpense]   = useState<any | null>(null);
   const [linkExpenses,    setLinkExpenses]    = useState<any[]>([]);
-  const [deleting,        setDeleting]        = useState(false);
+  const [, setDeleting]        = useState(false);
 
   async function confirmDelete(expense: any) {
     setDeleting(true);
@@ -2886,7 +2800,7 @@ export default function ExpensesScreen() {
 
   const [pStart, pEnd] = useMemo(() => periodRange(period, monthOffset, yearOffset), [period, monthOffset, yearOffset]);
 
-  const MONTH_KEYS: Array<Parameters<typeof t>[0]> = [
+  const MONTH_KEYS: Parameters<typeof t>[0][] = [
     'month.january','month.february','month.march','month.april','month.may','month.june',
     'month.july','month.august','month.september','month.october','month.november','month.december'
   ];
@@ -3603,7 +3517,7 @@ export default function ExpensesScreen() {
                     const sel = selectedSpentIds.has(exp.id);
                     return (
                       <TouchableOpacity activeOpacity={0.7}
-                        onPress={() => setSelectedSpentIds(prev => { const n = new Set(prev); n.has(exp.id) ? n.delete(exp.id) : n.add(exp.id); return n; })}
+                        onPress={() => setSelectedSpentIds(prev => { const n = new Set(prev); if (n.has(exp.id)) { n.delete(exp.id); } else { n.add(exp.id); } return n; })}
                         style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, paddingHorizontal: 4, borderRadius: 8, backgroundColor: sel ? 'rgba(91,91,214,0.12)' : 'transparent', marginBottom: item.isLast ? 12 : 2 }}>
                         <View style={{ width: 18, height: 18, borderRadius: 9, borderWidth: 2, borderColor: sel ? '#5B5BD6' : '#3A3A5A', backgroundColor: sel ? '#5B5BD6' : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
                           {sel && <Text style={{ color: '#FFF', fontSize: 10, fontWeight: '700' }}>✓</Text>}
@@ -3710,7 +3624,7 @@ export default function ExpensesScreen() {
                         activeOpacity={0.7}
                         onPress={() => setSelectedPrizeIds(prev => {
                           const next = new Set(prev);
-                          next.has(trn.id) ? next.delete(trn.id) : next.add(trn.id);
+                          if (next.has(trn.id)) { next.delete(trn.id); } else { next.add(trn.id); }
                           return next;
                         })}
                         style={{ paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#2A2A4A', flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: selected ? 'rgba(91,91,214,0.12)' : 'transparent', borderRadius: 8, paddingHorizontal: 4 }}

@@ -30,7 +30,6 @@ import { T, SURFACE_STRIPE } from '@/constants/theme';
 import { TourlyLogo } from '@/components/ui/tourly-logo';
 import { LoadingLogo } from '@/components/ui/LoadingLogo';
 import { useLanguage } from '@/hooks/useLanguage';
-import { getInitials } from '@/utils/name';
 import { usePullToRefresh } from '@/hooks/usePullToRefresh';
 
 
@@ -44,7 +43,7 @@ function daysUntil(dateStr: string | undefined): number | null {
 }
 
 function getUpcomingDeadlines(tournaments: any[]) {
-  const items: Array<{ t: any; type: string; date: string; days: number | null; isToday: boolean }> = [];
+  const items: { t: any; type: string; date: string; days: number | null; isToday: boolean }[] = [];
   for (const t of tournaments) {
     if (t.isWithdrawn || t.isInMyList === false) continue;
     // Withdrawal only applies once registered
@@ -112,8 +111,7 @@ export default function HomeScreen() {
   const swipeHandlers = useTabSwipe();
   const { isOnline, pendingCount } = useOfflineSync();
   const { t, lang } = useLanguage();
-  const { data: profileData } = useProfile();
-  const profileInitials = getInitials(profileData?.full_name);
+  useProfile();
   const hasGeneratedRef = useRef(false);
 
   const [scrapedMatchHistory, setScrapedMatchHistory] = useState<any[]>([]);
@@ -190,7 +188,7 @@ export default function HomeScreen() {
     return { played, totalSpent, totalPrize, net: totalPrize - totalSpent };
   }, [tournaments, expenses, scrapedMatchHistory]);
 
-  const { activeTournamentSpent, recentExpenses, activePrizeMoney, activeNet } = useMemo(() => {
+  const { activeTournamentSpent, recentExpenses, activeNet } = useMemo(() => {
     const atExpenses = activeTournament
       ? expenses.filter((e: any) => e.tournamentId === activeTournament.id)
       : [];

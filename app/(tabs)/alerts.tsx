@@ -22,13 +22,14 @@ import type { StoredDeadlineKind } from '@/utils/deadlines';
 import { useFirstVisit } from '@/hooks/useFirstVisit';
 import { useTabSwipe } from '@/hooks/useTabSwipe';
 import { ScreenWalkthrough } from '@/components/ui/screen-walkthrough';
-import { IconSymbol } from '@/components/ui/icon-symbol';
 import { TournamentDetail } from '@/app/(tabs)/tournaments';
 import { AgentIcon } from '@/components/ui/agent-icon';
 import { T } from '@/constants/theme';
 import { useLanguage } from '@/hooks/useLanguage';
 import { useRouter } from 'expo-router';
 import { usePullToRefresh } from '@/hooks/usePullToRefresh';
+
+import { countryFlag } from '@/utils/countryFlag';
 
 type Urgency = 'urgent' | 'week' | 'upcoming';
 
@@ -51,8 +52,6 @@ interface AlertItem {
   daysSigned: number;
   hoursSigned: number | null;
 }
-
-import { countryFlag } from '@/utils/countryFlag';
 
 function parseLocalDate(val: any): Date | null {
   if (!val) return null;

@@ -1,5 +1,14 @@
 // xlsx is imported at module top in utils/import-expenses.ts but none of the
 // pure functions under test touch it — stub it so jest doesn't need the real lib.
+import {
+  parseDate,
+  parseAmount,
+  detectHeaderRow,
+  mapColumnsLocal,
+  smartParse,
+  applyMapping,
+} from '@/utils/import-expenses';
+
 jest.mock('xlsx', () => ({}));
 
 // utils/import-expenses.ts also pulls in lib/supabase.ts (for checkDuplicates /
@@ -15,15 +24,6 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
   },
 }));
 jest.mock('@/lib/supabase', () => ({ supabase: {} }));
-
-import {
-  parseDate,
-  parseAmount,
-  detectHeaderRow,
-  mapColumnsLocal,
-  smartParse,
-  applyMapping,
-} from '@/utils/import-expenses';
 
 describe('parseAmount — comma/thousands separator regression', () => {
   // Old code did str.replace(',', '.') which only replaces the FIRST comma,

@@ -1,6 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { View, useWindowDimensions, GestureResponderEvent, PanResponderGestureState } from 'react-native';
-import { PanResponder } from 'react-native';
+import { View, useWindowDimensions, GestureResponderEvent, PanResponderGestureState , PanResponder } from 'react-native';
 import { Text } from '@/components/ui/text';
 import Svg, { Path, Circle, Line, Text as SvgText } from 'react-native-svg';
 import { T } from '@/constants/theme';
@@ -127,7 +126,7 @@ export function RankingChart({ points }: { points: { date: string; ranking: numb
 
   // X axis labels — one per unique month only
   const seenMonths = new Set<string>();
-  const xLabels: Array<{ i: number; month: string }> = [];
+  const xLabels: { i: number; month: string }[] = [];
   sorted.forEach((p, i) => {
     const month = MONTHS_SHORT[parseInt(p.date.slice(5, 7)) - 1];
     if (!seenMonths.has(month)) { seenMonths.add(month); xLabels.push({ i, month }); }

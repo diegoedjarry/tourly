@@ -1,3 +1,9 @@
+import {
+  rescheduleAllNotifications,
+  cancelTournamentNotifications,
+  cancelOrphanedNotifications,
+} from '@/utils/notifications';
+
 jest.mock('@react-native-async-storage/async-storage', () =>
   require('@react-native-async-storage/async-storage/jest/async-storage-mock')
 );
@@ -49,12 +55,6 @@ jest.mock('@/lib/deleted-tournaments', () => ({
 jest.mock('@/lib/supabase', () => ({
   supabase: { auth: { getUser: jest.fn() }, from: jest.fn() },
 }));
-
-import {
-  rescheduleAllNotifications,
-  cancelTournamentNotifications,
-  cancelOrphanedNotifications,
-} from '@/utils/notifications';
 
 // Minimal tournament fixture. signUpDeadline is a plain future date string;
 // buildSpecs() only schedules reminders whose trigger is still in the future

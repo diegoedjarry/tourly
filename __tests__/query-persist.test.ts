@@ -1,13 +1,13 @@
-jest.mock('@react-native-async-storage/async-storage', () =>
-  require('@react-native-async-storage/async-storage/jest/async-storage-mock')
-);
-
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   queryClient,
   persistCacheToMmkv,
   clearPersistedCache,
 } from '@/lib/queryClient';
+
+jest.mock('@react-native-async-storage/async-storage', () =>
+  require('@react-native-async-storage/async-storage/jest/async-storage-mock')
+);
 
 const CACHE_KEY = 'react-query-cache';
 
