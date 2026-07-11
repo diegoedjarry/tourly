@@ -48,3 +48,16 @@ app-example
 # generated native folders
 /ios
 /android
+
+# personal / working documents — never commit to this public repo
+/*.pdf
+/*.docx
+/*.xlsx
+/*.zip
+/images/Screenshot*
+/graphify-out/
+desktop.ini
+
+# stray photo dumps and duplicate exports
+assets/images/WhatsApp*
+assets/images/*.png.png
