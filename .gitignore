@@ -61,3 +61,5 @@ desktop.ini
 # stray photo dumps and duplicate exports
 assets/images/WhatsApp*
 assets/images/*.png.png
+/images/
+/Survey and Pitch.zip
