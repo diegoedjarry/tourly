@@ -18,6 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useAppAlert } from '@/components/ui/app-alert';
 import { useProfile, useUpdateProfile, type Profile, type ReminderConfig, type ReminderTime, type OnsiteReminderTime, DEFAULT_REMINDER_CONFIG, DEFAULT_ONSITE_REMINDERS } from '@/hooks/useProfile';
+import { totalPrizeMoney } from '@/utils/prize-money';
 import { useAuth } from '@/hooks/useAuth';
 import { DatePickerField } from '@/components/ui/date-picker-field';
 import { useAppQuery } from '@/hooks/useAppQuery';
@@ -206,7 +207,7 @@ export default function SettingsScreen() {
         String(tourney.startDate ?? '').slice(0, 4) === String(year) &&
         tourney.isRegistered &&
         !tourney.isWithdrawn &&
-        (((tourney.singlesPrizeMoney ?? 0) + (tourney.doublesPrizeMoney ?? 0)) || (tourney.prizeMoney ?? 0)) > 0,
+        totalPrizeMoney(tourney) > 0,
     );
     if (yearExpenses.length === 0 && yearTournaments.length === 0) {
       showAlert(t('settings.taxReport'), t('settings.taxReportEmpty'));

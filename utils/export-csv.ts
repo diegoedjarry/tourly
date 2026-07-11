@@ -2,6 +2,7 @@ import { cacheDirectory, writeAsStringAsync, EncodingType } from 'expo-file-syst
 import * as Sharing from 'expo-sharing';
 import * as XLSX from 'xlsx';
 import { EXPORT_CATEGORIES as CATEGORIES, normalizeCategory } from '@/utils/categories';
+import { totalPrizeMoney } from '@/utils/prize-money';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -99,14 +100,20 @@ function expenseYears(expenses: any[]): number[] {
 
 function buildTournamentsSheet(tournaments: any[]): XLSX.WorkSheet {
   const rows: any[][] = [
-    ['Name', 'Country', 'City', 'Surface', 'Category', 'Start Date', 'End Date', 'Singles Prize', 'Doubles Prize', 'Status', 'Registered', 'Withdrawn'],
+    ['Name', 'Country', 'City', 'Surface', 'Category', 'Start Date', 'End Date', 'Singles Prize', 'Doubles Prize', 'Total Prize', 'Status', 'Registered', 'Withdrawn'],
   ];
   for (const t of tournaments) {
     rows.push([
       t.name, t.country, t.city, t.surface, t.category,
       t.startDate, t.endDate,
-      t.singlesPrizeMoney ?? t.prizeMoney ?? 0,
+      t.singlesPrizeMoney ?? 0,
       t.doublesPrizeMoney ?? 0,
+      // Total column is the source of truth for prize money — falls back to
+      // the legacy `prizeMoney` field when the singles/doubles split is empty,
+      // so imported legacy rows don't silently report $0 (previously the
+      // Singles column alone carried that fallback, which dropped doubles
+      // whenever both split fields were explicitly 0 instead of null).
+      totalPrizeMoney(t),
       t.status, t.isRegistered ? 'Yes' : 'No', t.isWithdrawn ? 'Yes' : 'No',
     ]);
   }

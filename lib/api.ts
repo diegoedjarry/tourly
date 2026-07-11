@@ -162,7 +162,10 @@ export async function apiAddTournament(data: Record<string, any>) {
 }
 
 export async function apiAddExpense(data: Record<string, any>) {
-  if (!Number.isFinite(data.amount) || data.amount <= 0) {
+  // Negative amounts are valid — they represent refunds/credits (see the
+  // import flow in utils/import-expenses.ts, which stores negative amounts
+  // directly). Only zero and non-finite values are rejected.
+  if (!Number.isFinite(data.amount) || data.amount === 0) {
     throw new Error('Invalid expense amount.');
   }
   if (data.date != null && !/^\d{4}-\d{2}-\d{2}$/.test(data.date)) {
@@ -193,7 +196,10 @@ export async function apiAddExpense(data: Record<string, any>) {
 }
 
 export async function apiUpdateExpense(id: string, updates: Record<string, any>) {
-  if ('amount' in updates && (!Number.isFinite(updates.amount) || updates.amount <= 0)) {
+  // Negative amounts are valid — imported refund rows carry a negative amount
+  // and must remain editable. Only zero and non-finite values are rejected
+  // (kept consistent with apiAddExpense above).
+  if ('amount' in updates && (!Number.isFinite(updates.amount) || updates.amount === 0)) {
     throw new Error('Invalid expense amount.');
   }
   if ('date' in updates && updates.date != null && !/^\d{4}-\d{2}-\d{2}$/.test(updates.date)) {

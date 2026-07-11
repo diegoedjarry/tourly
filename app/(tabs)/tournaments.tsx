@@ -25,6 +25,7 @@ import { DatePickerField } from '@/components/ui/date-picker-field';
 import { CourtIcon } from '@/components/ui/court-icon';
 import { AgentIcon } from '@/components/ui/agent-icon';
 import { calcDeadlines, fmtDeadline, fmtDate, fmtDateRange, getDeadlineLabels, getStoredDeadlineFields, getOnsiteDeadlines } from '@/utils/deadlines';
+import { totalPrizeMoney } from '@/utils/prize-money';
 import { T } from '@/constants/theme';
 import { DEMO_MODE } from '@/config/demo';
 import { supabase } from '@/lib/supabase';
@@ -498,7 +499,7 @@ function RankingImpactSection({ tournament }: { tournament: any }) {
   const [saving, setSaving] = useState(false);
   const demoCtx = useDemoData();
 
-  const totalPoints = (tournament.matchResults ?? []).reduce((s: number, r: any) => s + (r.points ?? 0), 0) + (tournament.pointsEarned ?? 0);
+  const totalPoints = tournament.pointsEarned ?? 0;
   const rb = parseInt(rankBefore) || 0;
   const ra = parseInt(rankAfter) || 0;
   const change = rb > 0 && ra > 0 ? rb - ra : 0;
@@ -1142,9 +1143,9 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
               {/* Prize money — shown for all groups if any prize money exists.
                   Legacy records only have `prizeMoney`; fall back to it for the total. */}
               {(() => {
-                const splitPrize = (tournament.singlesPrizeMoney ?? 0) + (tournament.doublesPrizeMoney ?? 0);
-                const totalPrize = splitPrize > 0 ? splitPrize : (tournament.prizeMoney ?? 0);
+                const totalPrize = totalPrizeMoney(tournament);
                 if (totalPrize <= 0) return null;
+                const splitPrize = (tournament.singlesPrizeMoney ?? 0) + (tournament.doublesPrizeMoney ?? 0);
                 return (
                 <>
                   <Text style={det.sectionLabel}>{t('prize.prizeMoney')}</Text>
@@ -2583,6 +2584,9 @@ export default function TournamentsScreen() {
           startDate: r.start_date,
           endDate: r.end_date,
           prizeMoney: r.prize_money_total,
+          // Discovery rows never carry a stored deadline — derive it from the
+          // ITF entry-deadline formula so the urgency pill renders for these too.
+          signUpDeadline: calcDeadlines(r.start_date, r.category).signUpDeadline,
           _fromSupabase: true,
         })));
       });
@@ -2594,8 +2598,12 @@ export default function TournamentsScreen() {
   useEffect(() => {
     const tournaments = data?.tournaments ?? [];
     for (const trn of tournaments) {
-      if (!trn.startDate || !trn.category || reconciledRef.current.has(trn.id)) continue;
-      reconciledRef.current.add(trn.id);
+      // Keyed by id+startDate so editing the start date (which shifts every
+      // ITF-offset deadline) re-triggers reconciliation instead of being
+      // silently skipped because the id alone was already marked done.
+      const reconcileKey = `${trn.id}:${trn.startDate}`;
+      if (!trn.startDate || !trn.category || reconciledRef.current.has(reconcileKey)) continue;
+      reconciledRef.current.add(reconcileKey);
       const correct = calcDeadlines(trn.startDate, trn.category);
       const candidate: any = {};
       if (!trn.signUpDeadline)     candidate.signUpDeadline     = correct.signUpDeadline;

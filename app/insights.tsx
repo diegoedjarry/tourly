@@ -13,6 +13,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import Svg from 'react-native-svg';
 import { useAppQuery } from '@/hooks/useAppQuery';
 import { T } from '@/constants/theme';
+import { totalPrizeMoney } from '@/utils/prize-money';
 import { useLanguage } from '@/hooks/useLanguage';
 import { getMonthAbbr } from '@/lib/i18n';
 import { supabase } from '@/lib/supabase';
@@ -71,8 +72,7 @@ function getPrize(t: any): number {
   const d = parseLocalDate(t.startDate);
   const today = new Date(); today.setHours(0, 0, 0, 0);
   if (!t.isRegistered || t.isWithdrawn || !d || d > today) return 0;
-  const split = (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0);
-  return split > 0 ? split : (t.prizeMoney ?? 0);
+  return totalPrizeMoney(t);
 }
 
 // Single source of truth for effective spend on this screen: USD-normalized

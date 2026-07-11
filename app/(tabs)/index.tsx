@@ -13,6 +13,7 @@ import { useRouter } from 'expo-router';
 import { useAppQuery } from '@/hooks/useAppQuery';
 import { CourtIcon } from '@/components/ui/court-icon';
 import { TournamentDetail } from '@/app/(tabs)/tournaments';
+import { totalPrizeMoney } from '@/utils/prize-money';
 import { fmtDateRange } from '@/utils/deadlines';
 import { countryFlag } from '@/utils/countryFlag';
 import { useInsights, useGenerateInsight } from '@/hooks/useInsights';
@@ -184,9 +185,7 @@ export default function HomeScreen() {
       const d = parseLocalDate(t.startDate);
       const wasPlayed = t.isRegistered && d && d <= today && !t.isWithdrawn;
       if (!wasPlayed) return s;
-      const split = (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0);
-      // Fall back to legacy prizeMoney for records created before the singles/doubles split
-      return s + (split > 0 ? split : (t.prizeMoney ?? 0));
+      return s + totalPrizeMoney(t);
     }, 0);
     return { played, totalSpent, totalPrize, net: totalPrize - totalSpent };
   }, [tournaments, expenses, scrapedMatchHistory]);
@@ -199,8 +198,7 @@ export default function HomeScreen() {
     const recent = [...atExpenses]
       .sort((a: any, b: any) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
       .slice(0, 3);
-    const split = (activeTournament?.singlesPrizeMoney ?? 0) + (activeTournament?.doublesPrizeMoney ?? 0);
-    const prize = split > 0 ? split : (activeTournament?.prizeMoney ?? 0);
+    const prize = activeTournament ? totalPrizeMoney(activeTournament) : 0;
     return { activeTournamentSpent: spent, recentExpenses: recent, activePrizeMoney: prize, activeNet: prize - spent };
   }, [activeTournament, expenses]);
 

@@ -15,6 +15,14 @@ const isExpoGo = Constants.executionEnvironment === 'storeClient';
 const SEEN_AT_KEY = 'newTournamentSeenAt';
 const CHECK_AT_KEY = 'newTournamentCheckAt';
 const NOTIFIED_IDS_KEY = 'newTournamentNotifiedIds';
+
+// Scope the throttle/dedup keys per-user so a device shared or re-used across
+// accounts (or the same device switching profiles) doesn't inherit another
+// user's "already seen/notified" state. Old unscoped keys are simply orphaned
+// — worst case a user gets one duplicate notification post-upgrade.
+function scopedKey(base: string, userId: string | undefined | null): string {
+  return userId ? `${base}:${userId}` : base;
+}
 const CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000; // at most once per 12h
 const BACKFILL_MS = 7 * 24 * 60 * 60 * 1000;   // first enable: only look back 7 days
 const MAX_NOTIFICATIONS = 3;
@@ -38,22 +46,26 @@ export function useNewTournamentNotifier() {
     if (!profile || profile.notify_new_tournaments !== true) return;
 
     let cancelled = false;
+    const userId = profile.id;
+    const checkAtKey = scopedKey(CHECK_AT_KEY, userId);
+    const seenAtKey = scopedKey(SEEN_AT_KEY, userId);
+    const notifiedIdsKey = scopedKey(NOTIFIED_IDS_KEY, userId);
 
     (async () => {
       if (checkInFlight) return;
       checkInFlight = true;
       try {
-        const lastCheck = await AsyncStorage.getItem(CHECK_AT_KEY);
+        const lastCheck = await AsyncStorage.getItem(checkAtKey);
         if (lastCheck && Date.now() - new Date(lastCheck).getTime() < CHECK_INTERVAL_MS) return;
         if (cancelled) return;
         // Claim the 12h window BEFORE any awaited network work — a failed run
         // skips one cycle, which beats duplicate pushes from a race.
-        await AsyncStorage.setItem(CHECK_AT_KEY, new Date().toISOString());
+        await AsyncStorage.setItem(checkAtKey, new Date().toISOString());
 
         const ctx = await buildMatchContext(profile, lang);
         if (cancelled) return;
 
-        const seenAtRaw = await AsyncStorage.getItem(SEEN_AT_KEY);
+        const seenAtRaw = await AsyncStorage.getItem(seenAtKey);
         const seenAt = seenAtRaw ?? new Date(Date.now() - BACKFILL_MS).toISOString();
         // Local calendar date, not UTC — matches the repo's local-date convention
         // (see parseLocalDate() pattern) so "today" lines up with the player's
@@ -73,7 +85,7 @@ export function useNewTournamentNotifier() {
         // Skip tournaments we've already notified about — a flaky cycle (e.g.
         // seenAt persisted but the app was killed before scheduling finished)
         // must not re-notify the same tournament on the next run.
-        const notifiedIds = await readNotifiedIds();
+        const notifiedIds = await readNotifiedIds(notifiedIdsKey);
 
         const matches = rows
           .filter(row => !notifiedIds.has(row.id))
@@ -119,11 +131,11 @@ export function useNewTournamentNotifier() {
             }
           }
           if (newlyNotified.length > 0) {
-            await writeNotifiedIds(notifiedIds, newlyNotified);
+            await writeNotifiedIds(notifiedIdsKey, notifiedIds, newlyNotified);
           }
         }
 
-        await AsyncStorage.setItem(SEEN_AT_KEY, new Date().toISOString());
+        await AsyncStorage.setItem(seenAtKey, new Date().toISOString());
       } catch {
         // Never let a scraper/network hiccup crash startup.
       } finally {
@@ -151,9 +163,9 @@ function localDateIso(d: Date): string {
 // Bounded record of tournament ids we've already sent a "new tournament" push
 // for, so a flaky cycle (crash/kill between scheduling and persisting seenAt)
 // can't re-notify the same tournaments on a later run.
-async function readNotifiedIds(): Promise<Set<string>> {
+async function readNotifiedIds(notifiedIdsKey: string): Promise<Set<string>> {
   try {
-    const raw = await AsyncStorage.getItem(NOTIFIED_IDS_KEY);
+    const raw = await AsyncStorage.getItem(notifiedIdsKey);
     if (!raw) return new Set();
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? new Set(parsed) : new Set();
@@ -162,12 +174,12 @@ async function readNotifiedIds(): Promise<Set<string>> {
   }
 }
 
-async function writeNotifiedIds(existing: Set<string>, added: string[]): Promise<void> {
+async function writeNotifiedIds(notifiedIdsKey: string, existing: Set<string>, added: string[]): Promise<void> {
   try {
     const merged = [...existing, ...added];
     // Keep only the most recent MAX_NOTIFIED_IDS — oldest entries fall off.
     const bounded = merged.slice(Math.max(0, merged.length - MAX_NOTIFIED_IDS));
-    await AsyncStorage.setItem(NOTIFIED_IDS_KEY, JSON.stringify(bounded));
+    await AsyncStorage.setItem(notifiedIdsKey, JSON.stringify(bounded));
   } catch {
     // Best-effort — worst case a future cycle re-notifies once more.
   }

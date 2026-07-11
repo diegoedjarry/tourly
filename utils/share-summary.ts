@@ -1,5 +1,6 @@
 import * as Sharing from 'expo-sharing';
 import { writeAsStringAsync, cacheDirectory } from 'expo-file-system/legacy';
+import { totalPrizeMoney } from '@/utils/prize-money';
 
 function parseLocalDate(s: string): Date {
   const [y, m, d] = s.split('-').map(Number);
@@ -40,10 +41,7 @@ export function buildWeekSummaryText(tournaments: any[], expenses: any[]): strin
     byCategory.set(cat, (byCategory.get(cat) ?? 0) + (e.amount ?? 0));
   });
 
-  const totalPrize = activeTournaments.reduce((sum, t) => {
-    const prize = (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0);
-    return sum + (prize > 0 ? prize : (t.prizeMoney ?? 0));
-  }, 0);
+  const totalPrize = activeTournaments.reduce((sum, t) => sum + totalPrizeMoney(t), 0);
 
   const lines: string[] = [
     `🎾 TOURLY — Week Summary`,
@@ -91,7 +89,7 @@ export async function shareWeekSummary(tournaments: any[], expenses: any[]) {
 export function buildTournamentSummaryText(tournament: any, expenses: any[]): string {
   const tExpenses = expenses.filter(e => e.tournamentId === tournament.id);
   const totalSpent = tExpenses.reduce((sum, e) => sum + (e.amount ?? 0), 0);
-  const prize = ((tournament.singlesPrizeMoney ?? 0) + (tournament.doublesPrizeMoney ?? 0)) || (tournament.prizeMoney ?? 0);
+  const prize = totalPrizeMoney(tournament);
   const net = prize - totalSpent;
 
   const byCategory = new Map<string, number>();

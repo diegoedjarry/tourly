@@ -5,11 +5,17 @@ import {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+function isValidIso(str: string | undefined): boolean {
+  return !!str && /^\d{4}-\d{2}-\d{2}$/.test(str);
+}
+
 function parseIso(str: string | undefined): Date {
-  if (str && /^\d{4}-\d{2}-\d{2}$/.test(str)) {
-    const [y, m, d] = str.split('-').map(Number);
+  if (isValidIso(str)) {
+    const [y, m, d] = (str as string).split('-').map(Number);
     return new Date(y, m - 1, d);
   }
+  // Fallback used only to position the picker wheel — never written back
+  // unless the user actually moves the picker (see pickerTouchedRef below).
   return new Date();
 }
 
@@ -41,15 +47,21 @@ export function DatePickerField({ label, value, onChange, optional, placeholder,
   const [show, setShow] = useState(false);
   const [tempDate, setTempDate] = useState<Date>(() => parseIso(value));
   const [webText, setWebText] = useState(value);
+  // Tracks whether the user actually moved the iOS wheel since opening. When
+  // the incoming value is corrupt/empty, parseIso() positions the wheel on
+  // today as a display fallback — but tapping "Done" without touching the
+  // wheel must not silently overwrite the corrupt stored value with today.
+  const pickerTouchedRef = React.useRef(false);
 
   useEffect(() => {
     setWebText(value);
   }, [value]);
 
-  const display = value ? formatDisplay(value, lang) : '';
+  const display = value && isValidIso(value) ? formatDisplay(value, lang) : '';
 
   function openPicker() {
     setTempDate(parseIso(value));
+    pickerTouchedRef.current = false;
     setShow(true);
   }
 
@@ -104,11 +116,19 @@ export function DatePickerField({ label, value, onChange, optional, placeholder,
   }
 
   function handleIosChange(_event: any, date?: Date) {
-    if (date) setTempDate(date);
+    if (date) {
+      setTempDate(date);
+      pickerTouchedRef.current = true;
+    }
   }
 
   function handleDone() {
     setShow(false);
+    // If the stored value was invalid/empty and the user never actually
+    // moved the wheel, tempDate is just today's fallback position — writing
+    // it back would silently corrupt-fix the field to "today" instead of
+    // leaving the bad value for the user to deliberately correct.
+    if (!isValidIso(value) && !pickerTouchedRef.current) return;
     onChange(toIso(tempDate));
   }
 

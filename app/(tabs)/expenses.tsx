@@ -27,6 +27,7 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useAppQuery } from '@/hooks/useAppQuery';
 import { apiAddExpense, apiUpdateExpense, apiDeleteExpense, apiPatchTournament, apiAddTournament, apiAddIncome, apiDeleteIncome } from '@/lib/api';
 import { useIncome } from '@/hooks/useIncome';
+import { totalPrizeMoney } from '@/utils/prize-money';
 import { useQueryClient } from '@tanstack/react-query';
 import { CashFlowChart } from '@/components/ui/CashFlowChart';
 import { ExpenseBreakdown } from '@/components/ui/ExpenseBreakdown';
@@ -1647,9 +1648,11 @@ export function TournamentExpenseDetail({ tournament, onClose, allTournaments }:
   const singlesPrize = (liveT?.singlesPrizeMoney ?? tournament.singlesPrizeMoney) ?? 0;
   const doublesPrize = (liveT?.doublesPrizeMoney ?? tournament.doublesPrizeMoney) ?? 0;
   // Legacy records only have prizeMoney — fall back for the total
-  const totalPrize   = (singlesPrize + doublesPrize) > 0
-    ? singlesPrize + doublesPrize
-    : ((liveT?.prizeMoney ?? tournament.prizeMoney) ?? 0);
+  const totalPrize   = totalPrizeMoney({
+    singlesPrizeMoney: liveT?.singlesPrizeMoney ?? tournament.singlesPrizeMoney,
+    doublesPrizeMoney: liveT?.doublesPrizeMoney ?? tournament.doublesPrizeMoney,
+    prizeMoney: liveT?.prizeMoney ?? tournament.prizeMoney,
+  });
   const net          = totalPrize - totalSpent;
 
   const surfaceBg   = SURFACE_BG[(t.surface as Surface)] ?? '#FAEEDA';
@@ -2126,9 +2129,7 @@ function tPrize(t: any): number {
   // prize money won — a tournament merely added to the list (never entered)
   // must never contribute here, regardless of what its prize field holds.
   if (!t.isRegistered || t.isWithdrawn) return 0;
-  const split = (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0);
-  // Fall back to legacy prizeMoney for records created before the singles/doubles split
-  return split > 0 ? split : (t.prizeMoney ?? 0);
+  return totalPrizeMoney(t);
 }
 
 function normalizeCat(raw: string): string {
@@ -2440,9 +2441,7 @@ function ActiveTournamentBudgetCard({ tournament, expenses, onTap }: {
   const { t: tr } = useLanguage();
   const tExpenses = expenses.filter((e: any) => e.tournamentId === tournament.id);
   const spent = effectiveSum(tExpenses);
-  const singles = tournament.singlesPrizeMoney ?? 0;
-  const doubles = tournament.doublesPrizeMoney ?? 0;
-  const prize = (singles + doubles) > 0 ? singles + doubles : (tournament.prizeMoney ?? 0);
+  const prize = totalPrizeMoney(tournament);
   const net = prize - spent;
 
   const start = parseLocalDate(tournament.startDate);
@@ -2846,9 +2845,10 @@ export default function ExpensesScreen() {
     if (t) {
       const tExpenses = (data?.expenses ?? []).filter((e: any) => e.tournamentId === t.id);
       const spent = effectiveSum(tExpenses);
-      const singles = t.singlesPrizeMoney ?? 0;
-      const doubles = t.doublesPrizeMoney ?? 0;
-      const prize = singles + doubles;
+      // Standardized to the shared util (previously singles+doubles with no
+      // legacy fallback here, unlike the other prize-total call sites in this
+      // file) so pre-split tournament records show their correct total.
+      const prize = totalPrizeMoney(t);
       setDetailTournament({ ...t, spent, prize });
     }
   }, [openTournament, isLoading]);
@@ -3209,9 +3209,7 @@ export default function ExpensesScreen() {
                 onTap={() => {
                   const tExp = expenses.filter((e: any) => e.tournamentId === activeTournament.id);
                   const spent = effectiveSum(tExp);
-                  const singles = activeTournament.singlesPrizeMoney ?? 0;
-                  const doubles = activeTournament.doublesPrizeMoney ?? 0;
-                  const prize = singles + doubles;
+                  const prize = totalPrizeMoney(activeTournament);
                   setDetailTournament({ ...activeTournament, spent, prize });
                 }}
               />
@@ -3750,9 +3748,7 @@ export default function ExpensesScreen() {
                         if (trn) {
                           const tExp = (data?.expenses ?? []).filter((e: any) => e.tournamentId === trn.id);
                           const spent = effectiveSum(tExp);
-                          const singles = trn.singlesPrizeMoney ?? 0;
-                          const doubles = trn.doublesPrizeMoney ?? 0;
-                          const prize = singles + doubles;
+                          const prize = totalPrizeMoney(trn);
                           setShowPrizeBreakdown(false);
                           setSelectedPrizeIds(new Set());
                           setDetailTournament({ ...trn, spent, prize });

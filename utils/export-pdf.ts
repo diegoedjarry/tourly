@@ -1,5 +1,6 @@
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
+import { totalPrizeMoney } from '@/utils/prize-money';
 
 type Lang = 'en' | 'es';
 
@@ -91,8 +92,7 @@ function effectiveSpend(e: any): number {
 
 // Gross prize: singles + doubles, falling back to legacy prizeMoney (never additive with legacy).
 function grossPrize(t: any): number {
-  const combined = (t.singlesPrizeMoney ?? 0) + (t.doublesPrizeMoney ?? 0);
-  return combined || (t.prizeMoney ?? 0);
+  return totalPrizeMoney(t);
 }
 
 function netPrize(t: any): number {
@@ -416,10 +416,7 @@ export async function exportTaxReportPdf(
   );
   const incomeRows = yearTournaments
     .map(t => {
-      const singles = t.singlesPrizeMoney ?? 0;
-      const doubles = t.doublesPrizeMoney ?? 0;
-      const combined = singles + doubles;
-      const gross = combined || (t.prizeMoney ?? 0);
+      const gross = totalPrizeMoney(t);
       return { t, gross };
     })
     .filter(r => r.gross > 0)
