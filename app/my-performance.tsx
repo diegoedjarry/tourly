@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   StatusBar,
   Modal,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -18,6 +19,7 @@ import { foldDiacritics, playerNameFilter } from '@/utils/text';
 import { LoadingLogo } from '@/components/ui/LoadingLogo';
 import { RankingChart } from '@/components/ui/RankingChart';
 import { T } from '@/constants/theme';
+import { usePullToRefresh } from '@/hooks/usePullToRefresh';
 
 const SURFACES: Array<{ key: 'clay' | 'hard'; label: string; color: string }> = [
   { key: 'clay', label: 'Clay', color: '#D4915A' },
@@ -60,6 +62,7 @@ function abbrevDate(dateStr: string | undefined): string {
 export default function MyPerformanceScreen() {
   const router = useRouter();
   const { t } = useLanguage();
+  const { refreshing, onRefresh } = usePullToRefresh();
   const { data } = useAppQuery({});
   const tournaments = data?.tournaments ?? [];
   const expenses    = data?.expenses ?? [];
@@ -255,12 +258,22 @@ export default function MyPerformanceScreen() {
         <View style={s.headerCenter}>
           <Text style={s.headerTitle}>{t('performance.title')}</Text>
         </View>
-        <TouchableOpacity style={s.closeBtn} onPress={() => router.back()} activeOpacity={0.7}>
+        <TouchableOpacity
+          style={s.closeBtn}
+          onPress={() => router.back()}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={t('common.close')}
+        >
           <Ionicons name="close" size={22} color="#FAFAFA" />
         </TouchableOpacity>
       </View>
 
-      <ScrollView style={s.scroll} contentContainerStyle={s.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={s.scroll}
+        contentContainerStyle={s.scrollContent}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={T.textSecondary} />}>
         {isLoadingProfile ? (
           <LoadingLogo />
         ) : profileError ? (

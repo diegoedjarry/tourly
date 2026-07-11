@@ -16,6 +16,8 @@ const strings = {
 
   // Calendar
   'calendar.today': { en: 'Today', es: 'Hoy' },
+  'calendar.previousMonth': { en: 'Previous month', es: 'Mes anterior' },
+  'calendar.nextMonth': { en: 'Next month', es: 'Mes siguiente' },
   'calendar.switchView': { en: 'Switch View', es: 'Cambiar Vista' },
   'calendar.schedule': { en: 'Tournament schedule & training', es: 'Calendario de torneos y entrenamiento' },
   'calendar.weekByWeek': { en: 'Week-by-week expiring points', es: 'Puntos que expiran semana a semana' },
@@ -59,6 +61,8 @@ const strings = {
   // Support / feedback
   'settings.support': { en: 'Support', es: 'Soporte' },
   'settings.reportProblem': { en: 'Report a problem', es: 'Reportar un problema' },
+  'settings.privacyPolicy': { en: 'Privacy Policy', es: 'Política de Privacidad' },
+  'settings.versionLabel': { en: 'Tourly v', es: 'Tourly v' },
 
   // Offline write queue
   'common.savedOffline': { en: 'Saved offline — will sync when connected', es: 'Guardado sin conexión — se sincronizará al reconectar' },
@@ -196,6 +200,7 @@ const strings = {
   'auth.haveAccount': { en: 'Already have an account? ', es: '¿Ya tienes cuenta? ' },
   'auth.continueGoogle': { en: 'Continue with Google', es: 'Continuar con Google' },
   'auth.continueApple': { en: 'Continue with Apple', es: 'Continuar con Apple' },
+  'auth.signInApple': { en: 'Sign in with Apple', es: 'Iniciar sesión con Apple' },
   'auth.checkEmail': { en: 'Check your email', es: 'Revisa tu correo' },
   'auth.confirmationSent': { en: 'We sent you a confirmation link. Open it, then come back and sign in.', es: 'Te enviamos un enlace de confirmación. Ábrelo y luego vuelve a iniciar sesión.' },
 

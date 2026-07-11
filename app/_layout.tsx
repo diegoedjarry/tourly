@@ -92,7 +92,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 
     if (!user) {
       if (!inAuth) {
-        console.log('[AuthGate] → /auth (no user)');
+        if (__DEV__) console.log('[AuthGate] → /auth (no user)');
         router.replace('/auth');
       }
     } else if (!profile || !profile.onboarding_complete) {
@@ -101,13 +101,13 @@ function AuthGate({ children }: { children: React.ReactNode }) {
       // must be run first — it backfills rows with onboarding_complete = true so
       // those users never land here.
       if (!inOnboarding) {
-        console.log('[AuthGate] → /onboarding/walkthrough (onboarding_complete false/null)');
+        if (__DEV__) console.log('[AuthGate] → /onboarding/walkthrough (onboarding_complete false/null)');
         router.replace('/onboarding/walkthrough');
       }
     } else {
       // Profile exists and onboarding is done → home.
       if (inAuth || inOnboarding) {
-        console.log('[AuthGate] → /(tabs) (onboarding_complete = true)');
+        if (__DEV__) console.log('[AuthGate] → /(tabs) (onboarding_complete = true)');
         router.replace('/(tabs)');
       }
 

@@ -11,6 +11,7 @@ import {
   Platform,
   KeyboardAvoidingView,
   ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
 import { Text } from '@/components/ui/text';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -32,6 +33,7 @@ import { DEMO_MODE } from '@/config/demo';
 import { T } from '@/constants/theme';
 import { useLanguage } from '@/hooks/useLanguage';
 import { useAppAlert } from '@/components/ui/app-alert';
+import { usePullToRefresh } from '@/hooks/usePullToRefresh';
 
 const CALENDAR_WALKTHROUGH = [
   { icon: '🗺️', title: 'Your Season Map', body: 'Your tournaments appear as dots on the map below the calendar. Dotted lines connect tournaments you could combine into one trip to save on flights.' },
@@ -156,7 +158,8 @@ export default function CalendarScreen() {
   const { isFirstVisit, markVisited } = useFirstVisit('calendar');
   const router = useRouter();
 
-  const { data, isLoading } = useAppQuery({ tournaments: {} });
+  const { data, isLoading, error: queryError } = useAppQuery({ tournaments: {} });
+  const { refreshing, onRefresh } = usePullToRefresh();
   const allTournaments = data?.tournaments ?? [];
   const tournaments = useMemo(
     () => allTournaments.filter((t: any) => !t.isWithdrawn && t.isInMyList !== false),
@@ -222,7 +225,12 @@ export default function CalendarScreen() {
       <View style={s.stickyTop}>
         <View style={s.topRow}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <TouchableOpacity onPress={() => router.push('/settings' as any)} activeOpacity={0.75}>
+            <TouchableOpacity
+              onPress={() => router.push('/settings' as any)}
+              activeOpacity={0.75}
+              accessibilityRole="button"
+              accessibilityLabel={t('settings.title')}
+            >
               <AgentIcon size={70} />
             </TouchableOpacity>
             <Text style={s.monthTitle}>{t('calendar.title')}</Text>
@@ -237,13 +245,25 @@ export default function CalendarScreen() {
           )}
         </View>
         <View style={s.header}>
-          <TouchableOpacity onPress={prevMonth} style={s.navBtn} activeOpacity={0.7}>
+          <TouchableOpacity
+            onPress={prevMonth}
+            style={s.navBtn}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={t('calendar.previousMonth')}
+          >
             <Text style={s.navArrow}>‹</Text>
           </TouchableOpacity>
           <View style={s.monthPill}>
             <Text style={s.monthTitle}>{MONTHS[month]} {year}</Text>
           </View>
-          <TouchableOpacity onPress={nextMonth} style={s.navBtn} activeOpacity={0.7}>
+          <TouchableOpacity
+            onPress={nextMonth}
+            style={s.navBtn}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={t('calendar.nextMonth')}
+          >
             <Text style={s.navArrow}>›</Text>
           </TouchableOpacity>
         </View>
@@ -260,11 +280,25 @@ export default function CalendarScreen() {
         style={s.scroll}
         contentContainerStyle={s.content}
         showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={T.textSecondary} />}
         {...panResponder.panHandlers}>
 
         {/* Loading state */}
         {isLoading && (
           <ActivityIndicator color={T.accent} style={{ marginTop: 48 }} />
+        )}
+
+        {!isLoading && queryError && allTournaments.length === 0 && (
+          <View style={s.errorBanner}>
+            <Text style={s.errorBannerText}>
+              {lang === 'es'
+                ? 'No se pudo cargar tu calendario. Revisa tu conexión e inténtalo de nuevo.'
+                : 'Could not load your calendar. Check your connection and try again.'}
+            </Text>
+            <TouchableOpacity style={s.errorBannerBtn} activeOpacity={0.8} onPress={onRefresh}>
+              <Text style={s.errorBannerBtnText}>{t('common.tryAgain')}</Text>
+            </TouchableOpacity>
+          </View>
         )}
 
         {/* Calendar grid */}
@@ -626,6 +660,10 @@ const s = StyleSheet.create({
   },
   navBtn: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
   navArrow: { fontSize: 28, color: T.accent, fontWeight: '300' },
+  errorBanner: { backgroundColor: T.red, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 16, marginTop: 16, alignItems: 'center' },
+  errorBannerText: { fontSize: 13, fontWeight: '600', color: '#FFF', textAlign: 'center' },
+  errorBannerBtn: { marginTop: 10, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 16 },
+  errorBannerBtnText: { fontSize: 13, fontWeight: '700', color: '#FFF' },
   monthPill: { backgroundColor: T.cardBorder, borderRadius: 22, paddingHorizontal: 24, paddingVertical: 8 },
   monthTitle: { fontSize: 18, fontWeight: '700', color: T.textPrimary },
   avatarBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: T.card, borderWidth: 1.5, borderColor: T.accent, alignItems: 'center', justifyContent: 'center' },

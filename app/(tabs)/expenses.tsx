@@ -17,6 +17,7 @@ import {
   useWindowDimensions,
   PanResponder,
   Alert,
+  RefreshControl,
 } from 'react-native';
 import { Text } from '@/components/ui/text';
 import Svg, { Path, Line as SvgLine, Rect, Defs, ClipPath, Circle } from 'react-native-svg';
@@ -52,6 +53,7 @@ import { SwipeableRow } from '@/components/ui/SwipeableRow';
 import * as Haptics from 'expo-haptics';
 import { parseAmount, insertExpenses, mapPasteNotesToExpenses } from '@/utils/import-expenses';
 import { expenseDupeKey } from '@/utils/categories';
+import { usePullToRefresh } from '@/hooks/usePullToRefresh';
 
 const EXPENSES_WALKTHROUGH = [
   { icon: '💸', title: 'Log Your First Expense', body: 'Tap + to log your first expense. Link it to a tournament to track your weekly costs and see which tournaments give the best financial return.' },
@@ -2656,6 +2658,7 @@ export default function ExpensesScreen() {
   const { data, isLoading, error: queryError } = useAppQuery({ tournaments: {}, expenses: {} });
   const { data: _prof } = useProfile();
   const queryClient = useQueryClient();
+  const { refreshing, onRefresh } = usePullToRefresh();
   const [showAddForm, setShowAddForm] = useState(false);
   const [autoScanOnAdd, setAutoScanOnAdd] = useState(false);
   const [showAddChoice, setShowAddChoice] = useState(false);
@@ -3100,7 +3103,12 @@ export default function ExpensesScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false} {...swipeHandlers}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={T.textSecondary} />}
+        {...swipeHandlers}>
 
         <View style={styles.topBar}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>

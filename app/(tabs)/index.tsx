@@ -5,6 +5,7 @@ import {
   StyleSheet,
   StatusBar,
   TouchableOpacity,
+  RefreshControl,
 } from 'react-native';
 import { Text } from '@/components/ui/text';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -29,6 +30,7 @@ import { TourlyLogo } from '@/components/ui/tourly-logo';
 import { LoadingLogo } from '@/components/ui/LoadingLogo';
 import { useLanguage } from '@/hooks/useLanguage';
 import { getInitials } from '@/utils/name';
+import { usePullToRefresh } from '@/hooks/usePullToRefresh';
 
 
 function daysUntil(dateStr: string | undefined): number | null {
@@ -101,6 +103,7 @@ export default function HomeScreen() {
   const { data, isLoading, error } = useAppQuery({ tournaments: {}, expenses: {} });
   const [detailId, setDetailId] = useState<string | null>(null);
   const router = useRouter();
+  const { refreshing, onRefresh } = usePullToRefresh();
 
   const { data: insights, isLoading: insightsLoading } = useInsights();
   const generateInsight = useGenerateInsight();
@@ -225,11 +228,21 @@ export default function HomeScreen() {
     <SafeAreaView style={st.safe}>
       <StatusBar barStyle="light-content" backgroundColor={T.bg} />
       <View style={{ flex: 1 }}>
-        <ScrollView style={st.scroll} contentContainerStyle={st.scrollContent} showsVerticalScrollIndicator={false} {...swipeHandlers}>
+        <ScrollView
+          style={st.scroll}
+          contentContainerStyle={st.scrollContent}
+          showsVerticalScrollIndicator={false}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={T.textSecondary} />}
+          {...swipeHandlers}>
 
           {/* Top bar */}
           <View style={st.topBar}>
-            <TouchableOpacity onPress={() => router.push('/settings' as any)} activeOpacity={0.75}>
+            <TouchableOpacity
+              onPress={() => router.push('/settings' as any)}
+              activeOpacity={0.75}
+              accessibilityRole="button"
+              accessibilityLabel={t('settings.title')}
+            >
               <TourlyLogo width={220} height={58} />
             </TouchableOpacity>
           </View>
@@ -251,6 +264,9 @@ export default function HomeScreen() {
                   ? 'No se pudieron cargar tus datos. Desliza hacia abajo o vuelve a intentarlo más tarde.'
                   : "Couldn't load your data. Pull to refresh or try again later."}
               </Text>
+              <TouchableOpacity style={st.errorBannerBtn} activeOpacity={0.8} onPress={onRefresh}>
+                <Text style={st.errorBannerBtnText}>{t('common.tryAgain')}</Text>
+              </TouchableOpacity>
             </View>
           ) : (
             <>
@@ -495,6 +511,8 @@ const st = StyleSheet.create({
 
   errorBanner: { backgroundColor: T.red, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 16, marginTop: 24, alignItems: 'center' },
   errorBannerText: { fontSize: 13, fontWeight: '600', color: '#FFF', textAlign: 'center' },
+  errorBannerBtn: { marginTop: 10, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 16 },
+  errorBannerBtnText: { fontSize: 13, fontWeight: '700', color: '#FFF' },
 
   emptyNote: { fontSize: 13, color: T.textTertiary, fontStyle: 'italic', marginBottom: 16 },
   featureChevron: { fontSize: 20, color: T.accent, fontWeight: '300' },

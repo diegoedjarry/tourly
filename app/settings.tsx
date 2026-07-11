@@ -38,6 +38,7 @@ import { parseNotes, type ParsedExpense } from '@/utils/parse-notes';
 import { expenseDupeKey } from '@/utils/categories';
 import { DEMO_MODE } from '@/config/demo';
 import { T } from '@/constants/theme';
+import { PRIVACY_POLICY_URL } from '@/constants/links';
 import { useLanguage, setLanguage } from '@/hooks/useLanguage';
 import type { Lang } from '@/lib/i18n';
 
@@ -642,6 +643,17 @@ export default function SettingsScreen() {
             <Text style={[s.rowLabel, { color: T.teal }]}>{t('settings.reportProblem')}</Text>
             <View style={s.rowRight}><Text style={s.rowArrow}>›</Text></View>
           </TouchableOpacity>
+          <Sep />
+          <TouchableOpacity
+            style={s.row}
+            activeOpacity={0.6}
+            onPress={() => Linking.openURL(PRIVACY_POLICY_URL)}
+            accessibilityRole="button"
+            accessibilityLabel={t('settings.privacyPolicy')}
+          >
+            <Text style={[s.rowLabel, { color: T.teal }]}>{t('settings.privacyPolicy')}</Text>
+            <View style={s.rowRight}><Text style={s.rowArrow}>›</Text></View>
+          </TouchableOpacity>
         </View>}
 
         {/* ── SHARED ACCESS ── */}
@@ -807,6 +819,7 @@ export default function SettingsScreen() {
           )}
         </View>}
 
+        <Text style={s.versionFooter}>{t('settings.versionLabel')}{Constants.expoConfig?.version ?? '—'}</Text>
         <View style={{ height: 40 }} />
       </ScrollView>
 
@@ -1676,6 +1689,7 @@ const s = StyleSheet.create({
   },
   backBtn: { width: 70 },
   backText: { fontSize: 16, color: T.teal, fontWeight: '600' },
+  versionFooter: { textAlign: 'center', fontSize: 12, color: T.textMuted, marginTop: 24 },
   headerTitle: { fontSize: 18, fontWeight: '700', color: T.textPrimary },
   scrollContent: { paddingHorizontal: 16, paddingBottom: 20 },
   sectionLabel: {

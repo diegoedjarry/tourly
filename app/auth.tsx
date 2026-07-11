@@ -145,8 +145,25 @@ export default function AuthScreen() {
               )}
             </TouchableOpacity>
 
-            {/* Sign in with Apple hidden until the Apple provider is configured in
-                Supabase — required before App Store release (guideline 4.8). */}
+            {Platform.OS === 'ios' && (
+              <TouchableOpacity
+                style={[s.oauthBtn, s.appleBtn]}
+                onPress={() => handleOAuth('apple')}
+                disabled={!!oauthLoading}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel={t('auth.signInApple')}
+              >
+                {oauthLoading === 'apple' ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                ) : (
+                  <>
+                    <Text style={s.appleIcon}>{''}</Text>
+                    <Text style={[s.oauthText, s.appleText]}>{t('auth.signInApple')}</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity style={s.switchRow} onPress={() => setMode(m => (m === 'signin' ? 'signup' : 'signin'))}>
               <Text style={s.switchText}>

@@ -11,8 +11,8 @@ const WEIGHT_MAP: Record<string, string> = {
   normal: 'Montserrat_400Regular',
 };
 
-export function Text({ style, ...props }: TextProps) {
+export function Text({ style, maxFontSizeMultiplier = 1.3, ...props }: TextProps) {
   const flat = StyleSheet.flatten(style) ?? {};
   const fontFamily = WEIGHT_MAP[String(flat.fontWeight ?? '400')] ?? 'Montserrat_400Regular';
-  return <RNText style={[style, { fontFamily }]} {...props} />;
+  return <RNText style={[style, { fontFamily }]} maxFontSizeMultiplier={maxFontSizeMultiplier} {...props} />;
 }

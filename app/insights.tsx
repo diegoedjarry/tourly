@@ -5,6 +5,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   useWindowDimensions,
+  RefreshControl,
 } from 'react-native';
 import { Text } from '@/components/ui/text';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -17,6 +18,7 @@ import { getMonthAbbr } from '@/lib/i18n';
 import { supabase } from '@/lib/supabase';
 import { LoadingLogo, LoadingFade } from '@/components/ui/LoadingLogo';
 import { countryFlag, nameToIso2 } from '@/utils/countryFlag';
+import { usePullToRefresh } from '@/hooks/usePullToRefresh';
 
 type Surface = 'clay' | 'hard' | 'grass';
 
@@ -97,6 +99,7 @@ function effectiveSum(expenses: any[]): number {
 function DetailScreen({ title, children }: { title: string; children: React.ReactNode }) {
   const router = useRouter();
   const { t } = useLanguage();
+  const { refreshing, onRefresh } = usePullToRefresh();
   return (
     <SafeAreaView style={ds.safe}>
       <View style={ds.header}>
@@ -106,7 +109,12 @@ function DetailScreen({ title, children }: { title: string; children: React.Reac
         <Text style={ds.headerTitle} numberOfLines={1}>{title}</Text>
         <View style={ds.backBtn} />
       </View>
-      <ScrollView style={ds.scroll} contentContainerStyle={ds.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={ds.scroll}
+        contentContainerStyle={ds.scrollContent}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={T.textSecondary} />}
+      >
         {children}
       </ScrollView>
     </SafeAreaView>
@@ -850,7 +858,8 @@ function PointsBySurface({ tournaments, atpMatchHistory }: { tournaments: any[];
 
 export default function InsightsScreen() {
   const { type } = useLocalSearchParams<{ type: string }>();
-  const { lang } = useLanguage();
+  const { lang, t } = useLanguage();
+  const { onRefresh } = usePullToRefresh();
   const { data, isLoading, error } = useAppQuery({ tournaments: {}, expenses: {} });
   const tournaments = data?.tournaments ?? [];
   const expenses = data?.expenses ?? [];
@@ -910,6 +919,9 @@ export default function InsightsScreen() {
             ? 'No se pudieron cargar tus datos. Desliza hacia abajo o vuelve a intentarlo más tarde.'
             : "Couldn't load your data. Pull to refresh or try again later."}
         </Text>
+        <TouchableOpacity style={ds.retryBtn} activeOpacity={0.8} onPress={onRefresh}>
+          <Text style={ds.retryBtnText}>{t('common.tryAgain')}</Text>
+        </TouchableOpacity>
       </DetailScreen>
     );
   }
@@ -953,6 +965,8 @@ const ds = StyleSheet.create({
   subLabel: { fontSize: 14, color: T.textSecondary, marginTop: 4 },
   sectionLabel: { fontSize: 11, fontWeight: '700', color: T.textTertiary, letterSpacing: 0.8, marginBottom: 8 },
   emptyText: { fontSize: 15, color: T.textTertiary, textAlign: 'center', marginTop: 40, lineHeight: 22 },
+  retryBtn: { alignSelf: 'center', marginTop: 16, backgroundColor: T.accent, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 24 },
+  retryBtnText: { fontSize: 14, fontWeight: '700', color: '#FFF' },
 
   barDetailList: {
     marginTop: 12,

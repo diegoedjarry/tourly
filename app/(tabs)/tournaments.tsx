@@ -13,6 +13,7 @@ import {
   Switch,
   Linking,
   Alert,
+  RefreshControl,
 } from 'react-native';
 import { Text } from '@/components/ui/text';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -39,6 +40,7 @@ import { SwipeableRow } from '@/components/ui/SwipeableRow';
 import { estimateTripCost } from '@/utils/trip-estimate';
 import { fetchTripCostEstimate, TripCostEstimate } from '@/utils/trip-ai';
 import { parseAmount } from '../../utils/import-expenses';
+import { usePullToRefresh } from '@/hooks/usePullToRefresh';
 
 // Supervisor contact fields come from scraped data — validate strictly before
 // handing them to Linking.openURL so a malformed value can't smuggle extra
@@ -2445,7 +2447,8 @@ export default function TournamentsScreen() {
     { key: 'past', label: t('tournaments.past') },
     { key: 'withdrawn', label: t('tournaments.withdrawn') },
   ];
-  const { data, isLoading } = useAppQuery({ tournaments: {} });
+  const { data, isLoading, error: queryError } = useAppQuery({ tournaments: {} });
+  const { refreshing, onRefresh } = usePullToRefresh();
   const [activeFilter, setActiveFilter]   = useState<Filter>('all');
   const [pastYear, setPastYear]           = useState<string | null>(null);
   const [showDiscovery, setShowDiscovery]  = useState(false);
@@ -2819,16 +2822,32 @@ export default function TournamentsScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false} {...swipeHandlers}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={T.textSecondary} />}
+        {...swipeHandlers}>
 
         <View style={styles.topBar}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <TouchableOpacity onPress={() => router.push('/settings' as any)} activeOpacity={0.75}>
+            <TouchableOpacity
+              onPress={() => router.push('/settings' as any)}
+              activeOpacity={0.75}
+              accessibilityRole="button"
+              accessibilityLabel={t('settings.title')}
+            >
               <AgentIcon size={70} />
             </TouchableOpacity>
             <Text style={styles.topTitle}>{t('tournaments.title')}</Text>
           </View>
-          <TouchableOpacity style={styles.addButton} onPress={() => setShowDiscovery(true)} activeOpacity={0.8}>
+          <TouchableOpacity
+            style={styles.addButton}
+            onPress={() => setShowDiscovery(true)}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel={t('tournaments.addNew')}
+          >
             <Text style={styles.addIcon}>+</Text>
           </TouchableOpacity>
         </View>
@@ -2856,10 +2875,23 @@ export default function TournamentsScreen() {
 
         {isLoading && <LoadingLogo style={{ minHeight: 300 }} />}
 
-        {!isLoading && activeFilter !== 'withdrawn' && filtered.length === 0 && (
+        {!isLoading && queryError && (data?.tournaments ?? []).length === 0 && (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorBannerText}>
+              {lang === 'es'
+                ? 'No se pudieron cargar tus torneos. Revisa tu conexión e inténtalo de nuevo.'
+                : 'Could not load your tournaments. Check your connection and try again.'}
+            </Text>
+            <TouchableOpacity style={styles.errorBannerBtn} activeOpacity={0.8} onPress={onRefresh}>
+              <Text style={styles.errorBannerBtnText}>{t('common.tryAgain')}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {!isLoading && !queryError && activeFilter !== 'withdrawn' && filtered.length === 0 && (
           <Text style={styles.emptyText}>{t('tournaments.noTournamentsYet')}</Text>
         )}
-        {!isLoading && activeFilter === 'withdrawn' && withdrawnGroup.length === 0 && (
+        {!isLoading && !queryError && activeFilter === 'withdrawn' && withdrawnGroup.length === 0 && (
           <Text style={styles.emptyText}>{t('tournaments.noWithdrawn')}</Text>
         )}
 
@@ -3137,6 +3169,10 @@ const styles = StyleSheet.create({
   pillAmber: { backgroundColor: T.amber },
   pillText: { fontSize: 11, color: T.textPrimary, fontWeight: '600' },
   emptyText: { fontSize: 14, color: T.textTertiary, textAlign: 'center', marginTop: 40 },
+  errorBanner: { backgroundColor: T.red, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 16, marginTop: 16, alignItems: 'center' },
+  errorBannerText: { fontSize: 13, fontWeight: '600', color: '#FFF', textAlign: 'center' },
+  errorBannerBtn: { marginTop: 10, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 16 },
+  errorBannerBtnText: { fontSize: 13, fontWeight: '700', color: '#FFF' },
   cardWithdrawn: {
     borderRadius: 12, padding: 10, marginBottom: 5,
     backgroundColor: '#1E1610', borderWidth: 1, borderColor: '#2A2018',
