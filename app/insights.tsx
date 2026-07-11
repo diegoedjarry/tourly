@@ -208,11 +208,11 @@ function WhereMoneyGoes({ expenses, tournaments }: { expenses: any[]; tournament
               {expandedCat === cat && (
                 <View style={ds.barDetailList}>
                   {catExpenses.map((e, idx) => {
-                    const t = tMap.get(e.tournamentId);
+                    const tourn = tMap.get(e.tournamentId);
                     return (
                       <View key={e.id ?? idx} style={[ds.barDetailRow, idx === catExpenses.length - 1 && { borderBottomWidth: 0 }]}>
                         <View style={{ flex: 1, marginRight: 12 }}>
-                          <Text style={ds.barDetailTitle}>{t ? t.name : 'General'}</Text>
+                          <Text style={ds.barDetailTitle}>{tourn ? tourn.name : t('insights.general')}</Text>
                           <Text style={ds.barDetailSub} numberOfLines={1}>
                             {[
                               e.date ? (() => {
@@ -312,10 +312,10 @@ function CostByCountry({ tournaments, expenses }: { tournaments: any[]; expenses
   }, [data, t]);
 
   return (
-    <DetailScreen title="Cost By Country">
-      <Text style={[ds.subLabel, { marginBottom: 12 }]}>Sorted by cost/day — the comparable number between trips of different lengths</Text>
+    <DetailScreen title={t('insights.costByCountryTitle')}>
+      <Text style={[ds.subLabel, { marginBottom: 12 }]}>{t('insights.sortedByCostDay')}</Text>
       {data.length === 0 ? (
-        <Text style={ds.emptyText}>Log tournaments and expenses in different countries to see a comparison.</Text>
+        <Text style={ds.emptyText}>{t('insights.logCountriesToCompare')}</Text>
       ) : (
         <>
           {summary && <SummaryBox text={summary} />}
@@ -427,8 +427,8 @@ function TournamentCosts({ tournaments, expenses }: { tournaments: any[]; expens
   }, [ranked, expenses, t]);
 
   return (
-    <DetailScreen title="Tournament Costs">
-      <Text style={ds.subLabel}>{ranked.length} tournaments with expenses</Text>
+    <DetailScreen title={t('insights.tournamentCosts')}>
+      <Text style={ds.subLabel}>{ranked.length} {t('insights.tournamentsWithExpenses')}</Text>
       {summary && (
         <View style={{ marginTop: 16 }}>
           <SummaryBox text={summary} />
@@ -463,6 +463,7 @@ function TournamentCosts({ tournaments, expenses }: { tournaments: any[]; expens
 
 function CoachImpact({ tournaments, expenses }: { tournaments: any[]; expenses: any[] }) {
   const router = useRouter();
+  const { t } = useLanguage();
   const withCoach: any[] = [];
   const solo: any[] = [];
 
@@ -484,23 +485,23 @@ function CoachImpact({ tournaments, expenses }: { tournaments: any[]; expenses: 
   const maxAvg = Math.max(avgWith, avgSolo, 1);
 
   return (
-    <DetailScreen title="Coach Impact">
+    <DetailScreen title={t('insights.coachImpact')}>
       {withCoach.length === 0 && solo.length === 0 ? (
-        <Text style={ds.emptyText}>Log expenses for tournaments to see coach impact analysis.</Text>
+        <Text style={ds.emptyText}>{t('insights.logExpensesCoach')}</Text>
       ) : (
         <>
           <View style={{ flexDirection: 'row', gap: 12 }}>
             <View style={[ds.impactCard, { flex: 1 }]}>
-              <Text style={ds.impactLabel}>WITH COACH</Text>
+              <Text style={ds.impactLabel}>{t('insights.withCoach')}</Text>
               <Text style={ds.impactAmount}>{fmtFull(avgWith)}</Text>
-              <Text style={ds.impactSub}>avg per tournament</Text>
-              <Text style={ds.impactCount}>{withCoach.length} tournament{withCoach.length !== 1 ? 's' : ''}</Text>
+              <Text style={ds.impactSub}>{t('insights.avgPerTournament')}</Text>
+              <Text style={ds.impactCount}>{withCoach.length} {withCoach.length !== 1 ? t('insights.tournaments') : t('insights.tournament')}</Text>
             </View>
             <View style={[ds.impactCard, { flex: 1 }]}>
-              <Text style={ds.impactLabel}>SOLO</Text>
+              <Text style={ds.impactLabel}>{t('insights.solo')}</Text>
               <Text style={ds.impactAmount}>{fmtFull(avgSolo)}</Text>
-              <Text style={ds.impactSub}>avg per tournament</Text>
-              <Text style={ds.impactCount}>{solo.length} tournament{solo.length !== 1 ? 's' : ''}</Text>
+              <Text style={ds.impactSub}>{t('insights.avgPerTournament')}</Text>
+              <Text style={ds.impactCount}>{solo.length} {solo.length !== 1 ? t('insights.tournaments') : t('insights.tournament')}</Text>
             </View>
           </View>
 
@@ -508,13 +509,13 @@ function CoachImpact({ tournaments, expenses }: { tournaments: any[]; expenses: 
             <>
               <View style={{ marginTop: 24, gap: 12 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <Text style={{ fontSize: 13, color: T.textSecondary, width: 80 }}>With coach</Text>
+                  <Text style={{ fontSize: 13, color: T.textSecondary, width: 80 }}>{t('insights.withCoachLabel')}</Text>
                   <View style={{ flex: 1, height: 24, backgroundColor: T.card, borderRadius: 6, overflow: 'hidden' }}>
                     <View style={{ width: `${(avgWith / maxAvg) * 100}%`, height: '100%', backgroundColor: T.accent, borderRadius: 6 }} />
                   </View>
                 </View>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <Text style={{ fontSize: 13, color: T.textSecondary, width: 80 }}>Solo</Text>
+                  <Text style={{ fontSize: 13, color: T.textSecondary, width: 80 }}>{t('insights.soloLabel')}</Text>
                   <View style={{ flex: 1, height: 24, backgroundColor: T.card, borderRadius: 6, overflow: 'hidden' }}>
                     <View style={{ width: `${(avgSolo / maxAvg) * 100}%`, height: '100%', backgroundColor: T.teal, borderRadius: 6 }} />
                   </View>
@@ -522,13 +523,13 @@ function CoachImpact({ tournaments, expenses }: { tournaments: any[]; expenses: 
               </View>
               <View style={ds.insightBox}>
                 <Text style={ds.insightText}>
-                  Traveling with your coach costs you an average of {fmtFull(Math.abs(diff))} {diff > 0 ? 'more' : 'less'} per tournament.
+                  {t(diff > 0 ? 'insights.coachCostsMore' : 'insights.coachCostsLess').replace('{amount}', fmtFull(Math.abs(diff)))}
                 </Text>
               </View>
             </>
           )}
 
-          <Text style={[ds.sectionLabel, { marginTop: 24 }]}>WITH COACH</Text>
+          <Text style={[ds.sectionLabel, { marginTop: 24 }]}>{t('insights.withCoach')}</Text>
           {withCoach.map(t => (
             <TouchableOpacity
               key={t.id}
@@ -543,7 +544,7 @@ function CoachImpact({ tournaments, expenses }: { tournaments: any[]; expenses: 
               </View>
             </TouchableOpacity>
           ))}
-          <Text style={[ds.sectionLabel, { marginTop: 16 }]}>SOLO</Text>
+          <Text style={[ds.sectionLabel, { marginTop: 16 }]}>{t('insights.solo')}</Text>
           {solo.map(t => (
             <TouchableOpacity
               key={t.id}
@@ -603,9 +604,9 @@ function BiggestExpenses({ expenses, tournaments }: { expenses: any[]; tournamen
   }, [sorted, total, t]);
 
   return (
-    <DetailScreen title="Biggest Expenses">
+    <DetailScreen title={t('insights.biggestExpenses')}>
       <Text style={ds.bigLabel}>{fmtFull(total)}</Text>
-      <Text style={ds.subLabel}>Total season expenses</Text>
+      <Text style={ds.subLabel}>{t('insights.totalSeasonExpenses')}</Text>
       {summary && (
         <View style={{ marginTop: 16 }}>
           <SummaryBox text={summary} />
@@ -613,12 +614,12 @@ function BiggestExpenses({ expenses, tournaments }: { expenses: any[]; tournamen
       )}
       <View style={{ marginTop: summary ? 4 : 20 }}>
         {sorted.map((e, i) => {
-          const t = tMap.get(e.tournamentId);
+          const tourn = tMap.get(e.tournamentId);
           return (
             <View key={e.id ?? i} style={ds.listRow}>
               <View style={{ flex: 1 }}>
                 <Text style={ds.listRowTitle}>{e.category ?? 'Other'}</Text>
-                <Text style={ds.listRowSub}>{t ? t.name : 'General'}{e.date ? ` · ${(() => { const [,m,d] = e.date.split('-'); const MO = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return `${+d} ${MO[+m-1]}`; })()}` : ''}{e.note ? ` · ${e.note}` : ''}</Text>
+                <Text style={ds.listRowSub}>{tourn ? tourn.name : t('insights.general')}{e.date ? ` · ${(() => { const [,m,d] = e.date.split('-'); const MO = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return `${+d} ${MO[+m-1]}`; })()}` : ''}{e.note ? ` · ${e.note}` : ''}</Text>
               </View>
               <Text style={ds.listRowAmount}>{fmtFull(effectiveUsd(e))}</Text>
             </View>
@@ -661,6 +662,7 @@ function PointsPerDollar({ expenses, tournaments, atpMatchHistory }: {
   expenses: any[]; tournaments: any[]; atpMatchHistory: any[];
 }) {
   const router = useRouter();
+  const { t } = useLanguage();
   const totalPoints = atpMatchHistory.reduce((s: number, m: any) => s + (m.pointsEarned ?? 0), 0);
   const totalSpent = effectiveSum(expenses);
 
@@ -684,12 +686,12 @@ function PointsPerDollar({ expenses, tournaments, atpMatchHistory }: {
 
   if (totalPoints === 0) {
     return (
-      <DetailScreen title="Points per $1k">
+      <DetailScreen title={t('insights.pointsPerDollarTitle')}>
         <View style={{ alignItems: 'center', marginTop: 40 }}>
           <Text style={{ fontSize: 48 }}>📊</Text>
-          <Text style={{ fontSize: 18, fontWeight: '700', color: T.textPrimary, marginTop: 16 }}>Log match results to unlock</Text>
+          <Text style={{ fontSize: 18, fontWeight: '700', color: T.textPrimary, marginTop: 16 }}>{t('insights.logResultsUnlock')}</Text>
           <Text style={{ fontSize: 14, color: T.textSecondary, marginTop: 8, textAlign: 'center', lineHeight: 20, paddingHorizontal: 20 }}>
-            Once your match results are in, you&apos;ll see which tournaments earn you ranking points at the lowest cost.
+            {t('insights.pointsPerDollarEmptyBody')}
           </Text>
         </View>
       </DetailScreen>
@@ -700,21 +702,26 @@ function PointsPerDollar({ expenses, tournaments, atpMatchHistory }: {
   const best = ranked[0];
 
   return (
-    <DetailScreen title="Points per $1k">
+    <DetailScreen title={t('insights.pointsPerDollarTitle')}>
       <View style={{ alignItems: 'center', marginTop: 16 }}>
         <Text style={{ fontSize: 42, fontWeight: '800', color: T.textPrimary }}>{seasonPer1k.toFixed(1)} pts</Text>
-        <Text style={{ fontSize: 15, color: T.textSecondary, marginTop: 4 }}>per $1,000 invested</Text>
+        <Text style={{ fontSize: 15, color: T.textSecondary, marginTop: 4 }}>{t('insights.perThousandInvested')}</Text>
       </View>
       <View style={[ds.insightBox, { marginTop: 24 }]}>
         <Text style={ds.insightText}>
           {best
-            ? `Your most efficient event was ${best.name}: ${best.per1k.toFixed(1)} pts per $1k vs. your season average of ${seasonPer1k.toFixed(1)}. More weeks like that one climb the ranking cheapest.`
-            : `You've earned ${totalPoints} points on ${fmtFull(totalSpent)} invested this season. Link expenses to tournaments to see which events earn points cheapest.`}
+            ? t('insights.mostEfficientEvent')
+                .replace('{name}', best.name)
+                .replace('{per1k}', best.per1k.toFixed(1))
+                .replace('{season}', seasonPer1k.toFixed(1))
+            : t('insights.earnedPointsInvestedLinkPrompt')
+                .replace('{points}', String(totalPoints))
+                .replace('{amount}', fmtFull(totalSpent))}
         </Text>
       </View>
       {ranked.length > 0 && (
         <View style={{ marginTop: 24 }}>
-          <Text style={ds.subLabel}>Ranked by efficiency — best first</Text>
+          <Text style={ds.subLabel}>{t('insights.rankedByEfficiency')}</Text>
           {ranked.map((r, i) => (
             <TouchableOpacity key={r.id + r.date} style={ds.listRow} activeOpacity={0.7}
               onPress={() => router.push({ pathname: '/(tabs)/expenses', params: { openTournament: r.id } })}>
@@ -730,7 +737,7 @@ function PointsPerDollar({ expenses, tournaments, atpMatchHistory }: {
       )}
       {pointsOnly.length > 0 && (
         <View style={{ marginTop: 20 }}>
-          <Text style={ds.subLabel}>Points earned, no expenses linked</Text>
+          <Text style={ds.subLabel}>{t('insights.pointsNoExpensesLinked')}</Text>
           {pointsOnly.map((r, i) => (
             <View key={`${r.name}-${i}`} style={ds.listRow}>
               <View style={{ flex: 1 }}>
@@ -751,17 +758,18 @@ function PointsPerDollar({ expenses, tournaments, atpMatchHistory }: {
 function PointsBySurface({ tournaments, atpMatchHistory }: { tournaments: any[]; atpMatchHistory: any[] }) {
   const [expandedSurface, setExpandedSurface] = useState<Surface | null>(null);
   const router = useRouter();
+  const { t } = useLanguage();
 
   const hasPoints = atpMatchHistory.some((m: any) => (m.pointsEarned ?? 0) > 0);
 
   if (!hasPoints) {
     return (
-      <DetailScreen title="Points By Surface">
+      <DetailScreen title={t('insights.pointsBySurface')}>
         <View style={{ alignItems: 'center', marginTop: 40 }}>
           <Text style={{ fontSize: 48 }}>🎾</Text>
-          <Text style={{ fontSize: 18, fontWeight: '700', color: T.textPrimary, marginTop: 16 }}>Log results to unlock</Text>
+          <Text style={{ fontSize: 18, fontWeight: '700', color: T.textPrimary, marginTop: 16 }}>{t('insights.logResultsToUnlockShort')}</Text>
           <Text style={{ fontSize: 14, color: T.textSecondary, marginTop: 8, textAlign: 'center' }}>
-            Enter match results to see your points breakdown by surface.
+            {t('insights.enterResultsPoints')}
           </Text>
         </View>
       </DetailScreen>
@@ -777,7 +785,7 @@ function PointsBySurface({ tournaments, atpMatchHistory }: { tournaments: any[];
   }).filter(d => d.count > 0);
 
   return (
-    <DetailScreen title="Points By Surface">
+    <DetailScreen title={t('insights.pointsBySurface')}>
       {data.map(d => {
         const sc = SURFACE_COLORS[d.surface];
         return (
@@ -793,7 +801,7 @@ function PointsBySurface({ tournaments, atpMatchHistory }: { tournaments: any[];
               </View>
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text style={[ds.surfaceName, { color: sc.text }]}>{d.surface.charAt(0).toUpperCase() + d.surface.slice(1)}</Text>
+                  <Text style={[ds.surfaceName, { color: sc.text }]}>{t(`surface.${d.surface}`)}</Text>
                   <Text style={{ fontSize: 12, color: sc.text + '80' }}>
                     {expandedSurface === d.surface ? '▼' : '▶'}
                   </Text>
@@ -803,17 +811,17 @@ function PointsBySurface({ tournaments, atpMatchHistory }: { tournaments: any[];
             </View>
             <View style={ds.surfaceStats}>
               <View style={ds.surfaceStat}>
-                <Text style={ds.surfaceStatLabel}>Avg. Points</Text>
+                <Text style={ds.surfaceStatLabel}>{t('insights.avgPoints')}</Text>
                 <Text style={ds.surfaceStatValue}>{d.avgPts.toFixed(1)}</Text>
               </View>
               <View style={ds.surfaceStat}>
-                <Text style={ds.surfaceStatLabel}>Tournaments</Text>
+                <Text style={ds.surfaceStatLabel}>{t('insights.tournamentsLabel')}</Text>
                 <Text style={ds.surfaceStatValue}>{d.count}</Text>
               </View>
             </View>
             {d.best && (d.best.pointsEarned ?? 0) > 0 && (
               <Text style={{ fontSize: 12, color: T.textSecondary, marginTop: 8 }}>
-                Best: {d.best.tournamentName} ({d.best.pointsEarned} pts)
+                {t('insights.bestMatch').replace('{name}', d.best.tournamentName).replace('{pts}', String(d.best.pointsEarned))}
               </Text>
             )}
 
@@ -858,7 +866,7 @@ function PointsBySurface({ tournaments, atpMatchHistory }: { tournaments: any[];
 
 export default function InsightsScreen() {
   const { type } = useLocalSearchParams<{ type: string }>();
-  const { lang, t } = useLanguage();
+  const { t } = useLanguage();
   const { onRefresh } = usePullToRefresh();
   const { data, isLoading, error } = useAppQuery({ tournaments: {}, expenses: {} });
   const tournaments = data?.tournaments ?? [];
@@ -913,11 +921,9 @@ export default function InsightsScreen() {
 
   if (hasLoadError) {
     return (
-      <DetailScreen title="Insight">
+      <DetailScreen title={t('insights.insight')}>
         <Text style={ds.emptyText}>
-          {lang === 'es'
-            ? 'No se pudieron cargar tus datos. Desliza hacia abajo o vuelve a intentarlo más tarde.'
-            : "Couldn't load your data. Pull to refresh or try again later."}
+          {t('insights.couldNotLoadData')}
         </Text>
         <TouchableOpacity style={ds.retryBtn} activeOpacity={0.8} onPress={onRefresh}>
           <Text style={ds.retryBtnText}>{t('common.tryAgain')}</Text>
@@ -940,8 +946,8 @@ export default function InsightsScreen() {
     case 'points-by-surface':   return <LoadingFade isLoading={false}><PointsBySurface tournaments={tournaments} atpMatchHistory={safeAtp} /></LoadingFade>;
     default:
       return (
-        <DetailScreen title="Insight">
-          <Text style={ds.emptyText}>Unknown insight type.</Text>
+        <DetailScreen title={t('insights.insight')}>
+          <Text style={ds.emptyText}>{t('insights.unknownType')}</Text>
         </DetailScreen>
       );
   }

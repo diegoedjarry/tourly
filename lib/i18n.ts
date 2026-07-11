@@ -66,6 +66,7 @@ const strings = {
 
   // Offline write queue
   'common.savedOffline': { en: 'Saved offline — will sync when connected', es: 'Guardado sin conexión — se sincronizará al reconectar' },
+  'common.error': { en: 'Error', es: 'Error' },
 
   // Tournaments
   'tournaments.addNew': { en: 'Add Tournament', es: 'Agregar Torneo' },
@@ -377,15 +378,12 @@ const strings = {
   'expenses.thisWeek': { en: 'This week', es: 'Esta semana' },
   'expenses.deletedUndo': { en: 'Deleted — UNDO', es: 'Eliminado — DESHACER' },
   'expenses.undo': { en: 'UNDO', es: 'DESHACER' },
-  'expenses.generalExpenses': { en: 'General Expenses', es: 'Gastos Generales' },
   'expenses.noDescription': { en: 'No description', es: 'Sin descripción' },
   'expenses.sectionCashFlow': { en: 'Cash flow', es: 'Flujo de caja' },
   'expenses.sectionBudget': { en: 'Budget', es: 'Presupuesto' },
-  'expenses.sectionTournaments': { en: 'Tournaments', es: 'Torneos' },
   'expenses.byCategory': { en: 'By category', es: 'Por categoría' },
   'expenses.noExpensesYet': { en: 'No expenses in this period yet', es: 'Aún no hay gastos en este período' },
   'expenses.seeMore': { en: 'See more ›', es: 'Ver más ›' },
-  'expenses.ofSpend': { en: 'of spend', es: 'del gasto' },
   'expenses.cashInflow': { en: 'Prize + income', es: 'Premios + ingresos' },
   'expenses.noCashData': { en: 'No money movement in this period yet', es: 'Aún no hay movimientos en este período' },
   'expenses.budgetRemaining': { en: 'Budget remaining', es: 'Presupuesto restante' },
@@ -405,7 +403,6 @@ const strings = {
   'expenses.sponsorCover2': { en: 'of your season costs', es: 'de tus costos de temporada' },
   'expenses.pointsPer1k': { en: 'Points per $1k', es: 'Puntos por $1k' },
   'expenses.biggestExpenses': { en: 'Biggest expenses', es: 'Mayores gastos' },
-  'expenses.seeAll': { en: 'See all', es: 'Ver todos' },
   'expense.reimbursed': { en: 'Reimbursed', es: 'Reembolsado' },
   'expense.reimbursedToggle': { en: 'This expense is reimbursed', es: 'Este gasto está reembolsado' },
   'expense.splitCost': { en: 'Split cost…', es: 'Dividir costo…' },
@@ -664,6 +661,19 @@ const strings = {
   'insights.summaryTournamentCosts': { en: 'Your average tournament costs {avg}. {name} was {multiple}× that — {category} drove the difference.', es: 'Tu torneo promedio cuesta {avg}. {name} fue {multiple}× eso — {category} marcó la diferencia.' },
   'insights.summaryBiggestExpensesCategory': { en: 'Your top {count} expenses are all {category}-related and add up to {amount} — {pct}% of season spend.', es: 'Tus {count} mayores gastos son de {category} y suman {amount} — {pct}% del gasto de temporada.' },
   'insights.summaryBiggestExpensesMixed': { en: 'Your top {count} expenses add up to {amount} — {pct}% of season spend, led by {category} ({catPct}%).', es: 'Tus {count} mayores gastos suman {amount} — {pct}% del gasto de temporada, liderado por {category} ({catPct}%).' },
+  'insights.costByCountryTitle': { en: 'Cost By Country', es: 'Costo Por País' },
+  'insights.sortedByCostDay': { en: 'Sorted by cost/day — the comparable number between trips of different lengths', es: 'Ordenado por costo/día — la cifra comparable entre viajes de distinta duración' },
+  'insights.logCountriesToCompare': { en: 'Log tournaments and expenses in different countries to see a comparison.', es: 'Registra torneos y gastos en distintos países para ver una comparación.' },
+  'insights.pointsPerDollarTitle': { en: 'Points per $1k', es: 'Puntos por $1k' },
+  'insights.pointsPerDollarEmptyBody': { en: "Once your match results are in, you'll see which tournaments earn you ranking points at the lowest cost.", es: 'Una vez que tus resultados estén registrados, verás qué torneos te dan puntos de ranking al menor costo.' },
+  'insights.perThousandInvested': { en: 'per $1,000 invested', es: 'por cada $1.000 invertidos' },
+  'insights.mostEfficientEvent': { en: 'Your most efficient event was {name}: {per1k} pts per $1k vs. your season average of {season}. More weeks like that one climb the ranking cheapest.', es: 'Tu evento más eficiente fue {name}: {per1k} pts por $1k vs. tu promedio de temporada de {season}. Más semanas así y subes el ranking más barato.' },
+  'insights.earnedPointsInvestedLinkPrompt': { en: "You've earned {points} points on {amount} invested this season. Link expenses to tournaments to see which events earn points cheapest.", es: 'Has ganado {points} puntos invirtiendo {amount} esta temporada. Vincula gastos a torneos para ver qué eventos dan puntos más baratos.' },
+  'insights.rankedByEfficiency': { en: 'Ranked by efficiency — best first', es: 'Ordenado por eficiencia — el mejor primero' },
+  'insights.pointsNoExpensesLinked': { en: 'Points earned, no expenses linked', es: 'Puntos ganados, sin gastos vinculados' },
+  'insights.logResultsToUnlockShort': { en: 'Log results to unlock', es: 'Registra resultados para desbloquear' },
+  'insights.bestMatch': { en: 'Best: {name} ({pts} pts)', es: 'Mejor: {name} ({pts} pts)' },
+  'insights.couldNotLoadData': { en: "Couldn't load your data. Pull to refresh or try again later.", es: 'No se pudieron cargar tus datos. Desliza hacia abajo o vuelve a intentarlo más tarde.' },
 
   // Walkthrough - Home
   'walkthrough.home.dashboard.title': { en: 'Your dashboard', es: 'Tu panel' },
@@ -790,9 +800,10 @@ const strings = {
 
   // Auth extra
   'auth.missingFields': { en: 'Missing fields', es: 'Campos faltantes' },
-  'auth.fillFields': { en: 'Please enter email and password.', es: 'Por favor ingresa correo y contraseña.' },
+  'auth.fillFields': { en: 'Please enter your email and password.', es: 'Por favor ingresa tu correo y contraseña.' },
   'auth.error': { en: 'Error', es: 'Error' },
-  'auth.signInFailed': { en: 'sign-in failed.', es: 'Error al iniciar sesión.' },
+  'auth.somethingWrong': { en: 'Something went wrong.', es: 'Algo salió mal.' },
+  'auth.signInFailed': { en: 'sign in failed.', es: 'Error al iniciar sesión.' },
   'auth.signUpFailed': { en: 'sign-up failed.', es: 'Error al registrarse.' },
 
   // Alerts time labels
@@ -874,6 +885,13 @@ const strings = {
 
   // Calendar remove block
   'calendar.removeBlock': { en: 'Remove this {type} block?', es: '¿Eliminar este bloque de {type}?' },
+  'calendar.couldNotDeleteBlock': { en: 'Could not delete block.', es: 'No se pudo eliminar el bloque.' },
+
+  // Walkthrough - Calendar map & Alerts tap (single-step walkthroughs)
+  'walkthrough.calendar.map.title': { en: 'Your Season Map', es: 'Tu Mapa de Temporada' },
+  'walkthrough.calendar.map.body': { en: 'Your tournaments appear as dots on the map below the calendar. Dotted lines connect tournaments you could combine into one trip to save on flights.', es: 'Tus torneos aparecen como puntos en el mapa debajo del calendario. Las líneas punteadas conectan torneos que podrías combinar en un solo viaje para ahorrar en vuelos.' },
+  'walkthrough.alerts.tapAny.title': { en: 'Tap Any Alert', es: 'Toca Cualquier Alerta' },
+  'walkthrough.alerts.tapAny.body': { en: "Tap any alert to go directly to that tournament's details and take action. Red means urgent — don't wait.", es: 'Toca cualquier alerta para ir directo a los detalles de ese torneo y tomar acción. Rojo significa urgente — no esperes.' },
 
   // ── Added by the July 2026 robustness-audit fix pass ──────────────────────
   'common.couldNotSave': { en: 'Could not save', es: 'No se pudo guardar' },
@@ -904,6 +922,19 @@ const strings = {
 
   'settings.southAmerica': { en: 'South America', es: 'Sudamérica' },
   'settings.deleteAccount': { en: 'Delete Account', es: 'Eliminar Cuenta' },
+  'settings.deleteAccountWarning': { en: 'This will permanently delete your account and all your data — tournaments, expenses, and insights. This cannot be undone.', es: 'Esto eliminará permanentemente tu cuenta y todos tus datos — torneos, gastos y análisis. Esto no se puede deshacer.' },
+  'settings.deleteMyAccount': { en: 'Delete My Account', es: 'Eliminar Mi Cuenta' },
+  'settings.areYouSure': { en: 'Are you sure?', es: '¿Estás seguro?' },
+  'settings.typeDeleteToConfirm': { en: 'Type DELETE to confirm. All your data will be gone forever.', es: 'Escribe DELETE para confirmar. Todos tus datos se perderán para siempre.' },
+  'settings.yesDeleteEverything': { en: 'Yes, Delete Everything', es: 'Sí, Eliminar Todo' },
+  'settings.couldNotDeleteAccount': { en: 'Could not delete account. Please contact support.', es: 'No se pudo eliminar la cuenta. Por favor contacta a soporte.' },
+  'settings.exportFailed': { en: 'Export failed', es: 'Error de exportación' },
+  'settings.couldNotExportData': { en: 'Could not export data.', es: 'No se pudieron exportar los datos.' },
+  'settings.couldNotExportTournaments': { en: 'Could not export tournaments.', es: 'No se pudieron exportar los torneos.' },
+  'settings.couldNotExportExpenses': { en: 'Could not export expenses.', es: 'No se pudieron exportar los gastos.' },
+  'settings.nameCannotBeEmpty': { en: 'Name cannot be empty.', es: 'El nombre no puede estar vacío.' },
+  'settings.invalidRanking': { en: 'Enter a valid ranking (a positive whole number).', es: 'Ingresa un ranking válido (un número entero positivo).' },
+  'settings.invalidBudget': { en: 'Enter a valid budget (a positive whole number).', es: 'Ingresa un presupuesto válido (un número entero positivo).' },
 
   'insights.perDay': { en: '$/day', es: '$/día' },
 
@@ -977,6 +1008,16 @@ const strings = {
   'onboarding.profileScreen.surfaceHard': { en: 'Hard', es: 'Dura' },
   'onboarding.profileScreen.surfaceGrass': { en: 'Grass', es: 'Césped' },
   'onboarding.profileScreen.continue': { en: 'Continue', es: 'Continuar' },
+
+  // Onboarding - Notifications & Ready screens
+  'onboarding.notifications.title': { en: 'Stay Ahead of Every Deadline', es: 'Adelántate a Cada Plazo' },
+  'onboarding.notifications.desc': { en: 'Tourly sends deadline reminders before entry and withdrawal windows close. Missing a withdrawal deadline costs you a fine and ranking points — these notifications are your safety net.', es: 'Tourly envía recordatorios de plazos antes de que cierren las ventanas de inscripción y retiro. Perder un plazo de retiro te cuesta una multa y puntos de ranking — estas notificaciones son tu red de seguridad.' },
+  'onboarding.notifications.enable': { en: 'Turn On Notifications', es: 'Activar Notificaciones' },
+  'onboarding.notifications.skip': { en: 'Skip for now', es: 'Omitir por ahora' },
+  'onboarding.ready.title': { en: "You're All Set", es: 'Todo Listo' },
+  'onboarding.ready.desc': { en: 'Add your first tournament to get started. Tourly will calculate all deadlines automatically.', es: 'Agrega tu primer torneo para comenzar. Tourly calculará todos los plazos automáticamente.' },
+  'onboarding.ready.addFirst': { en: 'Add My First Tournament →', es: 'Agregar Mi Primer Torneo →' },
+  'onboarding.ready.explore': { en: 'Explore the app first', es: 'Explorar la app primero' },
 } as const;
 
 export type Lang = 'en' | 'es';

@@ -407,6 +407,8 @@ function ProfileSetupScreen({ onNext, onBack }: { onNext: () => void; onBack: ()
 // ─── Screen 8: Notifications ─────────────────────────────────────────────────
 
 function NotificationsScreen({ onNext, onBack }: { onNext: () => void; onBack: () => void }) {
+  const { t } = useLanguage();
+
   async function handleEnable() {
     try {
       const { requestPermissionsAndGetToken } = await import('@/utils/notifications');
@@ -418,21 +420,21 @@ function NotificationsScreen({ onNext, onBack }: { onNext: () => void; onBack: (
   return (
     <SafeAreaView style={s.safe}>
       <TouchableOpacity onPress={onBack} style={s.backBtn} activeOpacity={0.7}>
-        <Text style={s.backText}>‹ Back</Text>
+        <Text style={s.backText}>‹ {t('onboarding.back')}</Text>
       </TouchableOpacity>
       <View style={[s.centered, { paddingHorizontal: 32 }]}>
         <Text style={{ fontSize: 64, marginBottom: 24 }}>🔔</Text>
-        <Text style={s.featureTitle}>Stay Ahead of Every Deadline</Text>
+        <Text style={s.featureTitle}>{t('onboarding.notifications.title')}</Text>
         <Text style={s.featureDesc}>
-          Tourly sends deadline reminders before entry and withdrawal windows close. Missing a withdrawal deadline costs you a fine and ranking points — these notifications are your safety net.
+          {t('onboarding.notifications.desc')}
         </Text>
       </View>
       <View style={{ paddingHorizontal: 24, paddingBottom: 32, gap: 12 }}>
         <TouchableOpacity style={s.primaryBtn} onPress={handleEnable} activeOpacity={0.85}>
-          <Text style={s.primaryBtnText}>Turn On Notifications</Text>
+          <Text style={s.primaryBtnText}>{t('onboarding.notifications.enable')}</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={onNext} activeOpacity={0.7} style={{ alignItems: 'center' }}>
-          <Text style={s.linkText}>Skip for now</Text>
+          <Text style={s.linkText}>{t('onboarding.notifications.skip')}</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -442,21 +444,22 @@ function NotificationsScreen({ onNext, onBack }: { onNext: () => void; onBack: (
 // ─── Screen 9: Ready ─────────────────────────────────────────────────────────
 
 function ReadyScreen({ onAddTournament, onExplore }: { onAddTournament: () => void; onExplore: () => void }) {
+  const { t } = useLanguage();
   return (
     <SafeAreaView style={s.safe}>
       <View style={[s.centered, { paddingHorizontal: 32 }]}>
         <Text style={{ fontSize: 72, color: MINT, fontWeight: '800', marginBottom: 16 }}>✓</Text>
-        <Text style={s.featureTitle}>You&apos;re All Set</Text>
+        <Text style={s.featureTitle}>{t('onboarding.ready.title')}</Text>
         <Text style={s.featureDesc}>
-          Add your first tournament to get started. Tourly will calculate all deadlines automatically.
+          {t('onboarding.ready.desc')}
         </Text>
       </View>
       <View style={{ paddingHorizontal: 24, paddingBottom: 32, gap: 12 }}>
         <TouchableOpacity style={s.primaryBtn} onPress={onAddTournament} activeOpacity={0.85}>
-          <Text style={s.primaryBtnText}>Add My First Tournament →</Text>
+          <Text style={s.primaryBtnText}>{t('onboarding.ready.addFirst')}</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={onExplore} activeOpacity={0.7} style={{ alignItems: 'center' }}>
-          <Text style={s.linkText}>Explore the app first</Text>
+          <Text style={s.linkText}>{t('onboarding.ready.explore')}</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>

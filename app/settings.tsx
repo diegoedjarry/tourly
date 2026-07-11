@@ -222,7 +222,7 @@ export default function SettingsScreen() {
         lang,
       );
     } catch (e: any) {
-      showAlert('Export failed', e?.message ?? t('settings.exportSeasonStatementFailed'));
+      showAlert(t('settings.exportFailed'), e?.message ?? t('settings.exportSeasonStatementFailed'));
     } finally {
       setExporting(false);
     }
@@ -283,21 +283,21 @@ export default function SettingsScreen() {
 
   async function handleDeleteAccount() {
     showAlert(
-      'Delete Account',
-      'This will permanently delete your account and all your data — tournaments, expenses, and insights. This cannot be undone.',
+      t('settings.deleteAccount'),
+      t('settings.deleteAccountWarning'),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Delete My Account',
+          text: t('settings.deleteMyAccount'),
           style: 'destructive',
           onPress: () => {
             showAlert(
-              'Are you sure?',
-              'Type DELETE to confirm. All your data will be gone forever.',
+              t('settings.areYouSure'),
+              t('settings.typeDeleteToConfirm'),
               [
-                { text: 'Cancel', style: 'cancel' },
+                { text: t('common.cancel'), style: 'cancel' },
                 {
-                  text: 'Yes, Delete Everything',
+                  text: t('settings.yesDeleteEverything'),
                   style: 'destructive',
                   onPress: async () => {
                     setDeletingAccount(true);
@@ -308,7 +308,7 @@ export default function SettingsScreen() {
                       await signOut();
                     } catch (err: any) {
                       setDeletingAccount(false);
-                      showAlert('Error', err?.message ?? 'Could not delete account. Please contact support.');
+                      showAlert(t('common.error'), err?.message ?? t('settings.couldNotDeleteAccount'));
                     }
                   },
                 },
@@ -535,7 +535,7 @@ export default function SettingsScreen() {
             disabled={exporting}
             onPress={async () => {
               setExporting(true);
-              try { await exportAllCsv(appData?.tournaments ?? [], appData?.expenses ?? []); } catch (e: any) { showAlert('Export failed', e?.message ?? 'Could not export data.'); } finally { setExporting(false); }
+              try { await exportAllCsv(appData?.tournaments ?? [], appData?.expenses ?? []); } catch (e: any) { showAlert(t('settings.exportFailed'), e?.message ?? t('settings.couldNotExportData')); } finally { setExporting(false); }
             }}>
             <Text style={s.rowLabel}>{t('settings.exportAll')}</Text>
             <View style={s.rowRight}>
@@ -547,7 +547,7 @@ export default function SettingsScreen() {
             style={s.row}
             activeOpacity={0.6}
             onPress={async () => {
-              try { await exportTournamentsCsv(appData?.tournaments ?? []); } catch (e: any) { showAlert('Export failed', e?.message ?? 'Could not export tournaments.'); }
+              try { await exportTournamentsCsv(appData?.tournaments ?? []); } catch (e: any) { showAlert(t('settings.exportFailed'), e?.message ?? t('settings.couldNotExportTournaments')); }
             }}>
             <Text style={s.rowLabel}>{t('settings.exportTournaments')}</Text>
             <View style={s.rowRight}><Text style={s.rowArrow}>›</Text></View>
@@ -557,7 +557,7 @@ export default function SettingsScreen() {
             style={s.row}
             activeOpacity={0.6}
             onPress={async () => {
-              try { await exportExpensesCsv(appData?.expenses ?? [], appData?.tournaments ?? []); } catch (e: any) { showAlert('Export failed', e?.message ?? 'Could not export expenses.'); }
+              try { await exportExpensesCsv(appData?.expenses ?? [], appData?.tournaments ?? []); } catch (e: any) { showAlert(t('settings.exportFailed'), e?.message ?? t('settings.couldNotExportExpenses')); }
             }}>
             <Text style={s.rowLabel}>{t('settings.exportExpenses')}</Text>
             <View style={s.rowRight}><Text style={s.rowArrow}>›</Text></View>
@@ -578,7 +578,7 @@ export default function SettingsScreen() {
                   lang,
                 );
               } catch (e: any) {
-                showAlert('Export failed', e?.message ?? t('settings.exportSeasonStatementFailed'));
+                showAlert(t('settings.exportFailed'), e?.message ?? t('settings.exportSeasonStatementFailed'));
               } finally {
                 setExporting(false);
               }
@@ -683,7 +683,7 @@ export default function SettingsScreen() {
                         ]);
                       }}
                       activeOpacity={0.7}>
-                      <Text style={{ fontSize: 14, color: T.red, fontWeight: '600' }}>Remove</Text>
+                      <Text style={{ fontSize: 14, color: T.red, fontWeight: '600' }}>{t('settings.remove')}</Text>
                     </TouchableOpacity>
                   </View>
                 </React.Fragment>
@@ -831,7 +831,7 @@ export default function SettingsScreen() {
         onChange={setEditValue}
         onSave={() => {
           if (!editValue.trim()) {
-            showAlert('Error', 'Name cannot be empty.');
+            showAlert(t('common.error'), t('settings.nameCannotBeEmpty'));
             return;
           }
           saveAndClose('full_name', editValue.trim());
@@ -858,7 +858,7 @@ export default function SettingsScreen() {
           const cleaned = editValue.replace(/[.,]/g, ''); // strip thousands separators
           const parsed = parseInt(cleaned, 10);
           if (!Number.isFinite(parsed) || parsed < 0) {
-            showAlert('Error', 'Enter a valid ranking (a positive whole number).');
+            showAlert(t('common.error'), t('settings.invalidRanking'));
             return;
           }
           saveAndClose('ranking', parsed);
@@ -877,7 +877,7 @@ export default function SettingsScreen() {
           const cleaned = editValue.replace(/[.,]/g, ''); // strip thousands separators
           const parsed = parseInt(cleaned, 10);
           if (!Number.isFinite(parsed) || parsed < 0) {
-            showAlert('Error', 'Enter a valid budget (a positive whole number).');
+            showAlert(t('common.error'), t('settings.invalidBudget'));
             return;
           }
           saveAndClose('annual_budget', parsed);

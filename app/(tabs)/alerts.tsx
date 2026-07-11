@@ -30,10 +30,6 @@ import { useLanguage } from '@/hooks/useLanguage';
 import { useRouter } from 'expo-router';
 import { usePullToRefresh } from '@/hooks/usePullToRefresh';
 
-const ALERTS_WALKTHROUGH = [
-  { icon: '🔔', title: 'Tap Any Alert', body: 'Tap any alert to go directly to that tournament\'s details and take action. Red means urgent — don\'t wait.' },
-];
-
 type Urgency = 'urgent' | 'week' | 'upcoming';
 
 type DeadlineKind = 'withdrawal' | 'signup' | 'freeze';
@@ -540,7 +536,13 @@ export default function AlertsScreen() {
           loading={withdrawing}
         />
       )}
-      <ScreenWalkthrough steps={ALERTS_WALKTHROUGH} visible={isFirstVisit} onDismiss={markVisited} />
+      <ScreenWalkthrough
+        steps={[
+          { icon: '🔔', title: t('walkthrough.alerts.tapAny.title'), body: t('walkthrough.alerts.tapAny.body') },
+        ]}
+        visible={isFirstVisit}
+        onDismiss={markVisited}
+      />
     </SafeAreaView>
   );
 }

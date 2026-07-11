@@ -35,9 +35,6 @@ import { useLanguage } from '@/hooks/useLanguage';
 import { useAppAlert } from '@/components/ui/app-alert';
 import { usePullToRefresh } from '@/hooks/usePullToRefresh';
 
-const CALENDAR_WALKTHROUGH = [
-  { icon: '🗺️', title: 'Your Season Map', body: 'Your tournaments appear as dots on the map below the calendar. Dotted lines connect tournaments you could combine into one trip to save on flights.' },
-];
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -491,7 +488,7 @@ export default function CalendarScreen() {
               await addBlock.mutateAsync(block);
               setShowAddBlock(false);
             } catch (e: any) {
-              showAlert('Error', e?.message ?? 'Could not save.');
+              showAlert(t('common.error'), e?.message ?? t('tournament.couldNotSave'));
             }
           }}
           onClose={() => setShowAddBlock(false)}
@@ -515,7 +512,7 @@ export default function CalendarScreen() {
                 style={s.blockDeleteBtn}
                 activeOpacity={0.8}
                 onPress={() => {
-                  showAlert(t('common.delete'), `Remove this ${selectedBlock.title.toLowerCase()} block?`, [
+                  showAlert(t('common.delete'), t('calendar.removeBlock').replace('{type}', selectedBlock.title.toLowerCase()), [
                     { text: t('common.cancel'), style: 'cancel' },
                     {
                       text: t('common.delete'), style: 'destructive',
@@ -524,7 +521,7 @@ export default function CalendarScreen() {
                           await deleteBlock.mutateAsync(selectedBlock.id);
                           setSelectedBlock(null);
                         } catch (e: any) {
-                          showAlert('Error', e?.message ?? 'Could not delete block.');
+                          showAlert(t('common.error'), e?.message ?? t('calendar.couldNotDeleteBlock'));
                         }
                       },
                     },
@@ -540,7 +537,13 @@ export default function CalendarScreen() {
         </Modal>
       )}
 
-      <ScreenWalkthrough steps={CALENDAR_WALKTHROUGH} visible={isFirstVisit} onDismiss={markVisited} />
+      <ScreenWalkthrough
+        steps={[
+          { icon: '🗺️', title: t('walkthrough.calendar.map.title'), body: t('walkthrough.calendar.map.body') },
+        ]}
+        visible={isFirstVisit}
+        onDismiss={markVisited}
+      />
     </SafeAreaView>
   );
 }

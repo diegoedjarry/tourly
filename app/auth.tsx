@@ -33,7 +33,7 @@ export default function AuthScreen() {
 
   async function handleSubmit() {
     if (!email.trim() || !password.trim()) {
-      showAlert('Missing fields', 'Please enter your email and password.');
+      showAlert(t('auth.missingFields'), t('auth.fillFields'));
       return;
     }
     setLoading(true);
@@ -51,7 +51,7 @@ export default function AuthScreen() {
         // will navigate automatically — no alert needed.
       }
     } catch (err: any) {
-      showAlert('Error', err?.message ?? 'Something went wrong.');
+      showAlert(t('auth.error'), err?.message ?? t('auth.somethingWrong'));
     } finally {
       setLoading(false);
     }
@@ -62,7 +62,7 @@ export default function AuthScreen() {
     try {
       await signInWithOAuth(provider);
     } catch (err: any) {
-      showAlert('Error', err?.message ?? `${provider} sign in failed.`);
+      showAlert(t('auth.error'), err?.message ?? `${provider} ${t('auth.signInFailed')}`);
     } finally {
       setOauthLoading(null);
     }
