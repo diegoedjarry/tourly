@@ -4,10 +4,12 @@ import { useRouter } from 'expo-router';
 import { Text } from '@/components/ui/text';
 import { T } from '@/constants/theme';
 import { useScraperStatus } from '@/hooks/useScraperTrigger';
+import { useLanguage } from '@/hooks/useLanguage';
 
 export function ScraperBanner() {
   const status = useScraperStatus();
   const router = useRouter();
+  const { t } = useLanguage();
   const pulse = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
@@ -51,10 +53,10 @@ export function ScraperBanner() {
       {isFailed   && <Text style={{ fontSize: 15 }}>⚠</Text>}
       <Text style={{ fontSize: 13, fontWeight: '600', color: T.textPrimary, flex: 1, lineHeight: 18 }}>
         {isComplete
-          ? 'Your ATP profile is ready! Check My Performance.'
+          ? t('scraper.readyBanner')
           : isFailed
-          ? 'ATP sync is taking longer than expected. Check My Performance later.'
-          : 'Loading your ATP profile… this takes a few minutes.'}
+          ? t('scraper.failedBanner')
+          : t('scraper.loadingBanner')}
       </Text>
       {isComplete && <Text style={{ fontSize: 20, color: T.green, fontWeight: '300' }}>›</Text>}
     </TouchableOpacity>

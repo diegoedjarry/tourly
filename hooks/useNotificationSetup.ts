@@ -35,12 +35,23 @@ export function useNotificationSetup() {
     }).catch(() => {});
   }, []);
 
+  // Never request the OS permission prompt on launch — an unconditional
+  // request before the user has any context is an Apple HIG anti-pattern that
+  // tanks opt-in. Only re-register (token fetch + save) for users who already
+  // granted permission in a previous session; everyone else is asked later,
+  // at a moment with context (onboarding, deadline-moment priming, the alerts
+  // banner, or the settings switch — see ensurePermissionAndRegister).
   useEffect(() => {
     if (DEMO_MODE) return;
     if (Platform.OS === 'web' || isExpoGo) return;
-    import('@/utils/notifications').then(({ requestPermissionsAndGetToken }) => {
-      requestPermissionsAndGetToken().catch(() => {});
-    });
+    import('expo-notifications').then(async Notifications => {
+      try {
+        const { status } = await Notifications.getPermissionsAsync();
+        if (status !== 'granted') return;
+        const { requestPermissionsAndGetToken } = await import('@/utils/notifications');
+        await requestPermissionsAndGetToken();
+      } catch {}
+    }).catch(() => {});
   }, []);
 
   // Cancel notifications for tournaments that no longer exist — or are withdrawn /

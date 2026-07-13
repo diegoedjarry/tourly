@@ -314,11 +314,11 @@ export function TournamentMap({
 
 
   // Deadline pill logic
-  const DeadlinePill = useCallback(({ t }: { t: any }) => {
+  const DeadlinePill = useCallback(({ tournament }: { tournament: any }) => {
     const deadlines: { label: string; date: Date | null }[] = [
-      { label: 'Entry closes', date: parseLocalDate(t.signUpDeadline) },
-      { label: 'Withdrawal', date: parseLocalDate(t.withdrawalDeadline) },
-      { label: 'Freeze', date: parseLocalDate(t.freezeDeadline) },
+      { label: t('tournament.deadlineEntryCloses'), date: parseLocalDate(tournament.signUpDeadline) },
+      { label: t('alerts.withdrawal'), date: parseLocalDate(tournament.withdrawalDeadline) },
+      { label: t('tournament.freezeShort'), date: parseLocalDate(tournament.freezeDeadline) },
     ];
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -341,11 +341,11 @@ export function TournamentMap({
     return (
       <View style={[styles.pill, { backgroundColor: bg }]}>
         <Text style={[styles.pillText, { color }]}>
-          {label} in {days}d
+          {t('tournament.deadlineInDays').replace('{label}', label).replace('{days}', String(days))}
         </Text>
       </View>
     );
-  }, []);
+  }, [t]);
 
   const hasNoLocations = allCoords.length === 0;
 
@@ -393,8 +393,8 @@ export function TournamentMap({
       {/* Empty state overlay */}
       {hasNoLocations && (
         <View style={styles.emptyOverlay}>
-          <Text style={styles.emptyTitle}>No tournaments added yet</Text>
-          <Text style={styles.emptySubtitle}>Add tournaments to see them on your map</Text>
+          <Text style={styles.emptyTitle}>{t('tournament.mapEmptyTitle')}</Text>
+          <Text style={styles.emptySubtitle}>{t('tournament.mapEmptySubtitle')}</Text>
           {onAddTournament && (
             <TouchableOpacity
               style={styles.addBtn}
@@ -455,7 +455,7 @@ export function TournamentMap({
           </View>
           {selectedGroup.length > 1 && (
             <Text style={styles.sheetGroupLabel}>
-              {selectedGroup.length} tournaments · {selectedGroup[0].city ?? selectedGroup[0].country}
+              {t('tournament.tournamentsCount').replace('{count}', String(selectedGroup.length))} · {selectedGroup[0].city ?? selectedGroup[0].country}
             </Text>
           )}
           <ScrollView
@@ -463,26 +463,26 @@ export function TournamentMap({
             bounces={false}
             keyboardShouldPersistTaps="handled"
           >
-            {selectedGroup.map((t, i) => (
-              <View key={t.id} style={[styles.sheetItem, i > 0 && styles.sheetItemBorder]}>
+            {selectedGroup.map((trn, i) => (
+              <View key={trn.id} style={[styles.sheetItem, i > 0 && styles.sheetItemBorder]}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.sheetName}>{t.name}</Text>
+                  <Text style={styles.sheetName}>{trn.name}</Text>
                   <Text style={styles.sheetDates}>
-                    {fmtDateRange(t.startDate, t.endDate)}
+                    {fmtDateRange(trn.startDate, trn.endDate)}
                   </Text>
-                  {(t.category || t.country) && (
+                  {(trn.category || trn.country) && (
                     <Text style={styles.sheetMeta}>
-                      {[t.category, t.country].filter(Boolean).join('  ·  ')}
+                      {[trn.category, trn.country].filter(Boolean).join('  ·  ')}
                     </Text>
                   )}
-                  <DeadlinePill t={t} />
+                  <DeadlinePill tournament={trn} />
                 </View>
                 <TouchableOpacity
                   style={styles.viewBtnSmall}
                   activeOpacity={0.85}
-                  onPress={() => handleOpen(t.id)}
+                  onPress={() => handleOpen(trn.id)}
                 >
-                  <Text style={styles.viewBtnText}>View</Text>
+                  <Text style={styles.viewBtnText}>{t('common.view')}</Text>
                 </TouchableOpacity>
               </View>
             ))}

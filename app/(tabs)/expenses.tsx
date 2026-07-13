@@ -95,6 +95,19 @@ const MONTH_NAMES_EN = [
 const PERSONAL_CAT_KEYS = ['cat.flight', 'cat.hotel', 'cat.meals', 'cat.transport', 'cat.stringsGrip', 'cat.stringingFee', 'cat.physio', 'cat.academy', 'cat.trainer', 'cat.other'] as const;
 const COACH_CAT_KEYS    = ['cat.coachFee', 'cat.coachFlight', 'cat.coachHotel', 'cat.coachMeals'] as const;
 
+// Display-only category → i18n key lookup (case-insensitive). Known
+// identifiers (incl. the legacy lowercase 'flight' predating the BUG-1 fix)
+// translate; custom/unknown categories pass through unchanged. Never affects
+// what's stored in the DB — only how it renders.
+const CATEGORY_DISPLAY_MAP: Record<string, string> = { flight: 'cat.flight' };
+PERSONAL_CATS.forEach((cat, i) => { CATEGORY_DISPLAY_MAP[cat.toLowerCase()] = PERSONAL_CAT_KEYS[i]; });
+COACH_CATS.forEach((cat, i) => { CATEGORY_DISPLAY_MAP[cat.toLowerCase()] = COACH_CAT_KEYS[i]; });
+
+function displayCategory(raw: string, t: (key: any) => string): string {
+  const key = CATEGORY_DISPLAY_MAP[(raw ?? '').toLowerCase()];
+  return key ? t(key) : raw;
+}
+
 function fmt(n: number): string {
   const abs = Math.abs(n).toLocaleString('en-US');
   return n < 0 ? `-$${abs}` : `$${abs}`;
@@ -296,7 +309,7 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
   const [tournamentId, setTournamentId]         = useState(defaultTournamentId ?? autoMatchedId ?? '');
   const [manuallyPicked, setManuallyPicked]     = useState(!!defaultTournamentId);
   const [dropdownOpen, setDropdownOpen]          = useState(false);
-  const [category, setCategory]                  = useState('flight');
+  const [category, setCategory]                  = useState('Flights');
   const [customMode, setCustomMode]              = useState(false);
   const [customText, setCustomText]              = useState('');
   const [amount, setAmount]                      = useState('');
@@ -444,6 +457,7 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
           sharePct: sharePctVal,
           amountUsd,
         });
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         onClose();
       } else {
         await apiAddExpense({
@@ -462,6 +476,7 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
           amountUsd,
         });
         generateInsight.mutate({ trigger: 'expense_logged' }); // fire and forget
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         onClose();
       }
     } catch (e: any) {
@@ -776,7 +791,7 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
             ) : (
               <TouchableOpacity
                 style={form.fixedSwitchLink}
-                onPress={() => { setIsMonthlyFixed(false); setCategory('flight'); }}
+                onPress={() => { setIsMonthlyFixed(false); setCategory('Flights'); }}
                 activeOpacity={0.7}>
                 <Text style={form.fixedSwitchLinkText}>{t('expense.switchToNormal')}</Text>
               </TouchableOpacity>
@@ -884,6 +899,7 @@ function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => v
       } else {
         await apiUpdateExpense(expense.id, updates);
       }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       onClose();
     } catch (e: any) {
       setError(e?.message ?? 'Failed to save.');
@@ -1094,7 +1110,7 @@ function ExpenseActionSheet({ expense, onEdit, onDelete, onLink, onCancel }: {
   expense: any; onEdit: () => void; onDelete: () => void; onLink: () => void; onCancel: () => void;
 }) {
   const { t } = useLanguage();
-  const label = [expense.category, expense.note].filter(Boolean).join(' · ');
+  const label = [displayCategory(expense.category, t), expense.note].filter(Boolean).join(' · ');
   const isLinked = !!expense.tournamentId;
   return (
     <Modal transparent animationType="slide" onRequestClose={onCancel}>
@@ -1158,7 +1174,7 @@ function LinkTournamentModal({ expenses, tournaments, onClose }: {
   );
   const [linking, setLinking] = useState(false);
   const currentYear = new Date().getFullYear();
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = todayIso();
 
   // Fetch scraped match history from player_profiles — same source as My Performance.
   // Start immediately on mount so data arrives as the slide animation completes.
@@ -1308,7 +1324,7 @@ function LinkTournamentModal({ expenses, tournaments, onClose }: {
           <Text style={[sheet.title, { marginBottom: 4 }]}>{t('expenses.linkToTournament')}</Text>
           {expenses.length > 1 && (
             <Text style={{ fontSize: 12, color: '#6060A0', marginBottom: 8, textAlign: 'center' }}>
-              {expenses.length} expenses will be linked
+              {t('expenses.willBeLinked').replace('{count}', String(expenses.length))}
             </Text>
           )}
           {anyLinked && !isLoading && (
@@ -1324,7 +1340,7 @@ function LinkTournamentModal({ expenses, tournaments, onClose }: {
             </View>
           ) : pastTournaments!.length === 0 ? (
             <Text style={{ color: '#6060A0', textAlign: 'center', marginVertical: 24 }}>
-              No past tournaments found for {currentYear}
+              {t('expenses.noPastTournamentsFound').replace('{year}', String(currentYear))}
             </Text>
           ) : (
             <ScrollView showsVerticalScrollIndicator={false}>
@@ -1341,7 +1357,7 @@ function LinkTournamentModal({ expenses, tournaments, onClose }: {
             </ScrollView>
           )}
           <TouchableOpacity style={sheet.cancelBtn} onPress={onClose} activeOpacity={0.8} disabled={linking}>
-            <Text style={sheet.cancelText}>Cancel</Text>
+            <Text style={sheet.cancelText}>{t('common.cancel')}</Text>
           </TouchableOpacity>
         </Pressable>
       </Pressable>
@@ -1617,7 +1633,7 @@ export function TournamentExpenseDetail({ tournament, onClose, allTournaments }:
           <View style={det.body}>
 
             {/* ── MATCH RESULTS (played tournaments with scraped history) ── */}
-            {!!t.startDate && t.startDate < new Date().toISOString().slice(0, 10) && (
+            {!!t.startDate && t.startDate < todayIso() && (
               <ScrapedResultsSection tournament={t} />
             )}
 
@@ -1637,7 +1653,7 @@ export function TournamentExpenseDetail({ tournament, onClose, allTournaments }:
                   <TouchableOpacity key={e.id} style={det.expenseRow}
                     onPress={() => setActionExpense(e)} activeOpacity={0.75}>
                     <View style={det.expenseLeft}>
-                      <Text style={det.expenseCat}>{e.category}</Text>
+                      <Text style={det.expenseCat}>{displayCategory(e.category, tr)}</Text>
                       {e.note ? <Text style={det.expenseNote} numberOfLines={1}>{e.note}</Text> : null}
                     </View>
                     <View style={det.expenseRight}>
@@ -1748,7 +1764,7 @@ function PasteFromNotesModal({ tournaments, expenses, onClose }: {
   function handleParse() {
     const results = parseNotes(rawText);
     if (results.length === 0) {
-      setError('No expenses found. Try pasting lines like "Flight $350" or "Hotel – $120 – 15/06/2025".');
+      setError(t('paste.noExpensesFound'));
       return;
     }
     setError('');
@@ -1779,13 +1795,13 @@ function PasteFromNotesModal({ tournaments, expenses, onClose }: {
   async function handleImport() {
     if (importing) return; // guard against double-tap re-firing the import
     const toImport = parsed.filter(p => p.selected);
-    if (toImport.length === 0) { setError('Select at least one expense to import.'); return; }
+    if (toImport.length === 0) { setError(t('paste.selectAtLeastOne')); return; }
     const invalid = toImport.filter(p =>
       !Number.isFinite(p.amount) || p.amount <= 0 ||
       (p.date != null && !/^\d{4}-\d{2}-\d{2}$/.test(p.date))
     );
     if (invalid.length > 0) {
-      setError(`${invalid.length} selected item(s) have an invalid amount or date. Deselect them or fix the source text and re-parse.`);
+      setError(t(invalid.length === 1 ? 'paste.invalidItem' : 'paste.invalidItems').replace('{count}', String(invalid.length)));
       return;
     }
     setImporting(true);
@@ -1814,7 +1830,10 @@ function PasteFromNotesModal({ tournaments, expenses, onClose }: {
           });
         }
         if (skipped > 0) {
-          setError(`${toImport.length - skipped} imported, ${skipped} duplicate${skipped !== 1 ? 's' : ''} skipped.`);
+          setError(t('paste.importResult')
+            .replace('{count}', String(toImport.length - skipped))
+            .replace('{skipped}', String(skipped))
+            .replace('{s}', skipped !== 1 ? 's' : ''));
           setImporting(false);
           setTimeout(onClose, 1200);
           return;
@@ -1845,7 +1864,10 @@ function PasteFromNotesModal({ tournaments, expenses, onClose }: {
         const skipped = mapped.length - count;
         await queryClient.invalidateQueries({ queryKey: ['expenses'] });
         if (skipped > 0) {
-          setError(`${count} imported, ${skipped} duplicate${skipped !== 1 ? 's' : ''} skipped.`);
+          setError(t('paste.importResult')
+            .replace('{count}', String(count))
+            .replace('{skipped}', String(skipped))
+            .replace('{s}', skipped !== 1 ? 's' : ''));
           setImporting(false);
           setTimeout(onClose, 1200);
           return;
@@ -1854,7 +1876,7 @@ function PasteFromNotesModal({ tournaments, expenses, onClose }: {
         onClose();
       }
     } catch (e: any) {
-      setError(e?.message ?? 'Import failed. Try again.');
+      setError(e?.message ?? t('paste.importFailed'));
       setImporting(false);
     }
   }
@@ -1885,14 +1907,14 @@ function PasteFromNotesModal({ tournaments, expenses, onClose }: {
               {/* Tournament selector */}
               {tournaments.length > 0 && (
                 <View style={form.section}>
-                  <Text style={form.sectionLabel}>LINK TO TOURNAMENT (OPTIONAL)</Text>
+                  <Text style={form.sectionLabel}>{t('paste.linkTournament')}</Text>
                   <TouchableOpacity style={form.dropdown} onPress={() => setDropdownOpen(o => !o)} activeOpacity={0.8}>
                     <Text style={(isAutoMatch || selectedTournament) ? form.dropdownValue : form.dropdownPlaceholder} numberOfLines={1}>
                       {isAutoMatch
-                        ? '🔄 Auto-match by date'
+                        ? t('expense.autoMatchDate')
                         : selectedTournament
                         ? `${selectedTournament.country ? countryFlag(selectedTournament.country) + ' ' : ''}${selectedTournament.name}`
-                        : 'No tournament (general expense)'}
+                        : t('expense.noTournament')}
                     </Text>
                     <Text style={form.dropdownChevron}>{dropdownOpen ? '▲' : '▼'}</Text>
                   </TouchableOpacity>
@@ -1902,14 +1924,14 @@ function PasteFromNotesModal({ tournaments, expenses, onClose }: {
                         style={[form.dropdownRow, isAutoMatch && form.dropdownRowActive]}
                         onPress={() => { setTournamentId('__auto__'); setDropdownOpen(false); }}
                         activeOpacity={0.75}>
-                        <Text style={[form.dropdownRowText, isAutoMatch && form.dropdownRowTextActive]}>🔄 Auto-match by date</Text>
+                        <Text style={[form.dropdownRowText, isAutoMatch && form.dropdownRowTextActive]}>{t('expense.autoMatchDate')}</Text>
                         {isAutoMatch && <Text style={form.dropdownCheck}>✓</Text>}
                       </TouchableOpacity>
                       <TouchableOpacity
                         style={[form.dropdownRow, tournamentId === '' && form.dropdownRowActive]}
                         onPress={() => { setTournamentId(''); setDropdownOpen(false); }}
                         activeOpacity={0.75}>
-                        <Text style={[form.dropdownRowText, tournamentId === '' && form.dropdownRowTextActive]}>No tournament</Text>
+                        <Text style={[form.dropdownRowText, tournamentId === '' && form.dropdownRowTextActive]}>{t('expense.noTournamentShort')}</Text>
                         {tournamentId === '' && <Text style={form.dropdownCheck}>✓</Text>}
                       </TouchableOpacity>
                       {tournaments.map((t: any) => (
@@ -1931,9 +1953,9 @@ function PasteFromNotesModal({ tournaments, expenses, onClose }: {
 
               {/* Paste area */}
               <View style={form.section}>
-                <Text style={form.sectionLabel}>PASTE YOUR NOTES</Text>
+                <Text style={form.sectionLabel}>{t('paste.pasteNotes')}</Text>
                 <Text style={pn.hint}>
-                  Paste anything — one expense per line. Amounts like $350, &quot;350 USD&quot;, or standalone numbers work. Dates and categories are auto-detected.
+                  {t('paste.hint')}
                 </Text>
                 <TextInput
                   style={pn.textArea}
@@ -1954,7 +1976,7 @@ function PasteFromNotesModal({ tournaments, expenses, onClose }: {
                 onPress={handleParse}
                 activeOpacity={0.85}
                 disabled={!rawText.trim()}>
-                <Text style={form.saveBtnText}>Parse Expenses</Text>
+                <Text style={form.saveBtnText}>{t('paste.parseExpenses')}</Text>
               </TouchableOpacity>
 
               <View style={{ height: 20 }} />
@@ -1966,9 +1988,9 @@ function PasteFromNotesModal({ tournaments, expenses, onClose }: {
                 showsVerticalScrollIndicator={false}>
 
                 <View style={pn.reviewHeader}>
-                  <Text style={pn.reviewCount}>{parsed.length} expense{parsed.length !== 1 ? 's' : ''} found</Text>
+                  <Text style={pn.reviewCount}>{parsed.length} {t(parsed.length === 1 ? 'paste.expenseFound' : 'paste.expensesFound')}</Text>
                   <TouchableOpacity onPress={toggleAll} activeOpacity={0.7}>
-                    <Text style={pn.selectAllText}>{allSelected ? 'Deselect all' : 'Select all'}</Text>
+                    <Text style={pn.selectAllText}>{t(allSelected ? 'paste.deselectAll' : 'paste.selectAll')}</Text>
                   </TouchableOpacity>
                 </View>
 
@@ -1985,7 +2007,7 @@ function PasteFromNotesModal({ tournaments, expenses, onClose }: {
                         </View>
                       </View>
                       {item.description ? <Text style={pn.reviewDesc} numberOfLines={2}>{item.description}</Text> : null}
-                      <Text style={pn.reviewDate}>{item.date ?? 'No date detected — will use today'}</Text>
+                      <Text style={pn.reviewDate}>{item.date ?? t('paste.noDate')}</Text>
                     </View>
                   </TouchableOpacity>
                 ))}
@@ -2002,7 +2024,7 @@ function PasteFromNotesModal({ tournaments, expenses, onClose }: {
                   disabled={importing || selectedCount === 0}>
                   {importing
                     ? <ActivityIndicator color={T.textPrimary} />
-                    : <Text style={pn.importBtnText}>import {selectedCount} expense{selectedCount !== 1 ? 's' : ''}</Text>}
+                    : <Text style={pn.importBtnText}>{t('paste.importAction')} {selectedCount} {t(selectedCount === 1 ? 'paste.expense' : 'paste.expenses')}</Text>}
                 </TouchableOpacity>
               </View>
             </View>
@@ -2150,7 +2172,7 @@ function PrizeMoneyModal({ tournaments, onClose }: { tournaments: any[]; onClose
   async function handleSave() {
     const singles = Math.max(0, parseAmount(singlesAmount) ?? 0);
     const doubles = Math.max(0, parseAmount(doublesAmount) ?? 0);
-    if (singles === 0 && doubles === 0) { setError('Enter at least one amount.'); return; }
+    if (singles === 0 && doubles === 0) { setError(t('prize.enterAtLeastOneAmount')); return; }
     setSaving(true); setError('');
     try {
       const updates: any = {
@@ -2279,7 +2301,7 @@ function MonthlyFixedSection({ expenses }: { expenses: any[] }) {
             </View>
             {items.map((e: any) => (
               <View key={e.id} style={mf.expenseRow}>
-                <Text style={mf.expenseCat} numberOfLines={1}>{e.category}</Text>
+                <Text style={mf.expenseCat} numberOfLines={1}>{displayCategory(e.category, t)}</Text>
                 <Text style={mf.expenseAmt}>{fmtRowAmount(e)}</Text>
               </View>
             ))}
@@ -2446,7 +2468,7 @@ function RecentExpensesRow({ expense, onPress }: { expense: any; onPress: () => 
     <TouchableOpacity style={rec.row} onPress={onPress} activeOpacity={0.75}>
       <Text style={rec.icon}>{recentCatIcon(expense.category)}</Text>
       <View style={rec.mid}>
-        <Text style={rec.title} numberOfLines={1}>{expense.merchant || expense.note || expense.category}</Text>
+        <Text style={rec.title} numberOfLines={1}>{expense.merchant || expense.note || displayCategory(expense.category, tr)}</Text>
         <Text style={rec.date}>{expense.date}</Text>
       </View>
       <View style={rec.right}>
@@ -2605,7 +2627,7 @@ export default function ExpensesScreen() {
   const [incomeType, setIncomeType] = useState<'sponsor' | 'federation' | 'stipend' | 'other'>('sponsor');
   const [incomeSource, setIncomeSource] = useState('');
   const [incomeAmount, setIncomeAmount] = useState('');
-  const [incomeDate, setIncomeDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [incomeDate, setIncomeDate] = useState(() => todayIso());
   const [incomeSaving, setIncomeSaving] = useState(false);
   const [showBudgetSheet, setShowBudgetSheet] = useState(false);
   const [budgetInput, setBudgetInput] = useState('');
@@ -2702,11 +2724,11 @@ export default function ExpensesScreen() {
   function deleteSelected() {
     const count = selectedIds.size;
     Alert.alert(
-      `Delete ${count} expense${count !== 1 ? 's' : ''}?`,
-      'This cannot be undone.',
+      t('expenses.deleteConfirmTitle').replace('{count}', String(count)).replace('{s}', count !== 1 ? 's' : ''),
+      t('expense.cannotUndo'),
       [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: () => doDeleteSelected() },
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('common.delete'), style: 'destructive', onPress: () => doDeleteSelected() },
       ],
     );
   }
@@ -3437,7 +3459,7 @@ export default function ExpensesScreen() {
         const monthRows: { label: string; idx: number; total: number }[] = [];
         if (period === 'year' && spentMonth === null) {
           const now = new Date(); const y = now.getFullYear() + yearOffset;
-          const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+          const MONTHS = lang === 'es' ? MONTH_NAMES_ES : MONTH_NAMES_EN;
           for (let m = 0; m < 12; m++) {
             const mStr = `${y}-${String(m + 1).padStart(2, '0')}`;
             const total = effectiveSum(expenses.filter((e: any) => e.date?.startsWith(mStr)));
@@ -3453,7 +3475,7 @@ export default function ExpensesScreen() {
           });
         } else {
           grouped.forEach((group, gi) => {
-            const title = group.tournament ? (group.tournament.city ?? group.tournament.name) : 'Other expenses';
+            const title = group.tournament ? (group.tournament.city ?? group.tournament.name) : t('expenses.otherExpenses');
             drillRows.push({ type: 'groupHeader', key: `g-${gi}`, title, gi });
             group.exps.forEach((exp: any, ei: number) => {
               drillRows.push({ type: 'expense', key: `e-${exp.id}`, exp, isLast: ei === group.exps.length - 1 });
@@ -3473,14 +3495,14 @@ export default function ExpensesScreen() {
                     </TouchableOpacity>
                   )}
                   <Text style={{ fontSize: 16, fontWeight: '700', color: '#FAFAFA', flex: 1, textAlign: 'center' }}>
-                    {period === 'year' && spentMonth === null ? 'Expenses by Month' : 'Expenses Breakdown'}
+                    {period === 'year' && spentMonth === null ? t('expenses.byMonthTitle') : t('expenses.breakdownTitle')}
                   </Text>
                 </View>
                 {selectedSpentIds.size === 0
                   ? <Text style={{ fontSize: 12, color: '#6060A0', textAlign: 'center', marginBottom: 12 }}>
-                      {period === 'year' && spentMonth === null ? 'Tap a month to drill in' : 'Tap an expense to select'}
+                      {period === 'year' && spentMonth === null ? t('expenses.tapMonthDrillIn') : t('expenses.tapExpenseSelect')}
                     </Text>
-                  : <Text style={{ fontSize: 12, color: '#5B5BD6', textAlign: 'center', marginBottom: 12 }}>{selectedSpentIds.size} selected</Text>
+                  : <Text style={{ fontSize: 12, color: '#5B5BD6', textAlign: 'center', marginBottom: 12 }}>{selectedSpentIds.size} {t('tournaments.selected')}</Text>
                 }
 
                 <FlatList
@@ -3523,7 +3545,7 @@ export default function ExpensesScreen() {
                           {sel && <Text style={{ color: '#FFF', fontSize: 10, fontWeight: '700' }}>✓</Text>}
                         </View>
                         <View style={{ flex: 1 }}>
-                          <Text style={{ fontSize: 13, fontWeight: '600', color: '#FAFAFA' }}>{exp.category}</Text>
+                          <Text style={{ fontSize: 13, fontWeight: '600', color: '#FAFAFA' }}>{displayCategory(exp.category, t)}</Text>
                           <Text style={{ fontSize: 11, color: '#A0A0C8' }}>{exp.date}</Text>
                         </View>
                         <Text style={{ fontSize: 14, fontWeight: '700', color: '#E24B4A' }}>{fmtRowAmount(exp)}</Text>
@@ -3544,7 +3566,7 @@ export default function ExpensesScreen() {
                           const exp = expenses.find((e: any) => e.id === id);
                           if (exp) { setShowSpentBreakdown(false); setSelectedSpentIds(new Set()); setEditExpense(exp); }
                         }}>
-                        <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 14 }}>Edit</Text>
+                        <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 14 }}>{t('common.edit')}</Text>
                       </TouchableOpacity>
                     )}
                     <TouchableOpacity
@@ -3553,12 +3575,12 @@ export default function ExpensesScreen() {
                       onPress={() => {
                         const count = selectedSpentIds.size;
                         Alert.alert(
-                          `Delete ${count} expense${count !== 1 ? 's' : ''}?`,
-                          'This cannot be undone.',
+                          t('expenses.deleteConfirmTitle').replace('{count}', String(count)).replace('{s}', count !== 1 ? 's' : ''),
+                          t('expense.cannotUndo'),
                           [
-                            { text: 'Cancel', style: 'cancel' },
+                            { text: t('common.cancel'), style: 'cancel' },
                             {
-                              text: 'Delete',
+                              text: t('common.delete'),
                               style: 'destructive',
                               onPress: async () => {
                                 try {
@@ -3568,7 +3590,7 @@ export default function ExpensesScreen() {
                                   }
                                   setSelectedSpentIds(new Set());
                                 } catch (e: any) {
-                                  Alert.alert('Could not delete', e?.message ?? 'Please try again.');
+                                  Alert.alert(t('common.couldNotDelete'), e?.message ?? t('common.tryAgain'));
                                 }
                               },
                             },
@@ -3576,7 +3598,7 @@ export default function ExpensesScreen() {
                         );
                       }}>
                       <Text style={{ color: '#E24B4A', fontWeight: '700', fontSize: 14 }}>
-                        Delete{selectedSpentIds.size > 1 ? ` (${selectedSpentIds.size})` : ''}
+                        {t('common.delete')}{selectedSpentIds.size > 1 ? ` (${selectedSpentIds.size})` : ''}
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -3593,10 +3615,10 @@ export default function ExpensesScreen() {
           <Pressable style={styles.choiceBackdrop} onPress={() => { setShowPrizeBreakdown(false); setSelectedPrizeIds(new Set()); }}>
             <Pressable style={[styles.choiceSheet, { maxHeight: '85%' }]} onPress={() => {}}>
               <View style={styles.choiceHandle} />
-              <Text style={{ fontSize: 16, fontWeight: '700', color: '#FAFAFA', marginBottom: 4, textAlign: 'center' }}>Prize Money by Tournament</Text>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: '#FAFAFA', marginBottom: 4, textAlign: 'center' }}>{t('prize.byTournamentTitle')}</Text>
               {selectedPrizeIds.size === 0
-                ? <Text style={{ fontSize: 12, color: '#6060A0', textAlign: 'center', marginBottom: 12 }}>Tap a row to select</Text>
-                : <Text style={{ fontSize: 12, color: '#5B5BD6', textAlign: 'center', marginBottom: 12 }}>{selectedPrizeIds.size} selected</Text>
+                ? <Text style={{ fontSize: 12, color: '#6060A0', textAlign: 'center', marginBottom: 12 }}>{t('prize.tapRowToSelect')}</Text>
+                : <Text style={{ fontSize: 12, color: '#5B5BD6', textAlign: 'center', marginBottom: 12 }}>{selectedPrizeIds.size} {t('tournaments.selected')}</Text>
               }
               <ScrollView showsVerticalScrollIndicator={false}>
                 {(() => {
@@ -3613,7 +3635,7 @@ export default function ExpensesScreen() {
                     .sort((a: any, b: any) => b.prize - a.prize);
 
                   if (rows.length === 0) return (
-                    <Text style={{ color: '#A0A0C8', textAlign: 'center', marginVertical: 24 }}>No prize money logged yet</Text>
+                    <Text style={{ color: '#A0A0C8', textAlign: 'center', marginVertical: 24 }}>{t('prize.noPrizeMoneyYet')}</Text>
                   );
 
                   return rows.map(({ trn, prize, singles, doubles }: any) => {
@@ -3638,7 +3660,7 @@ export default function ExpensesScreen() {
                             {trn.startDate ? trn.startDate.slice(0, 7).replace('-', '/') : ''} · {trn.category}
                           </Text>
                           {singles > 0 && doubles > 0 && (
-                            <Text style={{ fontSize: 11, color: '#6060A0', marginTop: 2 }}>Singles {fmt(singles)} · Doubles {fmt(doubles)}</Text>
+                            <Text style={{ fontSize: 11, color: '#6060A0', marginTop: 2 }}>{t('prize.singles')} {fmt(singles)} · {t('prize.doubles')} {fmt(doubles)}</Text>
                           )}
                         </View>
                         <Text style={{ fontSize: 15, fontWeight: '800', color: '#5B5BD6' }}>{fmt(prize)}</Text>
@@ -3669,7 +3691,7 @@ export default function ExpensesScreen() {
                         }
                       }}
                     >
-                      <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 14 }}>Edit Prize</Text>
+                      <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 14 }}>{t('prize.editPrize')}</Text>
                     </TouchableOpacity>
                   )}
                   <TouchableOpacity
@@ -3678,12 +3700,12 @@ export default function ExpensesScreen() {
                     onPress={() => {
                       const count = selectedPrizeIds.size;
                       Alert.alert(
-                        `Clear prize money for ${count} tournament${count !== 1 ? 's' : ''}?`,
-                        'Singles and doubles amounts will be reset to $0.',
+                        t('prize.clearConfirmTitle').replace('{count}', String(count)).replace('{s}', count !== 1 ? 's' : ''),
+                        t('prize.clearConfirmBody'),
                         [
-                          { text: 'Cancel', style: 'cancel' },
+                          { text: t('common.cancel'), style: 'cancel' },
                           {
-                            text: 'Clear',
+                            text: t('prize.clearAction'),
                             style: 'destructive',
                             onPress: async () => {
                               try {
@@ -3703,7 +3725,7 @@ export default function ExpensesScreen() {
                     }}
                   >
                     <Text style={{ color: '#E24B4A', fontWeight: '700', fontSize: 14 }}>
-                      Clear Prize{selectedPrizeIds.size > 1 ? ` (${selectedPrizeIds.size})` : ''}
+                      {t('prize.clearPrizeButton')}{selectedPrizeIds.size > 1 ? ` (${selectedPrizeIds.size})` : ''}
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -3842,9 +3864,9 @@ export default function ExpensesScreen() {
                 </View>
                 {selectMode && (
                   <View style={drillStyles.selectBar}>
-                    <Text style={drillStyles.selectCount}>{selectedIds.size} selected</Text>
+                    <Text style={drillStyles.selectCount}>{selectedIds.size} {t('tournaments.selected')}</Text>
                     <TouchableOpacity onPress={() => setSelectedIds(new Set())} activeOpacity={0.7}>
-                      <Text style={drillStyles.selectCancel}>Cancel</Text>
+                      <Text style={drillStyles.selectCancel}>{t('common.cancel')}</Text>
                     </TouchableOpacity>
                   </View>
                 )}
@@ -3858,7 +3880,7 @@ export default function ExpensesScreen() {
                 <GestureHandlerRootView style={{ flexGrow: 0, flexShrink: 1 }}>
                 <ScrollView style={{ maxHeight: 400 }} showsVerticalScrollIndicator={false}>
                   {catExpenses.length === 0 ? (
-                    <Text style={drillStyles.empty}>No expenses in this category.</Text>
+                    <Text style={drillStyles.empty}>{t('expenses.noExpensesInCategory')}</Text>
                   ) : catExpenses.map((e: any, i: number) => {
                     const isSelected = selectedIds.has(e.id);
                     return (
@@ -3880,7 +3902,7 @@ export default function ExpensesScreen() {
                           <Text style={drillStyles.rowNote} numberOfLines={1}>{e.note || t('expenses.noDescription')}</Text>
                           {/* Show specific sub-category when the drill group name differs (e.g. Travel Coach → Coach Flight) */}
                           {e.category && normalizeCat(e.category) !== drillCategory.cat && (
-                            <Text style={drillStyles.rowSubcat} numberOfLines={1}>{e.category}</Text>
+                            <Text style={drillStyles.rowSubcat} numberOfLines={1}>{displayCategory(e.category, t)}</Text>
                           )}
                           <Text style={drillStyles.rowDate}>{e.date}</Text>
                           {e.tournamentId && tournamentMap[e.tournamentId] ? (
@@ -3911,7 +3933,7 @@ export default function ExpensesScreen() {
                         setLinkExpenses(sel);
                       }}
                       activeOpacity={0.8}>
-                      <Text style={drillStyles.linkBtnText}>🏆 Link</Text>
+                      <Text style={drillStyles.linkBtnText}>🏆 {t('expenses.link')}</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={[drillStyles.deleteBtn, { flex: 1 }, deleting && { opacity: 0.5 }]}
@@ -3920,12 +3942,12 @@ export default function ExpensesScreen() {
                       activeOpacity={0.8}>
                       {deleting
                         ? <ActivityIndicator color={T.textPrimary} />
-                        : <Text style={drillStyles.deleteBtnText}>Delete {selectedIds.size}</Text>}
+                        : <Text style={drillStyles.deleteBtnText}>{t('common.delete')} {selectedIds.size}</Text>}
                     </TouchableOpacity>
                   </View>
                 ) : (
                   <TouchableOpacity style={drillStyles.closeBtn} onPress={closeDrill} activeOpacity={0.7}>
-                    <Text style={drillStyles.closeBtnText}>Close</Text>
+                    <Text style={drillStyles.closeBtnText}>{t('common.close')}</Text>
                   </TouchableOpacity>
                 )}
               </Pressable>

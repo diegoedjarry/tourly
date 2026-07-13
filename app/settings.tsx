@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   ScrollView,
@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Linking,
+  AppState,
 } from 'react-native';
 import Constants from 'expo-constants';
 import { Text } from '@/components/ui/text';
@@ -72,6 +73,7 @@ type EditField =
   | 'annual_budget'
   | 'travel_with_coach'
   | 'travel_with_stringing'
+  | 'atp_player_name'
   | 'language';
 
 const LANGUAGES = [
@@ -324,9 +326,54 @@ export default function SettingsScreen() {
     await saveField(field, value);
   }
 
-
   const p = profile as Profile | null;
+  const [osNotifStatus, setOsNotifStatus] = useState<'granted' | 'denied' | 'undetermined' | null>(null);
+
+  // The switch must reflect reality, not just the stored preference — if the
+  // user denied notifications at the OS level, notify_enabled=true would
+  // otherwise show ON while nothing can ever actually fire. Re-checked on
+  // foreground so flipping the OS toggle in Settings is reflected here too.
+  useEffect(() => {
+    if (DEMO_MODE) { setOsNotifStatus('granted'); return; }
+    if (Platform.OS === 'web') { setOsNotifStatus('granted'); return; }
+    let cancelled = false;
+    const checkOsNotifStatus = () => {
+      import('expo-notifications').then(Notifications => {
+        Notifications.getPermissionsAsync().then(({ status }) => {
+          if (!cancelled) setOsNotifStatus(status as any);
+        }).catch(() => {});
+      }).catch(() => {});
+    };
+    checkOsNotifStatus();
+    const sub = AppState.addEventListener('change', next => { if (next === 'active') checkOsNotifStatus(); });
+    return () => { cancelled = true; sub.remove(); };
+  }, []);
+
+  async function handleNotifToggle(v: boolean) {
+    if (!v) { await toggleNotif('notify_enabled', false); return; }
+    if (osNotifStatus === 'denied') {
+      showAlert(
+        t('settings.notifOsDisabledTitle'),
+        t('settings.notifOsDisabledBody'),
+        [
+          { text: t('common.cancel'), style: 'cancel' },
+          { text: t('common.openSettings'), onPress: () => Linking.openSettings() },
+        ],
+      );
+      return;
+    }
+    if (osNotifStatus === 'undetermined') {
+      const { ensurePermissionAndRegister } = await import('@/utils/notifications');
+      const granted = await ensurePermissionAndRegister(appData?.tournaments ?? [], p ?? undefined, lang);
+      setOsNotifStatus(granted ? 'granted' : 'denied');
+      if (granted) await toggleNotif('notify_enabled', true);
+      return;
+    }
+    await toggleNotif('notify_enabled', true);
+  }
+
   const notifyEnabled = p?.notify_enabled ?? true;
+  const notifSwitchValue = osNotifStatus === 'denied' ? false : notifyEnabled;
   const reminderConfig: ReminderConfig = p?.notify_reminder_config ?? DEFAULT_REMINDER_CONFIG;
   const onsiteEnabled = p?.notify_onsite_enabled ?? true;
   const onsiteReminders: (OnsiteReminderTime | null)[] = p?.notify_onsite_reminders ?? DEFAULT_ONSITE_REMINDERS;
@@ -424,6 +471,26 @@ export default function SettingsScreen() {
             value={p?.travel_with_stringing ?? ''}
             onPress={() => openEdit('travel_with_stringing', p?.travel_with_stringing ?? '')}
           />
+          <Sep />
+          <SettingsRow
+            label={t('settings.atpPlayerName')}
+            value={p?.atp_player_name ?? ''}
+            onPress={() => openEdit('atp_player_name', p?.atp_player_name ?? '')}
+          />
+          <Sep />
+          <TouchableOpacity
+            style={s.row}
+            activeOpacity={0.6}
+            onPress={() => {
+              if (!p?.atp_player_name?.trim()) {
+                showAlert(t('settings.syncAtpProfile'), t('settings.syncAtpProfileNeedsName'));
+                return;
+              }
+              showAlert(t('settings.syncAtpProfile'), t('settings.syncAtpProfileInfo'));
+            }}>
+            <Text style={[s.rowLabel, { color: T.teal }]}>{t('settings.syncAtpProfile')}</Text>
+            <View style={s.rowRight}><Text style={s.rowArrow}>›</Text></View>
+          </TouchableOpacity>
         </View>}
 
         {/* ── IPIN ITF ── */}
@@ -472,8 +539,8 @@ export default function SettingsScreen() {
           <View style={s.row}>
             <Text style={s.rowLabel}>{t('settings.pushNotifications')}</Text>
             <Switch
-              value={notifyEnabled}
-              onValueChange={v => toggleNotif('notify_enabled', v)}
+              value={notifSwitchValue}
+              onValueChange={handleNotifToggle}
               trackColor={{ false: T.cardBorder, true: T.teal }}
               thumbColor={T.textPrimary}
             />
@@ -546,21 +613,15 @@ export default function SettingsScreen() {
           <TouchableOpacity
             style={s.row}
             activeOpacity={0.6}
+            disabled={exporting}
             onPress={async () => {
-              try { await exportTournamentsCsv(appData?.tournaments ?? []); } catch (e: any) { showAlert(t('settings.exportFailed'), e?.message ?? t('settings.couldNotExportTournaments')); }
+              setExporting(true);
+              try { await exportTournamentsCsv(appData?.tournaments ?? []); } catch (e: any) { showAlert(t('settings.exportFailed'), e?.message ?? t('settings.couldNotExportTournaments')); } finally { setExporting(false); }
             }}>
             <Text style={s.rowLabel}>{t('settings.exportTournaments')}</Text>
-            <View style={s.rowRight}><Text style={s.rowArrow}>›</Text></View>
-          </TouchableOpacity>
-          <Sep />
-          <TouchableOpacity
-            style={s.row}
-            activeOpacity={0.6}
-            onPress={async () => {
-              try { await exportExpensesCsv(appData?.expenses ?? [], appData?.tournaments ?? []); } catch (e: any) { showAlert(t('settings.exportFailed'), e?.message ?? t('settings.couldNotExportExpenses')); }
-            }}>
-            <Text style={s.rowLabel}>{t('settings.exportExpenses')}</Text>
-            <View style={s.rowRight}><Text style={s.rowArrow}>›</Text></View>
+            <View style={s.rowRight}>
+              {exporting ? <ActivityIndicator size="small" color={T.teal} /> : <Text style={s.rowArrow}>›</Text>}
+            </View>
           </TouchableOpacity>
           <Sep />
           <TouchableOpacity
@@ -569,9 +630,34 @@ export default function SettingsScreen() {
             disabled={exporting}
             onPress={async () => {
               setExporting(true);
+              try { await exportExpensesCsv(appData?.expenses ?? [], appData?.tournaments ?? []); } catch (e: any) { showAlert(t('settings.exportFailed'), e?.message ?? t('settings.couldNotExportExpenses')); } finally { setExporting(false); }
+            }}>
+            <Text style={s.rowLabel}>{t('settings.exportExpenses')}</Text>
+            <View style={s.rowRight}>
+              {exporting ? <ActivityIndicator size="small" color={T.teal} /> : <Text style={s.rowArrow}>›</Text>}
+            </View>
+          </TouchableOpacity>
+          <Sep />
+          <TouchableOpacity
+            style={s.row}
+            activeOpacity={0.6}
+            disabled={exporting}
+            onPress={async () => {
+              const year = new Date().getFullYear();
+              const hasYearExpenses = (appData?.expenses ?? []).some(
+                (e: any) => String(e.date ?? '').slice(0, 4) === String(year),
+              );
+              const hasYearTournaments = (appData?.tournaments ?? []).some(
+                (tourney: any) => String(tourney.startDate ?? '').slice(0, 4) === String(year),
+              );
+              if (!hasYearExpenses && !hasYearTournaments) {
+                showAlert(t('settings.exportSeasonStatement'), t('settings.taxReportEmpty'));
+                return;
+              }
+              setExporting(true);
               try {
                 await exportSeasonStatementPdf(
-                  new Date().getFullYear(),
+                  year,
                   appData?.tournaments ?? [],
                   appData?.expenses ?? [],
                   profile?.full_name ?? undefined,
@@ -847,6 +933,16 @@ export default function SettingsScreen() {
         onSave={() => saveAndClose('home_city', editValue.trim() || null)}
         onClose={() => setEditField(null)}
         autoCapitalize="words"
+      />
+      <EditTextModal
+        visible={editField === 'atp_player_name'}
+        title={t('settings.atpPlayerName')}
+        value={editValue}
+        onChange={setEditValue}
+        onSave={() => saveAndClose('atp_player_name', editValue.trim() || null)}
+        onClose={() => setEditField(null)}
+        autoCapitalize="words"
+        placeholder={t('settings.atpPlayerNamePlaceholder')}
       />
       <EditTextModal
         visible={editField === 'ranking'}

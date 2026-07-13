@@ -10,7 +10,6 @@ import {
   TextInput,
   Platform,
   KeyboardAvoidingView,
-  ActivityIndicator,
   RefreshControl,
 } from 'react-native';
 import { Text } from '@/components/ui/text';
@@ -28,6 +27,7 @@ import { useTrainingBlocks, useAddTrainingBlock, useDeleteTrainingBlock } from '
 import { TournamentMap } from '@/components/ui/tournament-map';
 import { useProfile } from '@/hooks/useProfile';
 import { DatePickerField } from '@/components/ui/date-picker-field';
+import { LoadingLogo } from '@/components/ui/LoadingLogo';
 import { DEMO_MODE } from '@/config/demo';
 import { T } from '@/constants/theme';
 import { useLanguage } from '@/hooks/useLanguage';
@@ -280,99 +280,101 @@ export default function CalendarScreen() {
         {...panResponder.panHandlers}>
 
         {/* Loading state */}
-        {isLoading && (
-          <ActivityIndicator color={T.accent} style={{ marginTop: 48 }} />
-        )}
-
-        {!isLoading && queryError && allTournaments.length === 0 && (
-          <View style={s.errorBanner}>
-            <Text style={s.errorBannerText}>
-              {lang === 'es'
-                ? 'No se pudo cargar tu calendario. Revisa tu conexión e inténtalo de nuevo.'
-                : 'Could not load your calendar. Check your connection and try again.'}
-            </Text>
-            <TouchableOpacity style={s.errorBannerBtn} activeOpacity={0.8} onPress={onRefresh}>
-              <Text style={s.errorBannerBtnText}>{t('common.tryAgain')}</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* Calendar grid */}
-        <View style={s.grid}>
-          {weeks.map((week, wi) => {
-            const weekTournaments = weekTournamentMap[wi];
-            const weekBlocks = weekBlockMap[wi];
-
-            return (
-              <View key={wi} style={s.weekBlock}>
-                {/* Number row */}
-                <View style={s.numberRow}>
-                  {week.map((day, di) => {
-                    const inMonth = day.getMonth() === month;
-                    const isToday = sameDay(day, now);
-                    return (
-                      <TouchableOpacity
-                        key={di}
-                        style={s.dayCell}
-                        activeOpacity={0.6}
-                        onPress={() => {
-                          setTappedDate(day);
-                          setShowDaySheet(true);
-                        }}>
-                        <View style={[s.dayNum, isToday && s.todayCircle]}>
-                          <Text style={[
-                            s.dayText,
-                            !inMonth && s.fadedText,
-                            isToday && s.todayText,
-                          ]}>
-                            {day.getDate()}
-                          </Text>
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-
-                {/* Tournament banners */}
-                {weekTournaments.map((t: any) => {
-                  const label = [flag(t.country), t.name].filter(Boolean).join(' ');
-                  const sk = surfaceKey(t);
-                  return (
-                    <TouchableOpacity key={t.id}
-                      style={[s.banner, { backgroundColor: SURFACE[sk].bg, borderLeftColor: SURFACE[sk].border }]}
-                      onPress={() => setDetailId(t.id)} activeOpacity={0.75}>
-                      <View style={s.bannerRow}>
-                        <Text style={[s.bannerText, { color: SURFACE[sk].text }]} numberOfLines={1}>{label}</Text>
-                        <CourtIcon surface={t.surface} size="sm" />
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
-
-                {/* Training block banners */}
-                {weekBlocks.map((b) => {
-                  const icon = BLOCK_TYPES.find(bt => bt.key === b.title)?.icon ?? '💪';
-                  return (
-                    <TouchableOpacity key={b.id} style={s.blockBanner}
-                      onPress={() => setSelectedBlock(b)} activeOpacity={0.75}>
-                      <View style={s.bannerRow}>
-                        <Text style={s.blockBannerText} numberOfLines={1}>{icon} {b.title}</Text>
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
+        {isLoading ? (
+          <LoadingLogo style={{ minHeight: 200 }} />
+        ) : (
+          <>
+            {queryError && allTournaments.length === 0 && (
+              <View style={s.errorBanner}>
+                <Text style={s.errorBannerText}>
+                  {lang === 'es'
+                    ? 'No se pudo cargar tu calendario. Revisa tu conexión e inténtalo de nuevo.'
+                    : 'Could not load your calendar. Check your connection and try again.'}
+                </Text>
+                <TouchableOpacity style={s.errorBannerBtn} activeOpacity={0.8} onPress={onRefresh}>
+                  <Text style={s.errorBannerBtnText}>{t('common.retry')}</Text>
+                </TouchableOpacity>
               </View>
-            );
-          })}
-        </View>
+            )}
 
-        {/* View Map button */}
-        <TouchableOpacity style={s.viewMapBtn} activeOpacity={0.8}
-          onPress={() => setShowMap(true)}>
-          <Text style={s.viewMapIcon}>🌍</Text>
-          <Text style={s.viewMapText}>{t('calendar.viewMap')}</Text>
-          <Text style={s.viewMapArrow}>›</Text>
-        </TouchableOpacity>
+            {/* Calendar grid */}
+            <View style={s.grid}>
+              {weeks.map((week, wi) => {
+                const weekTournaments = weekTournamentMap[wi];
+                const weekBlocks = weekBlockMap[wi];
+
+                return (
+                  <View key={wi} style={s.weekBlock}>
+                    {/* Number row */}
+                    <View style={s.numberRow}>
+                      {week.map((day, di) => {
+                        const inMonth = day.getMonth() === month;
+                        const isToday = sameDay(day, now);
+                        return (
+                          <TouchableOpacity
+                            key={di}
+                            style={s.dayCell}
+                            activeOpacity={0.6}
+                            onPress={() => {
+                              setTappedDate(day);
+                              setShowDaySheet(true);
+                            }}>
+                            <View style={[s.dayNum, isToday && s.todayCircle]}>
+                              <Text style={[
+                                s.dayText,
+                                !inMonth && s.fadedText,
+                                isToday && s.todayText,
+                              ]}>
+                                {day.getDate()}
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+
+                    {/* Tournament banners */}
+                    {weekTournaments.map((t: any) => {
+                      const label = [flag(t.country), t.name].filter(Boolean).join(' ');
+                      const sk = surfaceKey(t);
+                      return (
+                        <TouchableOpacity key={t.id}
+                          style={[s.banner, { backgroundColor: SURFACE[sk].bg, borderLeftColor: SURFACE[sk].border }]}
+                          onPress={() => setDetailId(t.id)} activeOpacity={0.75}>
+                          <View style={s.bannerRow}>
+                            <Text style={[s.bannerText, { color: SURFACE[sk].text }]} numberOfLines={1}>{label}</Text>
+                            <CourtIcon surface={t.surface} size="sm" />
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+
+                    {/* Training block banners */}
+                    {weekBlocks.map((b) => {
+                      const icon = BLOCK_TYPES.find(bt => bt.key === b.title)?.icon ?? '💪';
+                      return (
+                        <TouchableOpacity key={b.id} style={s.blockBanner}
+                          onPress={() => setSelectedBlock(b)} activeOpacity={0.75}>
+                          <View style={s.bannerRow}>
+                            <Text style={s.blockBannerText} numberOfLines={1}>{icon} {b.title}</Text>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                );
+              })}
+            </View>
+
+            {/* View Map button */}
+            <TouchableOpacity style={s.viewMapBtn} activeOpacity={0.8}
+              onPress={() => setShowMap(true)}>
+              <Text style={s.viewMapIcon}>🌍</Text>
+              <Text style={s.viewMapText}>{t('calendar.viewMap')}</Text>
+              <Text style={s.viewMapArrow}>›</Text>
+            </TouchableOpacity>
+          </>
+        )}
 
       </ScrollView>
 

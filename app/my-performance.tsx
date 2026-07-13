@@ -281,17 +281,17 @@ export default function MyPerformanceScreen() {
           <View style={[s.section, { marginTop: 24 }]}>
             <View style={[s.card, { alignItems: 'center', paddingVertical: 32 }]}>
               <Text style={{ fontSize: 14, color: '#A0A0C8', textAlign: 'center', lineHeight: 22 }}>
-                Could not load your performance data.
+                {t('performance.couldNotLoadData')}
               </Text>
               <Text style={{ fontSize: 12, color: '#6060A0', marginTop: 8, textAlign: 'center', lineHeight: 20 }}>
-                Check your connection and try again.
+                {t('performance.checkConnectionRetry')}
               </Text>
               <TouchableOpacity
                 style={{ marginTop: 16, paddingHorizontal: 24, paddingVertical: 10, borderRadius: 20, backgroundColor: '#5B5BD6' }}
                 onPress={() => setLoadAttempt(a => a + 1)}
                 activeOpacity={0.8}
               >
-                <Text style={{ fontSize: 14, fontWeight: '700', color: '#FAFAFA' }}>Retry</Text>
+                <Text style={{ fontSize: 14, fontWeight: '700', color: '#FAFAFA' }}>{t('common.retry')}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -323,10 +323,10 @@ export default function MyPerformanceScreen() {
               <View style={[s.section, { marginTop: 24 }]}>
                 <View style={[s.card, { alignItems: 'center', paddingVertical: 32 }]}>
                   <Text style={{ fontSize: 14, color: T.textSecondary, textAlign: 'center', lineHeight: 22 }}>
-                    No performance data yet.
+                    {t('performance.noDataYet')}
                   </Text>
                   <Text style={{ fontSize: 12, color: T.textMuted, marginTop: 8, textAlign: 'center', lineHeight: 20 }}>
-                    Add your ATP player name in Settings, then sync your profile to see stats here.
+                    {t('performance.addAtpNameHint')}
                   </Text>
                 </View>
               </View>
@@ -335,7 +335,7 @@ export default function MyPerformanceScreen() {
             {/* ATP RANKING */}
             {atpProfile && (
           <View style={s.section}>
-            <Text style={s.sectionLabel}>ATP RANKING</Text>
+            <Text style={s.sectionLabel}>{t('performance.atpRanking')}</Text>
             <View style={[s.card, { flexDirection: 'row', alignItems: 'center', gap: 16 }]}>
               <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: T.accent, alignItems: 'center', justifyContent: 'center' }}>
                 <Text adjustsFontSizeToFit numberOfLines={1} style={{ fontSize: 22, fontWeight: '800', color: T.textPrimary, paddingHorizontal: 4 }}>
@@ -360,10 +360,10 @@ export default function MyPerformanceScreen() {
           <View style={s.section}>
             <View style={[s.card, { alignItems: 'center', paddingVertical: 20 }]}>
               <Text style={{ fontSize: 14, color: T.textSecondary, textAlign: 'center', lineHeight: 22 }}>
-                Match history will appear after your profile syncs.
+                {t('performance.matchHistorySyncing')}
               </Text>
               <Text style={{ fontSize: 12, color: T.textMuted, marginTop: 6, textAlign: 'center' }}>
-                Go to Settings → Sync Profile to fetch your data.
+                {t('performance.goToSettingsSync')}
               </Text>
             </View>
           </View>
@@ -383,23 +383,23 @@ export default function MyPerformanceScreen() {
           ];
           return (
             <View style={s.section}>
-              <Text style={s.sectionLabel}>MATCH RECORD</Text>
+              <Text style={s.sectionLabel}>{t('performance.matchRecord')}</Text>
               <View style={s.card}>
                 {/* Overall row */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
                   <TouchableOpacity style={{ flex: 1, alignItems: 'center' }} onPress={() => setMatchModal({ type: 'wins', surface: null })} activeOpacity={0.7}>
                     <Text style={{ fontSize: 28, fontWeight: '800', color: T.green }}>{totalW}</Text>
-                    <Text style={{ fontSize: 11, color: T.textSecondary, marginTop: 2 }}>Wins</Text>
+                    <Text style={{ fontSize: 11, color: T.textSecondary, marginTop: 2 }}>{t('performance.wins')}</Text>
                   </TouchableOpacity>
                   {pct !== null && (
                     <View style={{ alignItems: 'center', paddingHorizontal: 16 }}>
                       <Text style={{ fontSize: 22, fontWeight: '800', color: T.accent }}>{pct}%</Text>
-                      <Text style={{ fontSize: 11, color: T.textSecondary, marginTop: 2 }}>Win rate</Text>
+                      <Text style={{ fontSize: 11, color: T.textSecondary, marginTop: 2 }}>{t('performance.winRate')}</Text>
                     </View>
                   )}
                   <TouchableOpacity style={{ flex: 1, alignItems: 'center' }} onPress={() => setMatchModal({ type: 'losses', surface: null })} activeOpacity={0.7}>
                     <Text style={{ fontSize: 28, fontWeight: '800', color: T.red }}>{totalL}</Text>
-                    <Text style={{ fontSize: 11, color: T.textSecondary, marginTop: 2 }}>Losses</Text>
+                    <Text style={{ fontSize: 11, color: T.textSecondary, marginTop: 2 }}>{t('performance.losses')}</Text>
                   </TouchableOpacity>
                 </View>
                 {/* Surface breakdown */}
@@ -430,7 +430,7 @@ export default function MyPerformanceScreen() {
         {/* EXPENSE EFFICIENCY BY SURFACE */}
         {tournamentsWithExpenses >= 2 && (
           <View style={s.section}>
-            <Text style={s.sectionLabel}>EXPENSE EFFICIENCY BY SURFACE</Text>
+            <Text style={s.sectionLabel}>{t('performance.expenseEfficiencyBySurface')}</Text>
             <View style={s.card}>
               {SURFACES.map(({ key, label, color }) => {
                 const data = surfaceExpenses[key];
@@ -532,7 +532,7 @@ export default function MyPerformanceScreen() {
         {/* ── ATP MATCH HISTORY ── */}
         {atpProfile && atpMatchHistory.length > 0 && (
           <View style={s.section}>
-            <Text style={s.sectionLabel}>ATP RESULTS THIS YEAR</Text>
+            <Text style={s.sectionLabel}>{t('performance.atpResultsThisYear')}</Text>
             <View style={s.card}>
               {atpMatchHistory.map((m: any, i: number) => (
                 <TouchableOpacity key={i} onPress={() => setDetailMatch(m)} activeOpacity={0.7}
@@ -644,7 +644,7 @@ export default function MyPerformanceScreen() {
           return (
             <View style={[s.section, { marginTop: 8 }]}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                <Text style={s.sectionLabel}>RANKING EVOLUTION</Text>
+                <Text style={s.sectionLabel}>{t('performance.rankingEvolution')}</Text>
                 {allChartYears.length > 1 && (
                   <View style={{ alignItems: 'flex-end' }}>
                     <TouchableOpacity
@@ -674,17 +674,17 @@ export default function MyPerformanceScreen() {
                   <>
                     <Text style={{ fontSize: 11, color: T.textMuted, marginBottom: 4 }}>
                       {rankingEvolution.filter((r: any) => (r.date ?? '').startsWith(String(chartYear))).length >= 2
-                        ? 'Weekly ATP ranking data' : 'Based on ranking at each tournament'}
+                        ? t('performance.weeklyRankingData') : t('performance.basedOnTournamentRanking')}
                     </Text>
                     <RankingChart points={chartPoints} />
                   </>
                 ) : chartPoints.length === 1 ? (
                   <Text style={{ fontSize: 12, color: T.textSecondary, padding: 8 }}>
-                    Ranking at last tournament: #{chartPoints[0].ranking}. Play another tournament to see the evolution chart.
+                    {t('performance.rankingAtLastTournament').replace('{ranking}', String(chartPoints[0].ranking))}
                   </Text>
                 ) : (
                   <Text style={{ fontSize: 12, color: T.textSecondary, padding: 8 }}>
-                    No ranking data for {chartYear}. Run the scraper to fetch your ATP ranking history.
+                    {t('performance.noRankingDataForYear').replace('{year}', String(chartYear))}
                   </Text>
                 )}
               </View>
@@ -760,7 +760,7 @@ export default function MyPerformanceScreen() {
             <View style={s.modalHeader}>
               <Text style={s.modalTitle}>
                 {matchModal?.surface ? surfaceLabel[matchModal.surface] + ' ' : ''}
-                {matchModal?.type === 'wins' ? 'Wins' : matchModal?.type === 'losses' ? 'Losses' : 'Match Record'}
+                {matchModal?.type === 'wins' ? t('performance.wins') : matchModal?.type === 'losses' ? t('performance.losses') : 'Match Record'}
               </Text>
               <TouchableOpacity onPress={() => setMatchModal(null)} style={s.modalClose} activeOpacity={0.7}>
                 <Ionicons name="close" size={20} color={T.textPrimary} />

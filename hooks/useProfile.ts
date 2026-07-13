@@ -1,5 +1,8 @@
+import { Alert } from 'react-native';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { t as i18nT } from '@/lib/i18n';
+import { getCurrentLang } from '@/hooks/useLanguage';
 
 export type ReminderTime = '7d' | '5d' | '3d' | '2d' | '1d' | '12h' | '6h' | '2h' | '30m';
 export type OnsiteReminderTime = '6h' | '5h' | '4h' | '3h' | '2h' | '1h' | '45m' | '30m' | '15m';
@@ -101,6 +104,17 @@ export function useUpdateProfile() {
       // in the background to reconcile with any other source of truth.
       qc.setQueryData(QUERY_KEY, data);
       qc.invalidateQueries({ queryKey: QUERY_KEY });
+    },
+    onError: () => {
+      // Several callers (e.g. Settings switches) fire-and-forget this
+      // mutation without awaiting/catching it, so a failed write was
+      // previously silent — the toggle looked flipped even though nothing
+      // was saved. Invalidate so the next render reflects the real cached
+      // value (snapping controls back to server truth) and tell the user
+      // the save didn't happen instead of failing invisibly.
+      qc.invalidateQueries({ queryKey: QUERY_KEY });
+      const lang = getCurrentLang();
+      Alert.alert(i18nT('common.couldNotSave', lang), i18nT('common.tryAgain', lang));
     },
   });
 }

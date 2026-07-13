@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   ScrollView,
   View,
@@ -9,10 +9,14 @@ import {
   ActivityIndicator,
   Alert,
   RefreshControl,
+  Platform,
+  AppState,
+  Linking,
 } from 'react-native';
 import { Text } from '@/components/ui/text';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAppQuery } from '@/hooks/useAppQuery';
+import { LoadingLogo } from '@/components/ui/LoadingLogo';
 import { DEMO_MODE } from '@/config/demo';
 import { apiPatchTournament } from '@/lib/api';
 import { useDemoData } from '@/hooks/useDemoData';
@@ -392,8 +396,39 @@ export default function AlertsScreen() {
   const [withdrawing, setWithdrawing] = useState(false);
   const { isFirstVisit, markVisited } = useFirstVisit('alerts');
   const swipeHandlers = useTabSwipe();
+  const [notifStatus, setNotifStatus] = useState<'granted' | 'denied' | 'undetermined' | null>(null);
+  const [notifBannerDismissed, setNotifBannerDismissed] = useState(false);
 
   const tournaments = data?.tournaments ?? [];
+
+  // Recovery path for users who denied (or never answered) the OS permission
+  // prompt: surface a banner instead of silently never sending reminders.
+  // Re-checked on foreground so the banner clears the moment the user flips
+  // the OS toggle from Settings.
+  useEffect(() => {
+    if (DEMO_MODE) { setNotifStatus('granted'); return; }
+    if (Platform.OS === 'web') { setNotifStatus('granted'); return; }
+    let cancelled = false;
+    const checkNotifStatus = () => {
+      import('expo-notifications').then(Notifications => {
+        Notifications.getPermissionsAsync().then(({ status }) => {
+          if (!cancelled) setNotifStatus(status as any);
+        }).catch(() => {});
+      }).catch(() => {});
+    };
+    checkNotifStatus();
+    const sub = AppState.addEventListener('change', next => { if (next === 'active') checkNotifStatus(); });
+    return () => { cancelled = true; sub.remove(); };
+  }, []);
+
+  async function handleEnableNotifs() {
+    const { ensurePermissionAndRegister } = await import('@/utils/notifications');
+    const granted = await ensurePermissionAndRegister(tournaments, undefined, lang);
+    setNotifStatus(granted ? 'granted' : 'denied');
+  }
+
+  const showNotifBanner = !DEMO_MODE && !notifBannerDismissed && tournaments.length > 0
+    && notifStatus !== null && notifStatus !== 'granted';
   const onsiteAlerts = useMemo(() => buildOnsiteAlerts(tournaments), [tournaments]);
   const alerts = useMemo(() => buildAlerts(tournaments, t), [tournaments, t]);
   const tournamentGroups = useMemo(() => buildTournamentGroups(alerts), [alerts]);
@@ -456,6 +491,34 @@ export default function AlertsScreen() {
           </View>
         </View>
 
+        {showNotifBanner && (
+          <View style={s.notifBanner}>
+            <View style={{ flex: 1 }}>
+              <Text style={s.notifBannerText}>
+                {notifStatus === 'denied' ? t('alerts.notifBannerDeniedBody') : t('alerts.notifBannerUndeterminedBody')}
+              </Text>
+              <TouchableOpacity
+                style={s.notifBannerBtn}
+                activeOpacity={0.8}
+                onPress={() => { if (notifStatus === 'denied') { Linking.openSettings(); } else { handleEnableNotifs(); } }}
+              >
+                <Text style={s.notifBannerBtnText}>
+                  {notifStatus === 'denied' ? t('common.openSettings') : t('alerts.notifBannerEnable')}
+                </Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              onPress={() => setNotifBannerDismissed(true)}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel={t('common.dismiss')}
+            >
+              <Text style={s.notifBannerDismiss}>✕</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {onsiteAlerts.length > 0 && (
           <View style={s.section}>
             <Text style={s.sectionLabel}>{t('alerts.todayOnSite')}</Text>
@@ -479,7 +542,7 @@ export default function AlertsScreen() {
         )}
 
         {isLoading ? (
-          <ActivityIndicator color={T.accent} style={{ marginTop: 48 }} />
+          <LoadingLogo style={{ minHeight: 200 }} />
         ) : queryError && tournaments.length === 0 ? (
           <View style={s.errorBanner}>
             <Text style={s.errorBannerText}>
@@ -488,13 +551,18 @@ export default function AlertsScreen() {
                 : 'Could not load your alerts. Check your connection and try again.'}
             </Text>
             <TouchableOpacity style={s.errorBannerBtn} activeOpacity={0.8} onPress={onRefresh}>
-              <Text style={s.errorBannerBtnText}>{t('common.tryAgain')}</Text>
+              <Text style={s.errorBannerBtnText}>{t('common.retry')}</Text>
             </TouchableOpacity>
           </View>
         ) : sections.length === 0 && onsiteAlerts.length === 0 ? (
           <View style={s.empty}>
             <Text style={s.emptyIcon}>📅</Text>
             <Text style={s.emptyText}>{t('alerts.noUpcomingDeadlines')}</Text>
+            {tournaments.length === 0 && (
+              <TouchableOpacity style={s.emptyStateCta} activeOpacity={0.8} onPress={() => router.push('/(tabs)/tournaments' as any)}>
+                <Text style={s.emptyStateCtaText}>{t('home.goToTournaments')}</Text>
+              </TouchableOpacity>
+            )}
           </View>
         ) : (
           sections.map(({ key, label, groups }) => (
@@ -581,10 +649,22 @@ const s = StyleSheet.create({
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', marginTop: 120, gap: 32 },
   emptyIcon: { fontSize: 48 },
   emptyText: { fontSize: 16, color: T.textSecondary, fontWeight: '400' },
+  emptyStateCta: { backgroundColor: T.accent, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 24 },
+  emptyStateCtaText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
   errorBanner: { backgroundColor: T.red, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 16, marginTop: 24, marginHorizontal: 16, alignItems: 'center' },
   errorBannerText: { fontSize: 13, fontWeight: '600', color: '#FFF', textAlign: 'center' },
   errorBannerBtn: { marginTop: 10, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 16 },
   errorBannerBtnText: { fontSize: 13, fontWeight: '700', color: '#FFF' },
+
+  notifBanner: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 10,
+    backgroundColor: T.card, borderRadius: 12, borderWidth: 1, borderColor: T.accent,
+    paddingVertical: 12, paddingHorizontal: 14, marginBottom: 8,
+  },
+  notifBannerText: { fontSize: 13, color: T.textPrimary, lineHeight: 18, marginBottom: 10 },
+  notifBannerBtn: { alignSelf: 'flex-start', backgroundColor: T.accent, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14 },
+  notifBannerBtnText: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
+  notifBannerDismiss: { fontSize: 16, color: T.textTertiary, fontWeight: '400', paddingTop: 2 },
 
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'flex-end' },
   sheet: { backgroundColor: T.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingBottom: 48, paddingTop: 24, alignItems: 'center' },

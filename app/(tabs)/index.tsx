@@ -197,7 +197,7 @@ export default function HomeScreen() {
       .sort((a: any, b: any) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
       .slice(0, 3);
     const prize = activeTournament ? totalPrizeMoney(activeTournament) : 0;
-    return { activeTournamentSpent: spent, recentExpenses: recent, activePrizeMoney: prize, activeNet: prize - spent };
+    return { activeTournamentSpent: spent, recentExpenses: recent, activeNet: prize - spent };
   }, [activeTournament, expenses]);
 
   useEffect(() => {
@@ -261,7 +261,7 @@ export default function HomeScreen() {
                   : "Couldn't load your data. Pull to refresh or try again later."}
               </Text>
               <TouchableOpacity style={st.errorBannerBtn} activeOpacity={0.8} onPress={onRefresh}>
-                <Text style={st.errorBannerBtnText}>{t('common.tryAgain')}</Text>
+                <Text style={st.errorBannerBtnText}>{t('common.retry')}</Text>
               </TouchableOpacity>
             </View>
           ) : (
@@ -385,9 +385,14 @@ export default function HomeScreen() {
               {/* No tournaments yet — inline prompt, does not replace the page */}
               {tournaments.length === 0 && (
                 <View style={st.section}>
-                  <TouchableOpacity style={st.emptyStateCta} activeOpacity={0.8} onPress={() => router.push('/(tabs)/tournaments' as any)}>
-                    <Text style={st.emptyStateCtaText}>{t('home.goToTournaments')}</Text>
-                  </TouchableOpacity>
+                  <View style={st.emptyState}>
+                    <Text style={st.emptyStateIcon}>🎾</Text>
+                    <Text style={st.emptyStateTitle}>{t('home.noTournamentsYet')}</Text>
+                    <Text style={st.emptyStateBody}>{t('home.noTournamentsBody')}</Text>
+                    <TouchableOpacity style={st.emptyStateCta} activeOpacity={0.8} onPress={() => router.push('/(tabs)/tournaments' as any)}>
+                      <Text style={st.emptyStateCtaText}>{t('home.goToTournaments')}</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               )}
 

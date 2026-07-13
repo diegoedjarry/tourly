@@ -6,13 +6,15 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { useEffect } from 'react';
-import { Platform } from 'react-native';
+import { Platform, View, StyleSheet, TouchableOpacity } from 'react-native';
 import { useFonts, Montserrat_300Light, Montserrat_400Regular, Montserrat_500Medium, Montserrat_600SemiBold, Montserrat_700Bold, Montserrat_800ExtraBold } from '@expo-google-fonts/montserrat';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Sentry from '@sentry/react-native';
 
 import { useNotificationSetup } from '@/hooks/useNotificationSetup';
 import { useNewTournamentNotifier } from '@/hooks/useNewTournamentNotifier';
+import { usePasswordRecovery } from '@/hooks/usePasswordRecovery';
+import { isRecoveryInProgress } from '@/lib/password-recovery';
 import { AppAlertProvider } from '@/components/ui/app-alert';
 import { ScraperBanner } from '@/components/ui/ScraperBanner';
 import { DemoDataProvider } from '@/hooks/useDemoData';
@@ -24,6 +26,10 @@ import { DEMO_MODE } from '@/config/demo';
 import { trackScreen } from '@/lib/analytics';
 import { consumePendingDeepLink } from '@/lib/pending-navigation';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
+import { Text } from '@/components/ui/text';
+import { TourlyLogo } from '@/components/ui/tourly-logo';
+import { useLanguage } from '@/hooks/useLanguage';
+import { T } from '@/constants/theme';
 
 const SENTRY_DSN = process.env.EXPO_PUBLIC_SENTRY_DSN;
 if (SENTRY_DSN) {
@@ -62,14 +68,19 @@ export const unstable_settings = {
 
 function AuthGate({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
-  const { data: profile, isLoading: profileLoading, isFetching: profileFetching } = useProfile();
+  const { data: profile, isLoading: profileLoading, isFetching: profileFetching, isError: profileIsError, refetch: refetchProfile } = useProfile();
   const segments = useSegments();
   const router = useRouter();
+  const { t } = useLanguage();
 
   useEffect(() => {
     if (DEMO_MODE) return;
 
     if (loading) return;
+    // A password-recovery deep link is being handled (see usePasswordRecovery)
+    // — the recovery session's SIGNED_IN transition must not redirect the user
+    // away from /reset-password before they set a new password.
+    if (isRecoveryInProgress()) return;
     if (user && (profileLoading || profileFetching || profile === undefined)) return;
 
     const inAuth = segments[0] === 'auth';
@@ -131,12 +142,51 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, loading, profile, profileLoading, profileFetching]);
 
+  // A signed-in user whose profile query settled to an error (not loading,
+  // not fetching, data still undefined) has no cached row to fall back on.
+  // The effect above deliberately blocks navigation in this state (same
+  // guard as the loading case), so without this branch there is nothing on
+  // screen to recover from — render a minimal retry view instead.
+  if (!DEMO_MODE && user && !loading && !profileLoading && !profileFetching && profile === undefined && profileIsError) {
+    return (
+      <View style={gateStyles.container}>
+        <TourlyLogo width={160} height={42} />
+        <Text style={gateStyles.title}>{t('auth.profileLoadErrorTitle')}</Text>
+        <Text style={gateStyles.message}>{t('auth.profileLoadErrorBody')}</Text>
+        <TouchableOpacity style={gateStyles.retryBtn} onPress={() => refetchProfile()} activeOpacity={0.8}>
+          <Text style={gateStyles.retryText}>{t('common.retry')}</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   return <>{children}</>;
 }
+
+const gateStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: T.bg,
+    paddingHorizontal: 32,
+    gap: 12,
+  },
+  title: { fontSize: 18, fontWeight: '700', color: T.textPrimary, textAlign: 'center', marginTop: 16 },
+  message: { fontSize: 14, color: T.textSecondary, textAlign: 'center', lineHeight: 20, marginBottom: 8 },
+  retryBtn: {
+    backgroundColor: T.accent,
+    borderRadius: 50,
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+  },
+  retryText: { color: T.textPrimary, fontSize: 15, fontWeight: '700' },
+});
 
 function AppLayout() {
   useNotificationSetup();
   useNewTournamentNotifier();
+  usePasswordRecovery();
 
   // First-party screen analytics: one event per route change.
   const pathname = usePathname();
@@ -150,12 +200,12 @@ function AppLayout() {
       <Stack>
         <Stack.Screen name="(tabs)"      options={{ headerShown: false }} />
         <Stack.Screen name="auth"        options={{ headerShown: false }} />
+        <Stack.Screen name="reset-password" options={{ headerShown: false }} />
         <Stack.Screen name="onboarding"  options={{ headerShown: false }} />
         <Stack.Screen name="settings"    options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="profile"     options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="insights"         options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="my-performance"  options={{ headerShown: false, presentation: 'modal', animation: 'slide_from_bottom' }} />
-        <Stack.Screen name="modal"           options={{ presentation: 'modal', title: 'Modal' }} />
       </Stack>
       <StatusBar style="auto" />
     </AuthGate>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   TextInput,
@@ -8,7 +8,6 @@ import {
   Platform,
   ActivityIndicator,
   ScrollView,
-  Switch,
 } from 'react-native';
 import { Text } from '@/components/ui/text';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -17,19 +16,46 @@ import { useAppAlert } from '@/components/ui/app-alert';
 import { TourlyLogo } from '@/components/ui/tourly-logo';
 import { useLanguage } from '@/hooks/useLanguage';
 import { T } from '@/constants/theme';
+import type { StringKey } from '@/lib/i18n';
+
+const RESEND_COOLDOWN_SECONDS = 30;
+
+// Maps common raw Supabase auth error strings to actionable, localized copy.
+// Unknown errors fall back to the raw message so nothing is silently swallowed.
+export function mapAuthError(message: string | undefined, t: (key: StringKey) => string): string {
+  if (!message) return t('auth.somethingWrong');
+  const lower = message.toLowerCase();
+  if (lower.includes('invalid login credentials')) return t('auth.invalidCredentials');
+  if (lower.includes('already registered')) return t('auth.userAlreadyRegistered');
+  if (lower.includes('password should be at least')) return t('auth.passwordTooShort');
+  if (lower.includes('email not confirmed')) return t('auth.emailNotConfirmed');
+  if (lower.includes('rate limit') || lower.includes('too many requests')) return t('auth.rateLimited');
+  if (lower.includes('auth session missing') || lower.includes('invalid or has expired')) return t('auth.recoveryLinkExpired');
+  return message;
+}
 
 export default function AuthScreen() {
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [stayLoggedIn, setStayLoggedIn] = useState(true);
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState<string | null>(null);
+  const [resetLoading, setResetLoading] = useState(false);
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null);
+  const [resending, setResending] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const passwordRef = useRef<TextInput>(null);
 
-  const { signInWithEmail, signUpWithEmail, signInWithOAuth } = useAuth();
+  const { signInWithEmail, signUpWithEmail, signInWithOAuth, resendConfirmationEmail, resetPasswordForEmail } = useAuth();
   const { show: showAlert } = useAppAlert();
   const { t } = useLanguage();
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const id = setTimeout(() => setResendCooldown(c => c - 1), 1000);
+    return () => clearTimeout(id);
+  }, [resendCooldown]);
 
   async function handleSubmit() {
     if (!email.trim() || !password.trim()) {
@@ -44,17 +70,56 @@ export default function AuthScreen() {
       } else {
         const result = await signUpWithEmail(email.trim(), password);
         if (result === 'confirm') {
-          // Email confirmation required — Supabase sent a verification email
-          showAlert(t('auth.checkEmail'), t('auth.confirmationSent'));
+          // Email confirmation required — Supabase sent a verification email.
+          // Show a persistent inline notice (with a resend option) instead of
+          // a one-shot alert, so the flow is recoverable if the email is lost.
+          setPendingEmail(email.trim());
+          setResendCooldown(0);
         }
         // If result === 'session', the user is now signed in and _layout.tsx
         // will navigate automatically — no alert needed.
       }
     } catch (err: any) {
-      showAlert(t('auth.error'), err?.message ?? t('auth.somethingWrong'));
+      showAlert(t('auth.error'), mapAuthError(err?.message, t));
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleResend() {
+    if (!pendingEmail || resendCooldown > 0 || resending) return;
+    setResending(true);
+    try {
+      await resendConfirmationEmail(pendingEmail);
+      showAlert(t('auth.resendSuccessTitle'), t('auth.resendSuccessBody'));
+      setResendCooldown(RESEND_COOLDOWN_SECONDS);
+    } catch (err: any) {
+      showAlert(t('auth.resendFailedTitle'), mapAuthError(err?.message, t));
+    } finally {
+      setResending(false);
+    }
+  }
+
+  async function handleForgotPassword() {
+    if (!email.trim()) {
+      showAlert(t('auth.forgotPasswordNeedsEmail'), t('auth.forgotPasswordNeedsEmailBody'));
+      return;
+    }
+    setResetLoading(true);
+    try {
+      await resetPasswordForEmail(email.trim());
+      showAlert(t('auth.resetLinkSentTitle'), t('auth.resetLinkSentBody'));
+    } catch (err: any) {
+      showAlert(t('auth.error'), mapAuthError(err?.message, t));
+    } finally {
+      setResetLoading(false);
+    }
+  }
+
+  function toggleMode() {
+    setMode(m => (m === 'signin' ? 'signup' : 'signin'));
+    setPendingEmail(null);
+    setResendCooldown(0);
   }
 
   async function handleOAuth(provider: 'google' | 'apple') {
@@ -62,7 +127,9 @@ export default function AuthScreen() {
     try {
       await signInWithOAuth(provider);
     } catch (err: any) {
-      showAlert(t('auth.error'), err?.message ?? `${provider} ${t('auth.signInFailed')}`);
+      const providerLabel = provider.charAt(0).toUpperCase() + provider.slice(1);
+      const fallback = t('auth.oauthFailed').replace('{provider}', providerLabel);
+      showAlert(t('auth.error'), err?.message ? mapAuthError(err.message, t) : fallback);
     } finally {
       setOauthLoading(null);
     }
@@ -83,20 +150,26 @@ export default function AuthScreen() {
 
             <TextInput
               style={s.input}
-              placeholder="Email"
+              placeholder={t('common.email')}
               placeholderTextColor={T.textMuted}
               autoCapitalize="none"
               keyboardType="email-address"
+              autoComplete="email"
+              textContentType="emailAddress"
               returnKeyType="next"
               value={email}
               onChangeText={setEmail}
+              onSubmitEditing={() => passwordRef.current?.focus()}
             />
             <View style={s.passwordRow}>
               <TextInput
+                ref={passwordRef}
                 style={s.passwordInput}
-                placeholder="Password"
+                placeholder={t('common.password')}
                 placeholderTextColor={T.textMuted}
                 secureTextEntry={!showPassword}
+                autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+                textContentType={mode === 'signup' ? 'newPassword' : 'password'}
                 returnKeyType="done"
                 onSubmitEditing={handleSubmit}
                 value={password}
@@ -108,15 +181,38 @@ export default function AuthScreen() {
             </View>
 
             {mode === 'signin' && (
-              <View style={s.stayRow}>
-                <Switch
-                  value={stayLoggedIn}
-                  onValueChange={setStayLoggedIn}
-                  trackColor={{ false: T.cardElevated, true: T.accent }}
-                  thumbColor={T.textPrimary}
-                  style={{ transform: [{ scale: 0.8 }] }}
-                />
-                <Text style={s.stayText}>{t('auth.stayLoggedIn')}</Text>
+              <TouchableOpacity
+                onPress={handleForgotPassword}
+                disabled={resetLoading}
+                style={s.forgotBtn}
+                activeOpacity={0.7}
+              >
+                <Text style={s.forgotText}>{t('auth.forgotPassword')}</Text>
+              </TouchableOpacity>
+            )}
+
+            {pendingEmail && (
+              <View style={s.pendingBox}>
+                <Text style={s.pendingTitle}>{t('auth.pendingConfirmationTitle')}</Text>
+                <Text style={s.pendingBody}>
+                  {t('auth.pendingConfirmationBody').replace('{email}', pendingEmail)}
+                </Text>
+                <TouchableOpacity
+                  style={[s.resendBtn, (resendCooldown > 0 || resending) && s.resendBtnDisabled]}
+                  onPress={handleResend}
+                  disabled={resendCooldown > 0 || resending}
+                  activeOpacity={0.8}
+                >
+                  {resending ? (
+                    <ActivityIndicator color={T.accent} size="small" />
+                  ) : (
+                    <Text style={s.resendBtnText}>
+                      {resendCooldown > 0
+                        ? t('auth.resendEmailWait').replace('{s}', String(resendCooldown))
+                        : t('auth.resendEmail')}
+                    </Text>
+                  )}
+                </TouchableOpacity>
               </View>
             )}
 
@@ -130,7 +226,7 @@ export default function AuthScreen() {
 
             <View style={s.dividerRow}>
               <View style={s.dividerLine} />
-              <Text style={s.dividerText}>or</Text>
+              <Text style={s.dividerText}>{t('common.or')}</Text>
               <View style={s.dividerLine} />
             </View>
 
@@ -165,7 +261,7 @@ export default function AuthScreen() {
               </TouchableOpacity>
             )}
 
-            <TouchableOpacity style={s.switchRow} onPress={() => setMode(m => (m === 'signin' ? 'signup' : 'signin'))}>
+            <TouchableOpacity style={s.switchRow} onPress={toggleMode}>
               <Text style={s.switchText}>
                 {mode === 'signin' ? t('auth.noAccount') : t('auth.haveAccount')}
                 <Text style={s.switchLink}>{mode === 'signin' ? t('auth.signUp') : t('auth.signIn')}</Text>
@@ -221,13 +317,28 @@ const s = StyleSheet.create({
     paddingVertical: 12,
   },
   eyeIcon: { fontSize: 18 },
-  stayRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 8,
+  forgotBtn: { alignSelf: 'flex-end', marginBottom: 12 },
+  forgotText: { fontSize: 13, color: T.textSecondary, fontWeight: '600' },
+  pendingBox: {
+    backgroundColor: T.cardElevated,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: T.cardBorder,
   },
-  stayText: { fontSize: 14, color: T.textSecondary, fontWeight: '500' },
+  pendingTitle: { fontSize: 14, fontWeight: '700', color: T.textPrimary, marginBottom: 4 },
+  pendingBody: { fontSize: 13, color: T.textSecondary, lineHeight: 19, marginBottom: 12 },
+  resendBtn: {
+    alignSelf: 'flex-start',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 50,
+    borderWidth: 1.5,
+    borderColor: T.accent,
+  },
+  resendBtnDisabled: { borderColor: T.cardBorder, opacity: 0.6 },
+  resendBtnText: { fontSize: 13, fontWeight: '700', color: T.accent },
   btn: {
     backgroundColor: T.accent,
     borderRadius: 50,

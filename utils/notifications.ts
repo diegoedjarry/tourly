@@ -333,6 +333,35 @@ export function rescheduleAllNotifications(tournaments: any[], prefs?: NotifPref
   return rescheduleInFlight;
 }
 
+// ─── User-initiated permission request ────────────────────────────────────────
+// The only path (besides an already-granted root-mount registration) that may
+// surface the OS permission prompt. Used by onboarding's notifications step,
+// the deadline-moment priming alert, the alerts-tab recovery banner, and the
+// settings screen's push-notifications switch — all user-initiated asks, never
+// fired automatically on launch. Granting doesn't by itself re-run
+// useNotificationSetup's reschedule effect (its deps don't include permission
+// status), so this also reschedules with whatever tournament/profile data the
+// caller currently has on hand.
+export async function ensurePermissionAndRegister(
+  tournaments: any[] = [],
+  prefs?: NotifPrefs,
+  lang: Lang = 'en',
+): Promise<boolean> {
+  if (Platform.OS === 'web' || !Device.isDevice) return false;
+  await requestPermissionsAndGetToken();
+  let granted = false;
+  try {
+    const { status } = await Notifications.getPermissionsAsync();
+    granted = status === 'granted';
+  } catch {
+    granted = false;
+  }
+  if (granted) {
+    rescheduleAllNotifications(tournaments, prefs, lang).catch(() => {});
+  }
+  return granted;
+}
+
 // iOS keeps only the 64 soonest pending local notifications and silently drops
 // the rest; capping deterministically keeps the soonest ones and gives Android
 // identical behavior instead of relying on OS-specific drop order.

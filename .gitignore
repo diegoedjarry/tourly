@@ -50,6 +50,7 @@ app-example
 /android
 
 # personal / working documents — never commit to this public repo
+/FABLE-METHOD.md
 /*.pdf
 /*.docx
 /*.xlsx

@@ -165,9 +165,10 @@ function FeatureMockupExpenses({ items }: { items: { label: string; pct: number 
 }
 
 function FeatureMockupInsight({ text }: { text: string }) {
+  const { t } = useLanguage();
   return (
     <View style={[mock.alertBox, { borderLeftWidth: 3, borderLeftColor: ACCENT }]}>
-      <Text style={{ fontSize: 10, color: T.textTertiary, letterSpacing: 0.8, marginBottom: 8 }}>FINANCIAL COACH</Text>
+      <Text style={{ fontSize: 10, color: T.textTertiary, letterSpacing: 0.8, marginBottom: 8 }}>{t('onboarding.financialCoachLabel')}</Text>
       <View style={{ flexDirection: 'row', gap: 8 }}>
         <Text style={{ color: ACCENT, fontSize: 14 }}>✦</Text>
         <Text style={{ fontSize: 13, color: T.textPrimary, lineHeight: 19, flex: 1 }}>{text}</Text>
@@ -363,7 +364,7 @@ function ProfileSetupScreen({ onNext, onBack }: { onNext: () => void; onBack: ()
             <TextInput style={s.input} value={city} onChangeText={setCity} placeholder={t('onboarding.profile.homeCityPlaceholder')} placeholderTextColor="#555" />
 
             <Text style={[s.fieldLabel, { marginTop: 16 }]}>{t('onboarding.profile.annualBudget')}</Text>
-            <TextInput style={s.input} value={budget} onChangeText={setBudget} keyboardType="numeric" placeholder={t('onboarding.profile.budgetPlaceholder')} placeholderTextColor="#555" />
+            <TextInput style={s.input} value={budget} onChangeText={setBudget} keyboardType="number-pad" placeholder={t('onboarding.profile.budgetPlaceholder')} placeholderTextColor="#555" />
 
             <Text style={[s.fieldLabel, { marginTop: 16 }]}>{t('onboarding.profile.travelWithCoach')}</Text>
             <PillGroup options={COACH_OPTS} value={coachTravel} onChange={setCoachTravel} labels={COACH_LABELS} />
@@ -411,8 +412,8 @@ function NotificationsScreen({ onNext, onBack }: { onNext: () => void; onBack: (
 
   async function handleEnable() {
     try {
-      const { requestPermissionsAndGetToken } = await import('@/utils/notifications');
-      await requestPermissionsAndGetToken();
+      const { ensurePermissionAndRegister } = await import('@/utils/notifications');
+      await ensurePermissionAndRegister();
     } catch {}
     onNext();
   }

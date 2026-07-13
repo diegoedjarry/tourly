@@ -12,6 +12,18 @@ function fmt(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+// Effective USD spend for an expense — mirrors utils/export-pdf.ts's
+// effectiveSpend(): reimbursed rows are 0 (never counted as real spend),
+// otherwise (amountUsd ?? amount) scaled by the user's ownership share.
+// Keeping this identical to the PDF's rule means the CSV/XLSX export, the
+// season statement PDF, and the in-app totals never disagree with each other.
+function effectiveSpend(e: any): number {
+  if (e.isReimbursed) return 0;
+  const base = e.amountUsd ?? e.amount ?? 0;
+  const share = (e.sharePct ?? 100) / 100;
+  return base * share;
+}
+
 function buildMonthlySummarySheet(expenses: any[], year: number): XLSX.WorkSheet {
   const grid: Record<string, number[]> = {};
   for (const cat of CATEGORIES) {
@@ -25,7 +37,7 @@ function buildMonthlySummarySheet(expenses: any[], year: number): XLSX.WorkSheet
     const monthIdx = parseInt(d.slice(5, 7), 10) - 1;
     if (monthIdx < 0 || monthIdx > 11) continue;
     const cat = normalizeCategory(e.category);
-    grid[cat][monthIdx] += (e.amount ?? 0);
+    grid[cat][monthIdx] += effectiveSpend(e);
   }
 
   const rows: any[][] = [];
@@ -58,7 +70,14 @@ function buildIndividualExpensesSheet(expenses: any[], tournaments: any[]): XLSX
   const sorted = [...expenses].sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''));
 
   const rows: any[][] = [];
-  rows.push(['Date', 'Category', 'Sub-Category', 'Description', 'Payment Method', 'Amount (USD)', 'Notes']);
+  // Amount is the original transaction amount in its original Currency —
+  // never converted. Amount (USD) is the effective value actually counted
+  // toward totals (0 when Reimbursed, scaled by Share % otherwise) so it
+  // always matches the season statement PDF and the in-app totals. Reimbursed
+  // and Share % are called out explicitly rather than silently zeroing or
+  // scaling the USD column, so a reader isn't left guessing why it differs
+  // from Amount.
+  rows.push(['Date', 'Category', 'Sub-Category', 'Description', 'Payment Method', 'Amount', 'Currency', 'Amount (USD)', 'Reimbursed', 'Share %', 'Notes']);
 
   for (const e of sorted) {
     const t = tMap.get(e.tournamentId);
@@ -70,6 +89,10 @@ function buildIndividualExpensesSheet(expenses: any[], tournaments: any[]): XLSX
       t?.name ?? '',
       '',
       fmt(e.amount ?? 0),
+      e.currency ?? 'USD',
+      fmt(effectiveSpend(e)),
+      e.isReimbursed ? 'Yes' : 'No',
+      e.sharePct ?? 100,
       e.note ?? '',
     ]);
   }
@@ -81,7 +104,11 @@ function buildIndividualExpensesSheet(expenses: any[], tournaments: any[]): XLSX
     { wch: 14 },
     { wch: 28 },
     { wch: 16 },
+    { wch: 12 },
+    { wch: 10 },
     { wch: 14 },
+    { wch: 12 },
+    { wch: 10 },
     { wch: 30 },
   ];
   return ws;

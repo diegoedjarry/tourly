@@ -10,6 +10,7 @@ import {
 import { Text } from '@/components/ui/text';
 import { AgentIcon } from '@/components/ui/agent-icon';
 import { useLanguage } from '@/hooks/useLanguage';
+import { getMonthAbbr, type Lang, type StringKey } from '@/lib/i18n';
 import { T } from '@/constants/theme';
 
 export interface InsightItem {
@@ -24,20 +25,20 @@ interface FloatingInsightProps {
   locked?: boolean;
 }
 
-function relativeDate(iso: string): string {
+function relativeDate(iso: string, lang: Lang, t: (key: StringKey) => string): string {
   const d = new Date(iso);
   const now = new Date();
   const diffDays = Math.floor((now.getTime() - d.getTime()) / 86400000);
-  if (diffDays === 0) return 'Today';
-  if (diffDays === 1) return 'Yesterday';
+  if (diffDays === 0) return t('calendar.today');
+  if (diffDays === 1) return t('common.yesterday');
   const [, m, day] = iso.split('T')[0].split('-');
-  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const MONTHS = getMonthAbbr(lang);
   return `${+day} ${MONTHS[+m - 1]}`;
 }
 
 export function FloatingInsight({ insights, locked }: FloatingInsightProps) {
   const [open, setOpen] = useState(false);
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
 
   // Only show the 2 most recent insights
   const shown = (insights ?? []).slice(0, 2);
@@ -76,8 +77,8 @@ export function FloatingInsight({ insights, locked }: FloatingInsightProps) {
                 <AgentIcon size={18} />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={s.headerTitle}>AI Coaching</Text>
-                <Text style={s.headerSub}>Your latest personalized insights</Text>
+                <Text style={s.headerTitle}>{t('coaching.title')}</Text>
+                <Text style={s.headerSub}>{t('coaching.subtitle')}</Text>
               </View>
               <TouchableOpacity
                 onPress={() => setOpen(false)}
@@ -95,8 +96,8 @@ export function FloatingInsight({ insights, locked }: FloatingInsightProps) {
               <View style={s.emptyWrap}>
                 <Text style={s.emptyText}>
                   {locked
-                    ? 'Add 2+ tournaments and log some expenses to unlock personalized AI coaching insights.'
-                    : 'Generating your first insight… check back in a moment.'}
+                    ? t('coaching.lockedMessage')
+                    : t('coaching.generatingMessage')}
                 </Text>
               </View>
             ) : (
@@ -104,9 +105,9 @@ export function FloatingInsight({ insights, locked }: FloatingInsightProps) {
                 {shown.map((item, i) => (
                   <View key={item.id} style={[s.insightCard, i > 0 && s.insightCardBorder]}>
                     <View style={s.cardTopRow}>
-                      <Text style={s.cardLabel}>{item.insight_label ?? 'COACHING'}</Text>
+                      <Text style={s.cardLabel}>{item.insight_label ?? t('coaching.label')}</Text>
                       {item.generated_at && (
-                        <Text style={s.cardDate}>{relativeDate(item.generated_at)}</Text>
+                        <Text style={s.cardDate}>{relativeDate(item.generated_at, lang, t)}</Text>
                       )}
                     </View>
                     <Text style={s.cardContent}>{item.content}</Text>
@@ -117,7 +118,7 @@ export function FloatingInsight({ insights, locked }: FloatingInsightProps) {
 
             {/* Dismiss */}
             <TouchableOpacity style={s.dismissBtn} onPress={() => setOpen(false)} activeOpacity={0.7}>
-              <Text style={s.dismissText}>Got it</Text>
+              <Text style={s.dismissText}>{t('walkthrough.gotIt')}</Text>
             </TouchableOpacity>
 
           </Pressable>

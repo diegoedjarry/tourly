@@ -44,6 +44,7 @@ import { parseAmount } from '../../utils/import-expenses';
 import { usePullToRefresh } from '@/hooks/usePullToRefresh';
 import { TournamentExpenseDetail } from '@/app/(tabs)/expenses';
 import { LoadingLogo } from '@/components/ui/LoadingLogo';
+import * as Haptics from 'expo-haptics';
 
 // Supervisor contact fields come from scraped data — validate strictly before
 // handing them to Linking.openURL so a malformed value can't smuggle extra
@@ -55,6 +56,11 @@ const TOURNAMENTS_WALKTHROUGH = [
   { icon: '➕', title: 'Add a Tournament', body: 'Tap + to add your first tournament. Tourly calculates all deadlines automatically from the start date.' },
   { icon: '📋', title: 'Tournament details', body: 'Tap any tournament to see its full breakdown — deadlines, expenses, prize money, and net result.' },
 ];
+
+// Ask for notification permission at most once per app session, right after a
+// tournament is successfully added — resets only on a fresh app launch, so
+// bulk-adding several tournaments in one sitting doesn't nag the same prompt.
+let notifPrimingShownThisSession = false;
 
 function genId(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -84,6 +90,29 @@ function parseLocalDate(val: any): Date | null {
   }
   const d = new Date(typeof val === 'number' ? val : String(val));
   return isNaN(d.getTime()) ? null : d;
+}
+
+// Local-midnight "today" as YYYY-MM-DD — avoids the UTC off-by-one day that
+// `new Date().toISOString().slice(0, 10)` introduces in negative-offset
+// timezones (mirrors expenses.tsx's todayIso()).
+function todayIso(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+// Next upcoming Monday (local time) as YYYY-MM-DD — today itself when today
+// is already a Monday. Used to smart-default the manual add form's start
+// date since tournaments always start on a Monday.
+function nextUpcomingMonday(): string {
+  const d = new Date();
+  const day = d.getDay(); // 0=Sun … 6=Sat
+  const diff = (8 - day) % 7;
+  d.setDate(d.getDate() + diff);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 function daysUntil(dateStr: string | undefined): number | null {
@@ -223,7 +252,14 @@ function TournamentCard({ item, onPress, selected, selectMode, onLongPress, t }:
   const pill      = getPill(item);
 
   return (
-    <TouchableOpacity style={[styles.card, selected && styles.cardSelected]} onPress={onPress} onLongPress={onLongPress} activeOpacity={0.8}>
+    <TouchableOpacity
+      style={[styles.card, selected && styles.cardSelected]}
+      onPress={onPress}
+      onLongPress={onLongPress}
+      activeOpacity={0.8}
+      accessibilityRole="button"
+      accessibilityLabel={item.startDate ? `${item.name}, ${fmtDateRange(item.startDate, item.endDate)}` : item.name}
+    >
       <View style={styles.cardTopRow}>
         {selectMode && (
           <View style={[styles.selectBox, selected && styles.selectBoxOn]}>
@@ -507,8 +543,8 @@ function RankingImpactSection({ tournament }: { tournament: any }) {
     if (saving) return;
     const rbVal = parseInt(rankBefore, 10);
     const raVal = parseInt(rankAfter, 10);
-    if (rankBefore.trim() && (!Number.isFinite(rbVal) || rbVal <= 0)) { Alert.alert('Invalid ranking', 'Ranking before must be a positive number.'); return; }
-    if (rankAfter.trim() && (!Number.isFinite(raVal) || raVal <= 0)) { Alert.alert('Invalid ranking', 'Ranking after must be a positive number.'); return; }
+    if (rankBefore.trim() && (!Number.isFinite(rbVal) || rbVal <= 0)) { Alert.alert(t('tournament.invalidRankingTitle'), t('tournament.rankingBeforeInvalid')); return; }
+    if (rankAfter.trim() && (!Number.isFinite(raVal) || raVal <= 0)) { Alert.alert(t('tournament.invalidRankingTitle'), t('tournament.rankingAfterInvalid')); return; }
     setSaving(true);
     try {
       const updates = { rankingBefore: rankBefore.trim() ? rbVal : null, rankingAfter: rankAfter.trim() ? raVal : null };
@@ -614,8 +650,7 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
 
   const tripEstimate = useMemo(() => {
     if (!tournament) return null;
-    const todayIso = new Date().toISOString().slice(0, 10);
-    if (!(tournament.startDate > todayIso)) return null; // only for upcoming tournaments the player hasn't played yet
+    if (!(tournament.startDate > todayIso())) return null; // only for upcoming tournaments the player hasn't played yet
     return estimateTripCost(
       { country: tournament.country ?? '', category: tournament.category ?? '', startDate: tournament.startDate },
       data?.tournaments ?? [],
@@ -631,6 +666,9 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
   const [editOverrides,   setEditOverrides]   = useState({ signUp: false, withdrawal: false, freeze: false });
   const [saving,          setSaving]          = useState(false);
   const [editError,       setEditError]       = useState('');
+  // Snapshot of editState as startEdit() set it up — compared against the live
+  // editState to detect unsaved changes before discarding them silently.
+  const editInitialRef = useRef<EditState | null>(null);
   const demoCtx = useDemoData();
 
   // AI trip-cost breakdown sheet — cached per tournament id so reopening
@@ -661,7 +699,7 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
   function startEdit() {
     const start = tournament.startDate ?? '';
     const calc  = start ? calcDeadlines(start, tournament.category) : null;
-    setEditState({
+    const initial: EditState = {
       name: tournament.name ?? '',
       country: tournament.country ?? '',
       city: tournament.city ?? '',
@@ -675,7 +713,9 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
       singlesPrizeMoney:  (tournament.singlesPrizeMoney ?? 0) > 0 ? String(tournament.singlesPrizeMoney) : '',
       doublesPrizeMoney:  (tournament.doublesPrizeMoney ?? 0) > 0 ? String(tournament.doublesPrizeMoney) : '',
       taxWithholdingPct:  (tournament.taxWithholdingPct ?? 0) > 0 ? String(tournament.taxWithholdingPct) : '',
-    });
+    };
+    setEditState(initial);
+    editInitialRef.current = initial;
     // A stored deadline that differs from the formula is a user override —
     // start with the override flag ON so saving doesn't silently reset it.
     setEditOverrides({
@@ -690,7 +730,25 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
   function cancelEdit() {
     setEditing(false);
     setEditState(null);
+    editInitialRef.current = null;
     setEditError('');
+  }
+
+  // Guards cancelEdit() behind a confirmation when the form has unsaved
+  // changes — otherwise a stray Android-back or nav tap silently discards a
+  // fully-typed edit.
+  function requestCancelEdit() {
+    const dirty = !!editState && !!editInitialRef.current
+      && JSON.stringify(editState) !== JSON.stringify(editInitialRef.current);
+    if (!dirty) { cancelEdit(); return; }
+    Alert.alert(
+      t('tournaments.discardTitle'),
+      t('tournaments.discardBody'),
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('common.discard'), style: 'destructive', onPress: cancelEdit },
+      ]
+    );
   }
 
   function setEF(key: keyof EditState, value: string) {
@@ -726,10 +784,10 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
 
   async function saveEdit() {
     if (!editState) return;
-    if (!editState.name.trim()) { setEditError('Tournament name is required.'); return; }
-    if (!editState.startDate)   { setEditError('Start date is required.'); return; }
-    if (!isMonday(editState.startDate)) { setEditError('Tournament start date must be a Monday.'); return; }
-    if (!VALID_SURFACES.includes(editState.surface)) { setEditError('Invalid surface selected.'); return; }
+    if (!editState.name.trim()) { setEditError(t('tournaments.nameRequired')); return; }
+    if (!editState.startDate)   { setEditError(t('tournaments.dateRequired')); return; }
+    if (!isMonday(editState.startDate)) { setEditError(t('tournaments.startMustBeMonday')); return; }
+    if (!VALID_SURFACES.includes(editState.surface)) { setEditError(t('tournament.invalidSurface')); return; }
     setSaving(true); setEditError('');
     const editCalc = calcDeadlines(editState.startDate, editState.category);
     // parseAmount handles both "1.234,56" and "1,234.56" formats correctly and
@@ -753,7 +811,7 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
         : null,
     };
     if (updates.endDate && updates.endDate < updates.startDate) {
-      setEditError('End date cannot be before the start date.');
+      setEditError(t('tournament.endBeforeStart'));
       setSaving(false);
       return;
     }
@@ -766,10 +824,12 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
         // stale data and ignore the user's notification preferences).
         await apiPatchTournament(tournament.id, updates);
       }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setEditing(false);
       setEditState(null);
+      editInitialRef.current = null;
     } catch (e: any) {
-      setEditError(e?.message ?? 'Failed to save.');
+      setEditError(e?.message ?? t('tournament.failedSave'));
     } finally {
       setSaving(false);
     }
@@ -826,12 +886,12 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
   }
 
   return (
-    <Modal animationType="slide" onRequestClose={editing ? cancelEdit : onClose} statusBarTranslucent>
+    <Modal animationType="slide" onRequestClose={editing ? requestCancelEdit : onClose} statusBarTranslucent>
       <SafeAreaView style={det.safe}>
 
         {/* Nav bar */}
         <View style={det.navbar}>
-          <TouchableOpacity onPress={editing ? cancelEdit : onClose} style={det.backBtn} activeOpacity={0.7}>
+          <TouchableOpacity onPress={editing ? requestCancelEdit : onClose} style={det.backBtn} activeOpacity={0.7}>
             <Text style={det.backText}>{editing ? t('common.cancel') : t('common.back')}</Text>
           </TouchableOpacity>
           {!editing && (
@@ -852,7 +912,7 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
                   style={[det.headerName, { color: surfaceText, borderBottomWidth: 1, borderBottomColor: surfaceText + '44' }]}
                   value={editState.name}
                   onChangeText={(v) => setEF('name', v)}
-                  placeholder="Tournament name"
+                  placeholder={t('tournament.namePlaceholder')}
                   placeholderTextColor={surfaceText + '88'}
                 />
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 }}>
@@ -884,10 +944,10 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
             <TouchableOpacity
               style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(240,168,48,0.12)', borderRadius: 10, marginHorizontal: 20, marginTop: 12, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: 'rgba(240,168,48,0.35)' }}
               activeOpacity={0.8}
-              onPress={() => setEditing(true)}
+              onPress={startEdit}
             >
               <Text style={{ fontSize: 14 }}>⚠️</Text>
-              <Text style={{ flex: 1, fontSize: 12, color: T.amber, fontWeight: '600' }}>Country missing — tap to add it so this tournament appears in Cost by Country.</Text>
+              <Text style={{ flex: 1, fontSize: 12, color: T.amber, fontWeight: '600' }}>{t('tournament.countryMissingBanner')}</Text>
             </TouchableOpacity>
           )}
 
@@ -906,10 +966,10 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
                 ))}
               </View>
 
-              <CategoryPicker label="CATEGORY" value={editState.category} onChange={(v) => setEF('category', v)} t={t} />
+              <CategoryPicker label={t('tournament.categoryLabel')} value={editState.category} onChange={(v) => setEF('category', v)} t={t} />
 
               <CountryPicker
-                label={!editState.country ? '⚠ COUNTRY — missing' : 'COUNTRY'}
+                label={!editState.country ? t('tournament.countryMissingLabel') : t('tournament.countryLabel')}
                 labelStyle={!editState.country ? { color: T.amber } : undefined}
                 value={editState.country}
                 onChange={(v) => setEF('country', v)}
@@ -918,7 +978,7 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
 
               <Text style={det.sectionLabel}>{t('tournament.city').toUpperCase()}</Text>
               <TextInput style={det.editInput} value={editState.city} onChangeText={(v) => setEF('city', v)}
-                placeholder="City" placeholderTextColor={T.textSecondary} />
+                placeholder={t('tournament.cityPlaceholder')} placeholderTextColor={T.textSecondary} />
 
               <Text style={det.sectionLabel}>{t('tournament.dates').toUpperCase()}</Text>
               <Text style={det.editDateLabel}>{t('tournament.startDateHint')}</Text>
@@ -935,7 +995,7 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
                       onPress={() => setEditOverrides(prev => ({ ...prev, [ok]: !prev[ok] }))}
                       activeOpacity={0.7}
                     >
-                      <Text style={det.overrideBtn}>{editOverrides[ok] ? 'use formula' : 'override'}</Text>
+                      <Text style={det.overrideBtn}>{editOverrides[ok] ? t('tournament.useFormula') : t('tournament.override')}</Text>
                     </TouchableOpacity>
                   </View>
                   {editOverrides[ok] ? (
@@ -1112,7 +1172,7 @@ export function TournamentDetail({ tournamentId, onClose }: { tournamentId: stri
                     return (
                       <>
                         <View style={{ height: 1, backgroundColor: T.cardBorder, marginVertical: 16 }} />
-                        <Text style={{ fontSize: 11, fontWeight: '600', color: T.amber, letterSpacing: 1, marginBottom: 8, lineHeight: 16 }}>ON-SITE SIGN-INS</Text>
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: T.amber, letterSpacing: 1, marginBottom: 8, lineHeight: 16 }}>{t('tournament.onSiteSignIns')}</Text>
                         {onsiteDeadlines.map((od, i) => (
                           <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, gap: 12 }}>
                             <Text style={{ fontSize: 14, color: T.amber, fontWeight: '500', lineHeight: 20, flex: 1 }}>{od.label}</Text>
@@ -1409,7 +1469,7 @@ interface FormState {
   isRegistered: boolean;
 }
 const EMPTY_FORM: FormState = {
-  name: '', country: 'US', city: '', surface: 'clay', category: 'M25',
+  name: '', country: '', city: '', surface: 'clay', category: 'M25',
   startDate: '', endDate: '',
   signUpDeadline: '', withdrawalDeadline: '', freezeDeadline: '',
   isRegistered: false,
@@ -1446,16 +1506,16 @@ function ChipPicker({ label, options, value, onChange }: {
   );
 }
 
-function DeadlineRow({ label, value, overridden, onToggle, onChange, selectStartFirstLabel }: {
+function DeadlineRow({ label, value, overridden, onToggle, onChange, selectStartFirstLabel, t }: {
   label: string; value: string; overridden: boolean;
-  onToggle: () => void; onChange: (v: string) => void; selectStartFirstLabel: string;
+  onToggle: () => void; onChange: (v: string) => void; selectStartFirstLabel: string; t: (key: any) => string;
 }) {
   return (
     <View style={form.deadlineItem}>
       <View style={form.deadlineHeader}>
         <Text style={form.deadlineItemLabel}>{label}</Text>
         <TouchableOpacity onPress={onToggle} activeOpacity={0.7}>
-          <Text style={form.overrideBtn}>{overridden ? 'use formula' : 'override'}</Text>
+          <Text style={form.overrideBtn}>{overridden ? t('tournament.useFormula') : t('tournament.override')}</Text>
         </TouchableOpacity>
       </View>
       {overridden ? (
@@ -1469,12 +1529,12 @@ function DeadlineRow({ label, value, overridden, onToggle, onChange, selectStart
   );
 }
 
-export function AddTournamentModal({ onClose, defaultStartDate }: { onClose: () => void; defaultStartDate?: string }) {
-  const { t } = useLanguage();
+export function AddTournamentModal({ onClose, defaultStartDate, initialMode }: { onClose: () => void; defaultStartDate?: string; initialMode?: 'search' | 'manual' }) {
+  const { t, lang } = useLanguage();
   const { data } = useAppQuery({ tournaments: {} });
   const demoCtx  = useDemoData();
   const [query, setQuery]     = useState('');
-  const [mode, setMode]       = useState<'search' | 'manual'>('search');
+  const [mode, setMode]       = useState<'search' | 'manual'>(initialMode ?? 'search');
   const [f, setF]             = useState<FormState>(() => {
     if (defaultStartDate) {
       const calc = calcDeadlines(defaultStartDate, EMPTY_FORM.category);
@@ -1487,11 +1547,55 @@ export function AddTournamentModal({ onClose, defaultStartDate }: { onClose: () 
         freezeDeadline: calc.freezeDeadline,
       };
     }
-    return EMPTY_FORM;
+    // No explicit default — smart-default to the next upcoming Monday since
+    // tournaments always start on one (today itself if today is Monday).
+    const smartStart = nextUpcomingMonday();
+    const calc = calcDeadlines(smartStart, EMPTY_FORM.category);
+    return {
+      ...EMPTY_FORM,
+      startDate: smartStart,
+      endDate: calcEndDate(smartStart),
+      signUpDeadline: calc.signUpDeadline,
+      withdrawalDeadline: calc.withdrawalDeadline,
+      freezeDeadline: calc.freezeDeadline,
+    };
   });
+  // Snapshot of the initial form (incl. the smart-defaulted/passed-in start
+  // date) — compared against live `f` to detect unsaved manual-form input
+  // before a stray backdrop tap or Android back discards it silently.
+  const initialFormRef = useRef(f);
   const [overrides, setOverrides] = useState({ signUp: false, withdrawal: false, freeze: false });
   const [saving, setSaving]   = useState(false);
   const [error, setError]     = useState('');
+
+  function isManualFormDirty(): boolean {
+    const init = initialFormRef.current;
+    if (f.name.trim() !== '') return true;
+    if (f.city.trim() !== '') return true;
+    if (f.country !== EMPTY_FORM.country) return true;
+    if (f.surface !== EMPTY_FORM.surface) return true;
+    if (f.category !== EMPTY_FORM.category) return true;
+    if (f.isRegistered !== EMPTY_FORM.isRegistered) return true;
+    if (f.startDate !== init.startDate) return true;
+    if (f.endDate !== init.endDate) return true;
+    if (f.signUpDeadline !== init.signUpDeadline) return true;
+    if (f.withdrawalDeadline !== init.withdrawalDeadline) return true;
+    if (f.freezeDeadline !== init.freezeDeadline) return true;
+    if (overrides.signUp || overrides.withdrawal || overrides.freeze) return true;
+    return false;
+  }
+
+  function requestClose() {
+    if (!isManualFormDirty()) { onClose(); return; }
+    Alert.alert(
+      t('tournaments.discardTitle'),
+      t('tournaments.discardBody'),
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('common.discard'), style: 'destructive', onPress: onClose },
+      ]
+    );
+  }
 
   const pool = (data?.tournaments ?? []).filter((trn: any) => trn.isInMyList === false);
   const searchResults = query.trim().length > 0
@@ -1537,6 +1641,35 @@ export function AddTournamentModal({ onClose, defaultStartDate }: { onClose: () 
     }
   }
 
+  // Hopper-pattern priming: ask right when the value of reminders is obvious
+  // (a tournament with real deadlines was just added), not unconditionally on
+  // launch. Never shown in demo mode, never shown if the OS already has an
+  // answer (granted or denied), and at most once per app session.
+  async function maybeShowNotifPrimingAlert() {
+    if (DEMO_MODE || notifPrimingShownThisSession) return;
+    try {
+      const Notifications = await import('expo-notifications');
+      const { status } = await Notifications.getPermissionsAsync();
+      if (status !== 'undetermined') return;
+      notifPrimingShownThisSession = true;
+      Alert.alert(
+        t('tournaments.notifPrimingTitle'),
+        t('tournaments.notifPrimingBody'),
+        [
+          { text: t('tournaments.notifPrimingNotNow'), style: 'cancel' },
+          {
+            text: t('tournaments.notifPrimingEnable'),
+            onPress: () => {
+              import('@/utils/notifications').then(({ ensurePermissionAndRegister }) => {
+                ensurePermissionAndRegister(data?.tournaments ?? [], undefined, lang).catch(() => {});
+              });
+            },
+          },
+        ],
+      );
+    } catch {}
+  }
+
   async function handleAddFromSearch(tournament: any) {
     setSaving(true);
     try {
@@ -1560,19 +1693,22 @@ export function AddTournamentModal({ onClose, defaultStartDate }: { onClose: () 
       }
       if (DEMO_MODE) {
         demoCtx?.patchTournament(tournament.id, updates);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         onClose();
       } else {
         await apiPatchTournament(tournament.id, updates);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         onClose();
+        maybeShowNotifPrimingAlert();
       }
-    } catch (e: any) { setError(e?.message ?? 'Failed to add.'); setSaving(false); }
+    } catch (e: any) { setError(e?.message ?? t('tournament.failedAdd')); setSaving(false); }
   }
 
   async function handleSaveManual() {
     if (!f.name.trim()) { setError(t('tournaments.nameRequired')); return; }
     if (!f.startDate)   { setError(t('tournaments.dateRequired')); return; }
-    if (!isMonday(f.startDate)) { setError('Tournament start date must be a Monday.'); setSaving(false); return; }
-    if (f.endDate && f.endDate < f.startDate) { setError('End date cannot be before the start date.'); setSaving(false); return; }
+    if (!isMonday(f.startDate)) { setError(t('tournaments.startMustBeMonday')); setSaving(false); return; }
+    if (f.endDate && f.endDate < f.startDate) { setError(t('tournament.endBeforeStart')); setSaving(false); return; }
     setSaving(true); setError('');
     const finalCalc = calcDeadlines(f.startDate, f.category);
     const finalSignUp = overrides.signUp ? f.signUpDeadline : finalCalc.signUpDeadline;
@@ -1602,6 +1738,7 @@ export function AddTournamentModal({ onClose, defaultStartDate }: { onClose: () 
           isWithdrawn: false, isInMyList: true, status: 'upcoming',
           prizeMoney: 0, singlesPrizeMoney: 0, doublesPrizeMoney: 0,
         });
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         onClose();
       } else {
         await apiAddTournament({
@@ -1616,17 +1753,19 @@ export function AddTournamentModal({ onClose, defaultStartDate }: { onClose: () 
           prizeMoney: 0, singlesPrizeMoney: 0, doublesPrizeMoney: 0,
         });
         // Notifications reschedule via useNotificationSetup once the query refreshes.
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         onClose();
+        maybeShowNotifPrimingAlert();
       }
-    } catch (e: any) { setError(e?.message ?? 'Failed to save.'); setSaving(false); }
+    } catch (e: any) { setError(e?.message ?? t('tournament.failedSave')); setSaving(false); }
   }
 
   const showManualPrompt = mode === 'search' && query.trim().length > 0 && searchResults.length === 0;
 
   return (
-    <Modal transparent animationType="slide" onRequestClose={onClose}>
+    <Modal transparent animationType="slide" onRequestClose={requestClose}>
       <KeyboardAvoidingView style={form.kav} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <Pressable style={form.backdrop} onPress={onClose} />
+        <Pressable style={form.backdrop} onPress={requestClose} />
         <View style={form.sheet}>
           <View style={form.sheetHandle} />
           <View style={form.sheetHeader}>
@@ -1634,7 +1773,7 @@ export function AddTournamentModal({ onClose, defaultStartDate }: { onClose: () 
               ? <TouchableOpacity onPress={() => { setMode('search'); setError(''); }} activeOpacity={0.7} style={form.backBtn}>
                   <Text style={form.backBtnText}>{t('common.back')}</Text>
                 </TouchableOpacity>
-              : <TouchableOpacity onPress={onClose} activeOpacity={0.7} style={form.backBtn}>
+              : <TouchableOpacity onPress={requestClose} activeOpacity={0.7} style={form.backBtn}>
                   <Text style={form.backBtnText}>{t('common.cancel')}</Text>
                 </TouchableOpacity>}
             <Text style={form.sheetTitle}>{mode === 'manual' ? t('tournaments.addManually') : t('tournaments.addNew')}</Text>
@@ -1691,18 +1830,18 @@ export function AddTournamentModal({ onClose, defaultStartDate }: { onClose: () 
             <>
               <ScrollView showsVerticalScrollIndicator={false} style={form.scrollArea} keyboardShouldPersistTaps="handled">
                 <Text style={{ fontSize: 11, color: T.accent, marginBottom: 12 }}>{t('tournaments.autoFillHint')}</Text>
-                <LabeledInput label={`Name ⚡`} placeholder="ex. M25 Cuiabá" value={f.name} onChangeText={(v) => setField('name', v)} />
-                <LabeledInput label={`City ⚡`} placeholder="ex. Cuiabá" value={f.city} onChangeText={(v) => setField('city', v)} />
+                <LabeledInput label={t('tournaments.formNameLabel')} placeholder="ex. M25 Cuiabá" value={f.name} onChangeText={(v) => setField('name', v)} />
+                <LabeledInput label={t('tournaments.formCityLabel')} placeholder="ex. Cuiabá" value={f.city} onChangeText={(v) => setField('city', v)} />
                 <View style={form.field}>
-                  <CountryPicker label="Country ⚡" value={f.country} onChange={(v) => setField('country', v)} t={t} />
+                  <CountryPicker label={t('tournaments.formCountryLabel')} value={f.country} onChange={(v) => setField('country', v)} t={t} />
                 </View>
-                <ChipPicker label={`Surface ⚡`} options={SURFACES} value={f.surface} onChange={(v) => setField('surface', v)} />
+                <ChipPicker label={t('tournaments.formSurfaceLabel')} options={SURFACES} value={f.surface} onChange={(v) => setField('surface', v)} />
                 <View style={form.field}>
-                  <CategoryPicker label="Category ⚡" value={f.category} onChange={handleCategoryChange} t={t} />
+                  <CategoryPicker label={t('tournaments.formCategoryLabel')} value={f.category} onChange={handleCategoryChange} t={t} />
                 </View>
                 <DatePickerField label={`${t('tournament.startDateHint')} ⚡`} value={f.startDate} onChange={handleStartDateChange} />
                 <View style={form.field}>
-                  <Text style={form.label}>Deadlines ⚡ (auto-calculated)</Text>
+                  <Text style={form.label}>{t('tournaments.formDeadlinesLabel')}</Text>
                   {getStoredDeadlineFields(f.category).map(({ field, label }) => {
                     const ok = field === 'signUpDeadline' ? 'signUp' as const : field === 'withdrawalDeadline' ? 'withdrawal' as const : 'freeze' as const;
                     return (
@@ -1714,6 +1853,7 @@ export function AddTournamentModal({ onClose, defaultStartDate }: { onClose: () 
                         onToggle={() => setOverrides(p => ({ ...p, [ok]: !p[ok] }))}
                         onChange={(v) => setField(field as any, v)}
                         selectStartFirstLabel={t('tournament.selectStartFirst')}
+                        t={t}
                       />
                     );
                   })}
@@ -2452,6 +2592,7 @@ export default function TournamentsScreen() {
   const [pastYear, setPastYear]           = useState<string | null>(null);
   const [showDiscovery, setShowDiscovery]  = useState(false);
   const [showAddForm, setShowAddForm]      = useState(false);
+  const [addFormMode, setAddFormMode]      = useState<'search' | 'manual'>('search');
   const [detailId, setDetailId]           = useState<string | null>(null);
   const [expenseDetailId, setExpenseDetailId] = useState<string | null>(null);
   const { isFirstVisit, markVisited } = useFirstVisit('tournaments');
@@ -2553,18 +2694,13 @@ export default function TournamentsScreen() {
     const exists = (data?.tournaments ?? []).some((x: any) => x.id === openTournament);
     if (exists) return;
     missingDeepLinkAlertedRef.current = openTournament;
-    Alert.alert(
-      lang === 'es' ? 'Torneo no encontrado' : 'Tournament not found',
-      lang === 'es'
-        ? 'Este torneo ya no existe. Puede que haya sido eliminado.'
-        : 'This tournament no longer exists. It may have been deleted.',
-    );
-  }, [openTournament, isLoading, data?.tournaments, lang]);
+    Alert.alert(t('tournaments.notFoundTitle'), t('tournaments.notFoundBody'));
+  }, [openTournament, isLoading, data?.tournaments, lang, t]);
 
   // ── Supabase ITF calendar (upcoming, scraped) ─────────────────────────────
   const [itfTournaments, setItfTournaments] = useState<any[]>([]);
   useEffect(() => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayIso();
     supabase
       .from('itf_tournaments')
       .select('itf_id, name, city, country, surface, category, start_date, end_date, prize_money_total')
@@ -2639,7 +2775,7 @@ export default function TournamentsScreen() {
             .order('last_updated', { ascending: false }).limit(1)
             .then(({ data: rows }) => {
               if (!rows?.[0]?.match_history) { setScrapedPast([]); return; }
-              const todayStr = new Date().toISOString().slice(0, 10);
+              const todayStr = todayIso();
               const seen = new Set<string>();
               const entries: { name: string; startDate: string; endDate: string; surface: string | null }[] = [];
               (rows[0].match_history as any[]).forEach((m: any) => {
@@ -2894,7 +3030,8 @@ export default function TournamentsScreen() {
           </View>
         )}
 
-        {!isLoading && !queryError && activeFilter !== 'withdrawn' && filtered.length === 0 && (
+        {!isLoading && !queryError && activeFilter !== 'withdrawn' && filtered.length === 0 &&
+          !((activeFilter === 'all' || activeFilter === 'past') && pastWeeksMerged.length > 0) && (
           <Text style={styles.emptyText}>{t('tournaments.noTournamentsYet')}</Text>
         )}
         {!isLoading && !queryError && activeFilter === 'withdrawn' && withdrawnGroup.length === 0 && (
@@ -3040,7 +3177,9 @@ export default function TournamentsScreen() {
             activeOpacity={0.8}>
             {removingTournaments
               ? <ActivityIndicator color={T.textPrimary} />
-              : <Text style={styles.removeBtnText}>Delete {selectedTournaments.size} tournament{selectedTournaments.size !== 1 ? 's' : ''}</Text>}
+              : <Text style={styles.removeBtnText}>
+                  {t('tournaments.deleteSelectedButton').replace('{count}', String(selectedTournaments.size)).replace('{s}', selectedTournaments.size !== 1 ? 's' : '')}
+                </Text>}
           </TouchableOpacity>
         </View>
       )}
@@ -3050,23 +3189,32 @@ export default function TournamentsScreen() {
         onClose={() => setShowDiscovery(false)}
         allTournaments={data?.tournaments ?? []}
         itfTournaments={itfTournaments}
-        onOpenAddManual={() => setShowAddForm(true)}
+        onOpenAddManual={() => { setAddFormMode('manual'); setShowAddForm(true); }}
       />
-      {showAddForm && <AddTournamentModal onClose={() => setShowAddForm(false)} />}
+      {showAddForm && (
+        <AddTournamentModal
+          onClose={() => { setShowAddForm(false); setAddFormMode('search'); }}
+          initialMode={addFormMode}
+        />
+      )}
       {showDeleteConfirm && (() => {
         const count = selectedTournaments.size;
         return (
           <Modal transparent animationType="fade" onRequestClose={() => setShowDeleteConfirm(false)}>
             <Pressable style={styles.dialogBackdrop} onPress={() => setShowDeleteConfirm(false)}>
               <Pressable style={styles.dialog} onPress={() => {}}>
-                <Text style={styles.dialogTitle}>Delete {count} tournament{count !== 1 ? 's' : ''}?</Text>
-                <Text style={styles.dialogBody}>This cannot be undone. Match results and ranking data recorded for {count !== 1 ? 'these tournaments' : 'this tournament'} will also be permanently deleted.</Text>
+                <Text style={styles.dialogTitle}>
+                  {t('tournaments.deleteConfirmTitle').replace('{count}', String(count)).replace('{s}', count !== 1 ? 's' : '')}
+                </Text>
+                <Text style={styles.dialogBody}>
+                  {t('tournaments.deleteConfirmBody').replace('{target}', count !== 1 ? t('tournaments.deleteConfirmTargetPlural') : t('tournaments.deleteConfirmTargetSingle'))}
+                </Text>
                 <View style={styles.dialogActions}>
                   <TouchableOpacity style={styles.cancelBtn} onPress={() => setShowDeleteConfirm(false)} activeOpacity={0.7}>
                     <Text style={styles.cancelBtnText}>{t('common.cancel')}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.withdrawConfirmBtn} onPress={executeDeleteSelected} activeOpacity={0.8}>
-                    <Text style={styles.withdrawConfirmText}>Delete</Text>
+                    <Text style={styles.withdrawConfirmText}>{t('common.delete')}</Text>
                   </TouchableOpacity>
                 </View>
               </Pressable>
@@ -3086,8 +3234,8 @@ export default function TournamentsScreen() {
         <Modal transparent animationType="fade" onRequestClose={() => setSwipeDeleteTrn(null)}>
           <Pressable style={styles.dialogBackdrop} onPress={() => setSwipeDeleteTrn(null)}>
             <Pressable style={styles.dialog} onPress={() => {}}>
-              <Text style={styles.dialogTitle}>Delete 1 tournament?</Text>
-              <Text style={styles.dialogBody}>{swipeDeleteTrn.name} — this cannot be undone. Match results and ranking data recorded for this tournament will also be permanently deleted.</Text>
+              <Text style={styles.dialogTitle}>{t('tournaments.deleteOneConfirmTitle')}</Text>
+              <Text style={styles.dialogBody}>{t('tournaments.deleteOneConfirmBody').replace('{name}', swipeDeleteTrn.name)}</Text>
               <View style={styles.dialogActions}>
                 <TouchableOpacity style={styles.cancelBtn} onPress={() => setSwipeDeleteTrn(null)} activeOpacity={0.7}>
                   <Text style={styles.cancelBtnText}>{t('common.cancel')}</Text>

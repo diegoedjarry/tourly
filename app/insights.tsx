@@ -236,6 +236,9 @@ function CostByCountry({ tournaments, expenses }: { tournaments: any[]; expenses
   const [expandedCountry, setExpandedCountry] = useState<string | null>(null);
   const router = useRouter();
   const { t } = useLanguage();
+  // Captured before the nested tournament list below, whose .map((t: any) =>
+  // …) callback parameter shadows this component's `t` translate function.
+  const perDaySuffix = t('insights.perDaySuffix');
   const today = new Date(); today.setHours(0, 0, 0, 0);
 
   const data = useMemo(() => {
@@ -365,7 +368,7 @@ function CostByCountry({ tournaments, expenses }: { tournaments: any[]; expenses
                   <View style={{ alignItems: 'flex-end' }}>
                     <Text style={ds.nestedAmount}>{fmtFull(t.spent)}</Text>
                     <Text style={{ fontSize: 11, color: T.textTertiary }}>
-                      {fmtFull(t.perDay)}/day
+                      {fmtFull(t.perDay)}{perDaySuffix}
                     </Text>
                     {t.prize > 0 && <Text style={{ fontSize: 11, color: T.green }}>+{fmtFull(t.prize)}</Text>}
                   </View>
@@ -695,7 +698,7 @@ function PointsPerDollar({ expenses, tournaments, atpMatchHistory }: {
   return (
     <DetailScreen title={t('insights.pointsPerDollarTitle')}>
       <View style={{ alignItems: 'center', marginTop: 16 }}>
-        <Text style={{ fontSize: 42, fontWeight: '800', color: T.textPrimary }}>{seasonPer1k.toFixed(1)} pts</Text>
+        <Text style={{ fontSize: 42, fontWeight: '800', color: T.textPrimary }}>{seasonPer1k.toFixed(1)} {t('insights.ptsSuffix')}</Text>
         <Text style={{ fontSize: 15, color: T.textSecondary, marginTop: 4 }}>{t('insights.perThousandInvested')}</Text>
       </View>
       <View style={[ds.insightBox, { marginTop: 24 }]}>
@@ -721,7 +724,7 @@ function PointsPerDollar({ expenses, tournaments, atpMatchHistory }: {
                 <Text style={ds.listRowTitle}>{countryFlag(r.country)} {r.name}</Text>
                 <Text style={ds.listRowSub}>{r.pts} pts · {fmtFull(r.cost)}</Text>
               </View>
-              <Text style={[ds.listRowAmount, { color: T.accent }]}>{r.per1k.toFixed(1)} /$1k</Text>
+              <Text style={[ds.listRowAmount, { color: T.accent }]}>{r.per1k.toFixed(1)} {t('insights.per1kSuffix')}</Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -797,7 +800,7 @@ function PointsBySurface({ tournaments, atpMatchHistory }: { tournaments: any[];
                     {expandedSurface === d.surface ? '▼' : '▶'}
                   </Text>
                 </View>
-                <Text style={ds.surfaceCount}>{d.count} tournament{d.count !== 1 ? 's' : ''} · {d.totalPts} pts total</Text>
+                <Text style={ds.surfaceCount}>{d.count} {d.count !== 1 ? t('insights.tournaments') : t('insights.tournament')} · {d.totalPts} {t('insights.ptsTotal')}</Text>
               </View>
             </View>
             <View style={ds.surfaceStats}>

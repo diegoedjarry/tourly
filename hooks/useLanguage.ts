@@ -5,9 +5,13 @@ import { t as translate, type Lang, type StringKey } from '@/lib/i18n';
 
 const LANG_KEY = 'app_language';
 
-type Listener = (lang: Lang) => void;
+type Listener = (lang: Lang | undefined) => void;
 const listeners = new Set<Listener>();
-let currentLang: Lang = 'en';
+// undefined = no language has ever been explicitly set on this device (fresh
+// install, nothing in AsyncStorage yet) — callers should fall back to the
+// profile's language in that case. Once set (restored from AsyncStorage or
+// via setLanguage()), the local value always wins over the profile.
+let currentLang: Lang | undefined = undefined;
 
 // Seed currentLang from AsyncStorage immediately at module load so that
 // the home screen (first to mount) never flashes English before the profile loads.
@@ -21,7 +25,7 @@ AsyncStorage.getItem(LANG_KEY).then(saved => {
 // Current UI language for non-React modules (e.g. lib/api offline notices).
 // Tracks the persisted app language; the per-profile override lives in useLanguage().
 export function getCurrentLang(): Lang {
-  return currentLang;
+  return currentLang ?? 'en';
 }
 
 export async function setLanguage(lang: Lang) {
@@ -32,7 +36,7 @@ export async function setLanguage(lang: Lang) {
 
 export function useLanguage() {
   const { data: profile } = useProfile();
-  const [localLang, setLocalLang] = useState<Lang>(currentLang);
+  const [localLang, setLocalLang] = useState<Lang | undefined>(currentLang);
 
   useEffect(() => {
     const handler: Listener = (lang) => setLocalLang(lang);
@@ -41,11 +45,16 @@ export function useLanguage() {
   }, []);
 
   const profileLang = (profile?.language as Lang) || undefined;
-  // Profile language is the source of truth once loaded.
+  // The locally-set language (restored from AsyncStorage, or just set via the
+  // language picker) always wins over the profile: otherwise switching
+  // language only took effect once the profile write landed on the server —
+  // and never took effect at all while offline, since setLanguage() persists
+  // locally immediately but the profile mutation can be queued/delayed.
+  // Profile language is only a fallback, for a fresh install/device that has
+  // never had a local language set.
   // When profile is explicitly null (logged-out / auth screen), always use 'en'
   // so the login page never shows a language stored from a previous session.
-  // undefined means still loading — keep localLang to avoid a flash.
-  const lang: Lang = profile === null ? 'en' : (profileLang ?? localLang);
+  const lang: Lang = profile === null ? 'en' : (localLang ?? profileLang ?? 'en');
 
   const t = useCallback((key: StringKey): string => {
     return translate(key, lang);

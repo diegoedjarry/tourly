@@ -7,6 +7,8 @@ import { clearQueue, getQueueLength } from '@/lib/offline-queue';
 import { cancelAllNotificationsForSignOut } from '@/utils/notifications';
 import { clearDeletedTournaments } from '@/lib/deleted-tournaments';
 import { clearDevicePushToken } from '@/db';
+import { t as i18nT } from '@/lib/i18n';
+import { getCurrentLang } from '@/hooks/useLanguage';
 
 // Device-local state that must never leak from User A to User B on a shared
 // device. Invoked from two places only: the explicit signOut() call, and the
@@ -157,10 +159,27 @@ export function useAuth() {
         if (accessToken) {
           await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken ?? '' });
         } else {
-          throw new Error('Could not complete sign in. Please try again.');
+          throw new Error(i18nT('auth.couldNotCompleteSignIn', getCurrentLang()));
         }
       }
     }
+  }
+
+  async function resendConfirmationEmail(email: string) {
+    const { error } = await supabase.auth.resend({ type: 'signup', email });
+    if (error) throw error;
+  }
+
+  async function resetPasswordForEmail(email: string) {
+    let redirectTo: string;
+    if (Platform.OS === 'web') {
+      redirectTo = `${window.location.origin}/reset-password`;
+    } else {
+      const { createURL } = await import('expo-linking');
+      redirectTo = createURL('reset-password');
+    }
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+    if (error) throw error;
   }
 
   async function updateEmail(newEmail: string) {
@@ -173,5 +192,5 @@ export function useAuth() {
     if (error) throw error;
   }
 
-  return { user, session, loading, signInWithEmail, signUpWithEmail, signInWithOAuth, signOut, updateEmail, updatePassword };
+  return { user, session, loading, signInWithEmail, signUpWithEmail, signInWithOAuth, signOut, updateEmail, updatePassword, resendConfirmationEmail, resetPasswordForEmail };
 }
