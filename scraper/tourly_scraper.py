@@ -657,21 +657,96 @@ class ATPChallengerScraper:
 
     async def scrape_calendar(self) -> list[dict]:
         print("Fetching ATP Challenger calendar via curl_cffi...")
-        async with AsyncSession(impersonate="chrome131") as client:
-            # Warm up to get session cookie
-            r0 = await client.get(self._ATP_WARMUP, headers=self._H_HTML, timeout=30)
-            if r0.status_code != 200 or len(r0.content) < 10_000:
-                print(f"   WARNING: warmup returned {r0.status_code}, {len(r0.content)} bytes — proceeding anyway")
+        raw_items: Optional[list] = None
+        try:
+            async with AsyncSession(impersonate="chrome131") as client:
+                # Warm up to get session cookie
+                r0 = await client.get(self._ATP_WARMUP, headers=self._H_HTML, timeout=30)
+                if r0.status_code != 200 or len(r0.content) < 10_000:
+                    print(f"   WARNING: warmup returned {r0.status_code}, {len(r0.content)} bytes — proceeding anyway")
 
-            r = await client.get(self._ATP_CH_API, headers=self._H_JSON, timeout=30)
-            if r.status_code != 200 or not r.content:
-                print(f"   ERROR: challenger API returned {r.status_code}, {len(r.content)} bytes")
+                r = await client.get(self._ATP_CH_API, headers=self._H_JSON, timeout=30)
+                if r.status_code == 200 and r.content:
+                    body = r.json()
+                    raw_items = [t for dg in body.get("TournamentDates", []) for t in dg.get("Tournaments", [])]
+                    print(f"   Raw items from API: {len(raw_items)}")
+                else:
+                    print(f"   ERROR: challenger API returned {r.status_code}, {len(r.content)} bytes")
+        except Exception as e:
+            print(f"   ERROR: challenger API request raised — {e}")
+
+        if not raw_items:
+            # ATP's WAF now 403s both the warmup page and the API from GitHub
+            # Actions runner IPs (observed 2026-07-13). A real Chrome + stealth
+            # session is the same technique that gets the ITF phase past ITF's
+            # (different) WAF in the same run — best available odds, so fall
+            # back to browser automation before giving up on this phase.
+            # Also covers a 200 response whose payload had zero tournaments.
+            print("   Falling back to browser for Challenger calendar...")
+            raw_items = await self._fetch_via_browser()
+            if raw_items:
+                print(f"   ✓  Challenger browser fallback returned {len(raw_items)} raw items")
+            else:
+                # Empty return (not an exception) means both the API and the
+                # browser fallback came up dry — let the caller's low_rows gate
+                # trip rather than silently upserting nothing (see
+                # run_challenger_phase / GATE_FULL_SEASON_MIN_ROWS).
                 return []
 
-            body = r.json()
-            raw_items = [t for dg in body.get("TournamentDates", []) for t in dg.get("Tournaments", [])]
-            print(f"   Raw items from API: {len(raw_items)}")
+        return self._normalise_raw_items(raw_items)
 
+    async def _fetch_via_browser(self) -> list:
+        """
+        Opens the ATP Challenger tournaments page in a real Chrome + stealth
+        session and calls the calendar API via page.evaluate, modeled on
+        ITFTournamentScraper._fetch_itf_via_browser (same technique that gets
+        the ITF calendar past ITF's WAF in the same scraper run). Used only
+        when the curl_cffi TLS-impersonation path in scrape_calendar is
+        blocked, errors, or returns no tournaments.
+        """
+        raw_items: list = []
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(headless=True, channel="chrome", args=BROWSER_ARGS)
+                try:
+                    ctx = await browser.new_context(
+                        user_agent=HTTP_HEADERS["User-Agent"],
+                        viewport={"width": 1280, "height": 900},
+                        locale="en-US",
+                    )
+                    page = await ctx.new_page()
+                    await Stealth().apply_stealth_async(page)
+
+                    # Load the tournaments page once to establish session/cookies,
+                    # same pattern as the ITF fallback.
+                    try:
+                        await page.goto(
+                            "https://www.atptour.com/en/tournaments?tourCodes=CH",
+                            wait_until="domcontentloaded", timeout=50_000
+                        )
+                    except Exception as e:
+                        print(f"   ⚠  Challenger page nav: {e}")
+                    await page.wait_for_timeout(6_000)
+
+                    result = await page.evaluate(f"""async () => {{
+                        const r = await fetch('{self._ATP_CH_API}', {{
+                            headers: {{'Accept': 'application/json, text/plain, */*', 'X-Requested-With': 'XMLHttpRequest'}}
+                        }});
+                        return await r.json();
+                    }}""")
+                    raw_items = [
+                        t for dg in result.get("TournamentDates", []) for t in dg.get("Tournaments", [])
+                    ] if isinstance(result, dict) else []
+                    print(f"   Browser fallback: {len(raw_items)} raw challenger items")
+                finally:
+                    await browser.close()
+        except Exception as e:
+            print(f"   ⚠  Challenger browser fallback failed: {e}")
+            return []
+
+        return raw_items
+
+    def _normalise_raw_items(self, raw_items: list) -> list[dict]:
         # Filter to Challenger-type items first (non-CH items, e.g. ATP Tour main
         # draw, are a different — legitimately-shaped — payload, not a validation
         # failure), then schema-validate the CH items at the ingestion boundary.
@@ -834,6 +909,29 @@ class TennisAbstractScraper:
             if slug not in slugs:
                 slugs.append(slug)
 
+        # This list-building can only ever SHORTEN player_name (drop trailing
+        # parts), so a player whose TA canonical name is LONGER than what the
+        # profiles table has on file (e.g. an extra maternal surname the site
+        # records but our roster doesn't) can never be reached this way —
+        # observed 2026-07-13 with "Patricio Betancourt" vs TA's
+        # "Patricio Betancourt Gonzalez". currRank fuzzy-matches on the last
+        # two name parts as a substring, so it can surface the canonical name
+        # even when the slug builder can't derive it directly; use that to add
+        # one more candidate up front. Guarded so a coincidental fuzzy match
+        # (a different player entirely) can't slip a wrong slug into the list:
+        # every word of player_name must appear in the matched key.
+        curr_rank_entry = await self._lookup_curr_rank_entry(player_name)
+        if curr_rank_entry:
+            matched_key, _ = curr_rank_entry
+            if matched_key != player_name:
+                key_norm = to_slug(matched_key).lower()
+                words_match = all(to_slug(part).lower() in key_norm for part in parts)
+                if words_match:
+                    canonical_slug = to_slug(matched_key)
+                    if canonical_slug not in slugs:
+                        slugs.insert(0, canonical_slug)
+                        print(f"   TA canonical name from currRank: '{matched_key}' → slug candidate {canonical_slug}")
+
         # ── Step 2: fetch page HTML and jsfrags to get ranking + match data ──
         current_ranking: Optional[int] = None
         fullname: Optional[str] = None
@@ -929,6 +1027,12 @@ class TennisAbstractScraper:
                     print(f"   Match rows: {len(match_rows)}, year-end rows: {len(year_end_rows)}")
                     working_slug = slug
                     break
+                else:
+                    # No slug candidate hit — log the exact URLs tried so a future
+                    # miss (e.g. another player name TA renders longer than ours)
+                    # is diagnosable from CI logs instead of failing silently.
+                    tried = ", ".join(f"{self.TA_BASE}/jsfrags/{s}.js" for s in slugs)
+                    print(f"   ⚠  jsfrags direct fallback: all {len(slugs)} candidates missed — tried: {tried}")
 
         # ── Step 3: fallback ranking from curr_rank_atp.js ───────────────────
         if current_ranking is None:
@@ -1044,8 +1148,16 @@ class TennisAbstractScraper:
 
     # ── curr_rank lookup ───────────────────────────────────────────────────────
 
-    async def _lookup_curr_rank(self, player_name: str) -> Optional[int]:
-        """Fetch jsplayers/curr_rank_atp.js and look up the player by name."""
+    async def _lookup_curr_rank_entry(self, player_name: str) -> Optional[tuple[str, int]]:
+        """
+        Fetch jsplayers/curr_rank_atp.js and look up the player by name, returning
+        the (matched_key, rank) pair rather than just the rank — the key is TA's
+        canonical full name for the player and can differ from the profiles-table
+        name we were called with (e.g. it includes a maternal surname the site
+        adds but the app's roster doesn't track). Callers that only need the rank
+        should use _lookup_curr_rank; scrape_player uses the key to widen its slug
+        candidates (see Step 2 comment, observed 2026-07-13 with a two-surname miss).
+        """
         if self._curr_rank_cache is None:
             try:
                 async with AsyncSession(impersonate="chrome120") as client:
@@ -1066,20 +1178,25 @@ class TennisAbstractScraper:
         cache = self._curr_rank_cache or {}
         # Exact match first
         if player_name in cache:
-            return int(cache[player_name])
+            return player_name, int(cache[player_name])
         # Case-insensitive partial match (any word in player_name must appear in key)
         name_lower = player_name.lower()
         for key, val in cache.items():
             if key.lower() == name_lower:
-                return int(val)
+                return key, int(val)
         # Try matching on last surname part (e.g. "Jarry Fillol" in "Diego Jarry Fillol")
         parts = player_name.split()
         if len(parts) >= 2:
             last_two = " ".join(parts[-2:]).lower()
             for key, val in cache.items():
                 if last_two in key.lower():
-                    return int(val)
+                    return key, int(val)
         return None
+
+    async def _lookup_curr_rank(self, player_name: str) -> Optional[int]:
+        """Fetch jsplayers/curr_rank_atp.js and look up the player by name."""
+        entry = await self._lookup_curr_rank_entry(player_name)
+        return entry[1] if entry else None
 
     # ── match history builder ──────────────────────────────────────────────────
 
