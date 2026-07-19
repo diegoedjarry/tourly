@@ -16,6 +16,8 @@ import {
   Switch,
   Alert,
   RefreshControl,
+  InputAccessoryView,
+  Keyboard,
 } from 'react-native';
 import { Text } from '@/components/ui/text';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -505,6 +507,7 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
             style={form.scroll}
             contentContainerStyle={form.scrollContent}
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
             showsVerticalScrollIndicator={false}>
 
             {/* ── Monthly fixed banner ── */}
@@ -695,6 +698,7 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
                   placeholder="0.00"
                   placeholderTextColor={T.textSecondary}
                   keyboardType="decimal-pad"
+                  inputAccessoryViewID={Platform.OS === 'ios' ? 'add-expense-done' : undefined}
                 />
               </View>
             </View>
@@ -757,6 +761,7 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
                     placeholder="100"
                     placeholderTextColor={T.textSecondary}
                     maxLength={3}
+                    inputAccessoryViewID={Platform.OS === 'ios' ? 'add-expense-done' : undefined}
                   />
                   <Text style={form.currencySign}>%</Text>
                 </View>
@@ -801,6 +806,16 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
+
+      {Platform.OS === 'ios' && (
+        <InputAccessoryView nativeID="add-expense-done">
+          <View style={form.kbAccessory}>
+            <TouchableOpacity onPress={() => Keyboard.dismiss()} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8, left: 16, right: 16 }}>
+              <Text style={form.kbAccessoryDone}>{t('common.done')}</Text>
+            </TouchableOpacity>
+          </View>
+        </InputAccessoryView>
+      )}
 
       <ReceiptCaptureSheet
         visible={showScanSheet}
@@ -921,7 +936,7 @@ function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => v
           </View>
 
           <ScrollView style={form.scroll} contentContainerStyle={form.scrollContent}
-            keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" showsVerticalScrollIndicator={false}>
 
             {/* ── Monthly fixed banner ── */}
             {isMonthlyFixed && (
@@ -1012,7 +1027,8 @@ function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => v
               <View style={form.amountRow}>
                 <Text style={form.currencySign}>{currency === 'USD' ? '$' : currency}</Text>
                 <TextInput style={form.amountInput} value={amount} onChangeText={setAmount}
-                  placeholder="0.00" placeholderTextColor={T.textSecondary} keyboardType="decimal-pad" />
+                  placeholder="0.00" placeholderTextColor={T.textSecondary} keyboardType="decimal-pad"
+                  inputAccessoryViewID={Platform.OS === 'ios' ? 'edit-expense-done' : undefined} />
               </View>
             </View>
 
@@ -1100,6 +1116,16 @@ function EditExpenseModal({ expense, onClose }: { expense: any; onClose: () => v
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
+
+      {Platform.OS === 'ios' && (
+        <InputAccessoryView nativeID="edit-expense-done">
+          <View style={form.kbAccessory}>
+            <TouchableOpacity onPress={() => Keyboard.dismiss()} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8, left: 16, right: 16 }}>
+              <Text style={form.kbAccessoryDone}>{t('common.done')}</Text>
+            </TouchableOpacity>
+          </View>
+        </InputAccessoryView>
+      )}
     </Modal>
   );
 }
@@ -4341,6 +4367,11 @@ const form = StyleSheet.create({
     paddingVertical: 17, alignItems: 'center', marginTop: 8,
   },
   saveBtnText: { color: T.textPrimary, fontSize: 16, fontWeight: '700' },
+  kbAccessory: {
+    backgroundColor: T.card, borderTopWidth: 1, borderTopColor: T.cardBorder,
+    paddingVertical: 10, paddingHorizontal: 20, alignItems: 'flex-end',
+  },
+  kbAccessoryDone: { color: T.teal, fontSize: 16, fontWeight: '700' },
   // Monthly fixed mode styles
   fixedBanner: {
     backgroundColor: '#2A2A3E',

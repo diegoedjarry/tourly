@@ -186,6 +186,10 @@ export function DatePickerField({ label, value, onChange, optional, placeholder,
                 onChange={handleIosChange}
                 accentColor="#00D4AA"
                 style={s.picker}
+                // The inline calendar follows the SYSTEM appearance, but the sheet
+                // behind it is hardcoded to white (s.sheet) — in dark mode this
+                // renders white month/day labels on white, i.e. invisible. Force light.
+                themeVariant="light"
               />
             </View>
           </View>
