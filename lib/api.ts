@@ -189,6 +189,9 @@ export async function apiAddExpense(data: Record<string, any>) {
   if (!data.category || typeof data.category !== 'string' || !data.category.trim()) {
     throw new Error('Expense category is required.');
   }
+  // tournament_id is a uuid FK — the picker's "no tournament" state is an
+  // empty string, which Postgres rejects for uuid columns; store null.
+  if (data.tournamentId === '') data = { ...data, tournamentId: null };
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
   const id = newRowId();
@@ -223,6 +226,8 @@ export async function apiUpdateExpense(id: string, updates: Record<string, any>)
   if ('category' in updates && (!updates.category || typeof updates.category !== 'string' || !updates.category.trim())) {
     throw new Error('Expense category is required.');
   }
+  // Same uuid-FK normalization as apiAddExpense above.
+  if (updates.tournamentId === '') updates = { ...updates, tournamentId: null };
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
   const rollback = optimisticMerge(['expenses'], id, toSnake(updates));
