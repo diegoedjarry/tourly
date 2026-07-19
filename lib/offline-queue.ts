@@ -187,6 +187,7 @@ export async function processQueue() {
       if (succeededIds.size > 0) {
         queryClient.invalidateQueries({ queryKey: ['tournaments'] });
         queryClient.invalidateQueries({ queryKey: ['expenses'] });
+        queryClient.invalidateQueries({ queryKey: ['income'] });
       }
     });
   } finally {
@@ -202,6 +203,23 @@ export async function getQueueLength(): Promise<number> {
 export async function getFailedQueueLength(): Promise<number> {
   const failedQueue = await getFailedQueue();
   return failedQueue.length;
+}
+
+// Move every dead-lettered mutation back into the live queue with a fresh
+// attempt budget, then kick a flush. Returns how many were revived.
+export async function retryFailedQueue(): Promise<number> {
+  const revivedCount = await withQueueLock(async () => {
+    const failed = await getFailedQueue();
+    if (failed.length === 0) return 0;
+    const queue = await getQueue();
+    await saveQueue([...queue, ...failed.map(m => ({ ...m, attempts: 0 }))]);
+    await AsyncStorage.removeItem(FAILED_QUEUE_KEY);
+    return failed.length;
+  });
+  // Outside the lock — processQueue takes the same lock internally and would
+  // deadlock if invoked from within the callback above.
+  if (revivedCount > 0) await processQueue();
+  return revivedCount;
 }
 
 export async function clearQueue(): Promise<void> {

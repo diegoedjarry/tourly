@@ -175,6 +175,14 @@ function receiptCategoryToChip(receiptCategory: string): string {
   return RECEIPT_CAT_TO_CHIP[mapped] ?? mapped;
 }
 
+// Chip values actually rendered by the expense form for the given mode — used
+// to detect when a scanned/mapped category (e.g. 'Entry Fee', which has no
+// chip) has no visible chip to highlight, so the caller can fall back to
+// custom-category mode instead of silently selecting an invisible category.
+function chipCatsFor(isMonthlyFixedMode: boolean): string[] {
+  return isMonthlyFixedMode ? MONTHLY_FIXED_CATS : [...PERSONAL_CATS, ...COACH_CATS];
+}
+
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 function todayIso() {
@@ -189,6 +197,18 @@ function parseLocalDate(val: string | undefined): Date | null {
   if (!val || !/^\d{4}-\d{2}-\d{2}$/.test(val)) return null;
   const [y, m, d] = val.split('-').map(Number);
   return new Date(y, m - 1, d);
+}
+
+// True only for a real calendar date in "YYYY-MM-DD" form. The parse-receipt
+// edge function only regex-validates dates, so something like "2026-02-31"
+// can come back; `new Date(y, m - 1, d)` silently rolls that over to March 3
+// instead of rejecting it, and Postgres would reject the eventual insert.
+// Round-tripping the parsed date and comparing y/m/d catches the rollover.
+function isValidYmd(val: string | null | undefined): val is string {
+  if (!val || !/^\d{4}-\d{2}-\d{2}$/.test(val)) return false;
+  const [y, m, d] = val.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d;
 }
 
 // End of the tournament week: stored endDate, or Monday start + 6 days (Mon–Sun).
@@ -365,12 +385,22 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
         setAmount(String(r.amount));
         setCurrency(r.currency);
         setCurrencyTouched(true);
-        const d = r.date ?? todayIso();
+        // Round-trip validity check — the edge function only regex-validates
+        // dates, so an impossible date (e.g. "2026-02-31") can come back and
+        // Postgres would reject the eventual insert. Fall back to today.
+        const d = isValidYmd(r.date) ? r.date : todayIso();
         setDate(d);
         const chip = receiptCategoryToChip(r.category);
-        setCategory(chip);
-        setCustomMode(false);
-        setCustomText('');
+        if (chipCatsFor(isMonthlyFixed).includes(chip)) {
+          setCategory(chip);
+          setCustomMode(false);
+          setCustomText('');
+        } else {
+          // No chip renders this category (e.g. 'Entry Fee') — switch into
+          // custom-category mode so the user actually sees what was scanned.
+          setCustomMode(true);
+          setCustomText(chip);
+        }
         if (r.merchant) {
           setMerchant(r.merchant);
           setNote((prev) => prev || r.merchant);
@@ -385,10 +415,21 @@ export function AddExpenseModal({ tournaments, onClose, defaultTournamentId, def
         if (p.amount != null) setAmount(String(p.amount));
         if (p.currency) { setCurrency(p.currency); setCurrencyTouched(true); }
         if (p.date) {
-          setDate(p.date);
-          if (!manuallyPicked) setTournamentId(matchTournamentByDate(p.date, tournaments) ?? '');
+          const d = isValidYmd(p.date) ? p.date : todayIso();
+          setDate(d);
+          if (!manuallyPicked) setTournamentId(matchTournamentByDate(d, tournaments) ?? '');
         }
-        if (p.category) { setCategory(receiptCategoryToChip(p.category)); setCustomMode(false); setCustomText(''); }
+        if (p.category) {
+          const chip = receiptCategoryToChip(p.category);
+          if (chipCatsFor(isMonthlyFixed).includes(chip)) {
+            setCategory(chip);
+            setCustomMode(false);
+            setCustomText('');
+          } else {
+            setCustomMode(true);
+            setCustomText(chip);
+          }
+        }
         if (p.merchant) {
           setMerchant(p.merchant);
           setNote((prev) => prev || p.merchant!);
@@ -1810,12 +1851,16 @@ function PasteFromNotesModal({ tournaments, expenses, onClose }: {
   // Per-item tournament resolution: explicit picker selection always wins;
   // "auto" mode date-matches EXCEPT for fixed-category items (Academy, Trainer,
   // Strings & Grip, Stringing Fee), which must never auto-link to a tournament.
-  function resolveTournamentId(item: { date: string | null; category: string }): string | undefined {
+  // Per the MappedExpense contract (utils/import-expenses.ts): `null` means
+  // "never link" (explicit "No tournament" choice, or a fixed-category item in
+  // auto mode); `undefined` means "let insertExpenses date-match" — used only
+  // for non-fixed categories in auto mode, where date-matching is desired.
+  function resolveTournamentId(item: { date: string | null; category: string }): string | null | undefined {
     const isFixed = FIXED_CATS.has(item.category.toLowerCase());
     if (isAutoMatch) {
-      return isFixed ? undefined : matchTournamentByDate(item.date ?? undefined, tournaments);
+      return isFixed ? null : matchTournamentByDate(item.date ?? undefined, tournaments);
     }
-    return tournamentId === '' ? undefined : tournamentId;
+    return tournamentId === '' ? null : tournamentId;
   }
 
   async function handleImport() {

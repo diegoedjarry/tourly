@@ -67,12 +67,23 @@ function getPrize(t: any): number {
   return totalPrizeMoney(t);
 }
 
+// True when an expense is in a foreign currency but has no indicative USD
+// value on record (FX rate was unavailable at entry time). These must never
+// silently contribute their raw foreign-currency number to a USD aggregate
+// (e.g. 5000 CLP must not count as $5,000). Mirrors the rule used in
+// app/(tabs)/expenses.tsx.
+function isUnconverted(e: any): boolean {
+  return !!e?.currency && e.currency !== 'USD' && e?.amountUsd == null;
+}
+
 // Single source of truth for effective spend on this screen: USD-normalized
 // amount, scaled by the user's ownership share. Reimbursed expenses are
 // excluded entirely — callers filter them out before summing (see
-// effectiveExpenses / effectiveSum below). Mirrors the rule used in
-// app/(tabs)/expenses.tsx.
+// effectiveExpenses / effectiveSum below). Foreign-currency expenses with no
+// USD conversion on record contribute 0 — never their raw foreign-currency
+// amount. Mirrors the rule used in app/(tabs)/expenses.tsx.
 function effectiveUsd(e: any): number {
+  if (isUnconverted(e)) return 0;
   const base = e?.amountUsd ?? e?.amount ?? 0;
   const pct = e?.sharePct ?? 100;
   return base * (pct / 100);
@@ -84,6 +95,12 @@ function effectiveExpenses(expenses: any[]): any[] {
 
 function effectiveSum(expenses: any[]): number {
   return effectiveExpenses(expenses).reduce((s: number, e: any) => s + effectiveUsd(e), 0);
+}
+
+// Count of expenses excluded from USD aggregates because their FX rate was
+// unavailable at entry time — surfaced as a small note wherever totals render.
+function countUnconverted(expenses: any[]): number {
+  return effectiveExpenses(expenses).filter(isUnconverted).length;
 }
 
 // ─── Shared wrapper ──────────────────────────────────────────────────────────
@@ -129,9 +146,14 @@ function SummaryBox({ text }: { text: string }) {
 
 function WhereMoneyGoes({ expenses, tournaments }: { expenses: any[]; tournaments: any[] }) {
   const [expandedCat, setExpandedCat] = useState<string | null>(null);
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
 
   const effExpenses = useMemo(() => effectiveExpenses(expenses), [expenses]);
+  // Foreign-currency expenses excluded from every USD total on this screen
+  // because no FX rate was available at entry time (see effectiveUsd) —
+  // surfaced so the player knows the numbers are understated, not silently
+  // wrong. Mirrors the note in app/(tabs)/expenses.tsx.
+  const unconvertedCount = useMemo(() => countUnconverted(expenses), [expenses]);
 
   const grouped: Record<string, number> = {};
   for (const e of effExpenses) {
@@ -163,6 +185,13 @@ function WhereMoneyGoes({ expenses, tournaments }: { expenses: any[]; tournament
     <DetailScreen title={t('insights.whereMoneyGoes')}>
       <Text style={ds.bigLabel}>{fmtFull(total)}</Text>
       <Text style={ds.subLabel}>{t('insights.totalSeasonExpenses')}</Text>
+      {unconvertedCount > 0 && (
+        <Text style={ds.unconvertedNote}>
+          {lang === 'es'
+            ? `${unconvertedCount} gasto${unconvertedCount !== 1 ? 's' : ''} sin tipo de cambio, no incluido${unconvertedCount !== 1 ? 's' : ''} en los totales`
+            : `${unconvertedCount} expense${unconvertedCount !== 1 ? 's' : ''} missing exchange rate, excluded from totals`}
+        </Text>
+      )}
       {summary && (
         <View style={{ marginTop: 16 }}>
           <SummaryBox text={summary} />
@@ -963,6 +992,7 @@ const ds = StyleSheet.create({
 
   bigLabel: { fontSize: 32, fontWeight: '800', color: T.textPrimary },
   subLabel: { fontSize: 14, color: T.textSecondary, marginTop: 4 },
+  unconvertedNote: { fontSize: 11, color: T.textTertiary, marginTop: 6 },
   sectionLabel: { fontSize: 11, fontWeight: '700', color: T.textTertiary, letterSpacing: 0.8, marginBottom: 8 },
   emptyText: { fontSize: 15, color: T.textTertiary, textAlign: 'center', marginTop: 40, lineHeight: 22 },
   retryBtn: { alignSelf: 'center', marginTop: 16, backgroundColor: T.accent, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 24 },

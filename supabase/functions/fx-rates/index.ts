@@ -1,9 +1,14 @@
 // fx-rates — indicative FX cache for USD normalization of expenses.
 //
-// Returns { rates: { EUR: 0.92, TND: 3.1, ... }, updated_at } where each value
-// is units-per-USD. Refreshes from frankfurter.app (ECB data, no key) at most
-// once per 24h; otherwise serves the cached table. Rates are INDICATIVE only —
-// used for approximate USD totals, never for accounting.
+// Returns { rates: { EUR: 0.92, CLP: 924.7, ... }, updated_at } where each
+// value is units-per-USD. Refreshes at most once per 24h; otherwise serves
+// the cached table. Rates are INDICATIVE only — used for approximate USD
+// totals, never for accounting.
+//
+// Provider: open.er-api.com (160+ currencies incl. CLP/ARS/PEN/TND — the
+// previous ECB/frankfurter source lacked every LatAm currency, and the core
+// user base is Chilean). Frankfurter kept as fallback; its 29 ECB currencies
+// are a strict subset with identical units-per-USD semantics.
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -47,18 +52,34 @@ serve(async (req) => {
 
     if (stale || !cached?.length) {
       try {
-        const res = await fetch('https://api.frankfurter.app/latest?base=USD');
-        if (res.ok) {
-          const fx = await res.json();
-          const rows = Object.entries(fx.rates as Record<string, number>).map(([currency, rate]) => ({
-            currency,
-            rate_to_usd: rate, // units of `currency` per 1 USD
-            updated_at: new Date().toISOString(),
-          }));
-          rows.push({ currency: 'USD', rate_to_usd: 1, updated_at: new Date().toISOString() });
-          await supabase.from('fx_rates').upsert(rows, { onConflict: 'currency' });
+        let fetched: Record<string, number> | null = null;
+        try {
+          const res = await fetch('https://open.er-api.com/v6/latest/USD');
+          if (res.ok) {
+            const fx = await res.json();
+            if (fx?.result === 'success' && fx?.rates) fetched = fx.rates as Record<string, number>;
+          }
+        } catch { /* fall through to frankfurter */ }
+        if (!fetched) {
+          const res = await fetch('https://api.frankfurter.dev/v1/latest?base=USD');
+          if (res.ok) {
+            const fx = await res.json();
+            if (fx?.rates) fetched = fx.rates as Record<string, number>;
+          }
+        }
+        if (fetched) {
+          const now = new Date().toISOString();
+          const rows = Object.entries(fetched)
+            .filter(([, rate]) => typeof rate === 'number' && rate > 0)
+            .map(([currency, rate]) => ({ currency, rate_to_usd: rate, updated_at: now }));
+          // er-api already includes USD; only add it when the provider didn't —
+          // a duplicate key within one upsert batch is a Postgres error.
+          if (!fetched.USD) rows.push({ currency: 'USD', rate_to_usd: 1, updated_at: now });
+          const { error: upsertError } = await supabase.from('fx_rates').upsert(rows, { onConflict: 'currency' });
+          if (upsertError) console.error('[fx-rates] cache upsert failed', upsertError);
           const rates = Object.fromEntries(rows.map((r) => [r.currency, r.rate_to_usd]));
-          return new Response(JSON.stringify({ rates, updated_at: new Date().toISOString() }), { headers: { 'Content-Type': 'application/json' } });
+          if (!rates.USD) rates.USD = 1;
+          return new Response(JSON.stringify({ rates, updated_at: now }), { headers: { 'Content-Type': 'application/json' } });
         }
       } catch (e) {
         console.error('[fx-rates] refresh failed, serving cache', e);

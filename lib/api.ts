@@ -273,6 +273,12 @@ export async function apiDeleteTournament(id: string) {
 }
 
 export async function apiAddIncome(data: Record<string, any>) {
+  // income.date is NOT NULL in Postgres — the date picker's Clear button sets
+  // '', which would otherwise reach the insert and fail with a DB error
+  // instead of a clear message (mirrors apiAddExpense's date guard above).
+  if (!data.date || !/^\d{4}-\d{2}-\d{2}$/.test(data.date)) {
+    throw new Error('Income date is required.');
+  }
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
   const id = newRowId();
@@ -295,6 +301,11 @@ export async function apiAddIncome(data: Record<string, any>) {
 }
 
 export async function apiUpdateIncome(id: string, updates: Record<string, any>) {
+  // Same NOT NULL guard as apiAddIncome above — only when 'date' is actually
+  // part of this update (e.g. the Clear button setting '').
+  if ('date' in updates && (!updates.date || !/^\d{4}-\d{2}-\d{2}$/.test(updates.date))) {
+    throw new Error('Income date is required.');
+  }
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
   const rollback = optimisticMerge(['income'], id, toSnake(updates));

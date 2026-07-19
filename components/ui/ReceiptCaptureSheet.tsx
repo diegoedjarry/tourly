@@ -22,7 +22,15 @@ import * as Haptics from 'expo-haptics';
 import { Text } from '@/components/ui/text';
 import { T } from '@/constants/theme';
 import { useLanguage } from '@/hooks/useLanguage';
+import { useAppAlert } from '@/components/ui/app-alert';
 import type { ReceiptMediaType } from '@/utils/receipt';
+
+// Server rejects payloads whose base64 exceeds 8_000_000 chars anyway — cap
+// the raw file size well below that (~6MB) so we can reject client-side with
+// a clear message instead of burning a network round-trip on a guaranteed
+// rejection.
+const MAX_FILE_BYTES = 6 * 1024 * 1024;
+const MAX_BASE64_CHARS = 8_000_000;
 
 export interface CapturedReceipt {
   base64: string;
@@ -53,6 +61,7 @@ function mediaTypeFromUri(uri: string, fallback: ReceiptMediaType = 'image/jpeg'
 
 export function ReceiptCaptureSheet({ visible, onClose, onCaptured }: Props) {
   const { t } = useLanguage();
+  const { show: showAlert } = useAppAlert();
   const slide = useRef(new Animated.Value(300)).current;
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -125,7 +134,15 @@ export function ReceiptCaptureSheet({ visible, onClose, onCaptured }: Props) {
       });
       const asset = result.assets?.[0];
       if (result.canceled || !asset?.uri) return;
+      if (typeof asset.size === 'number' && asset.size > MAX_FILE_BYTES) {
+        showAlert(t('common.error'), t('receipt.fileTooLarge'));
+        return;
+      }
       const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 });
+      if (base64.length > MAX_BASE64_CHARS) {
+        showAlert(t('common.error'), t('receipt.fileTooLarge'));
+        return;
+      }
       const mediaType = (asset.mimeType as ReceiptMediaType) ?? mediaTypeFromUri(asset.uri);
       await handoff({ base64, mediaType });
     } finally { setBusy(null); }

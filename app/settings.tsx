@@ -43,6 +43,14 @@ import { PRIVACY_POLICY_URL } from '@/constants/links';
 import { useLanguage, setLanguage } from '@/hooks/useLanguage';
 import type { Lang } from '@/lib/i18n';
 
+// Format today as a local "YYYY-MM-DD" — toISOString() shifts to UTC, which
+// reads as the wrong calendar day in negative-offset timezones (e.g. Chile)
+// after ~20:00 local. Mirrors the toLocalIso() pattern in utils/import-expenses.ts.
+function todayLocalIso(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 const ROLES = ['Player', 'Coach', 'Other'];
 const SURFACES = [
   { key: 'clay', label: 'Clay', color: T.clayText, bg: '#FAEEDA' },
@@ -1311,7 +1319,7 @@ export default function SettingsScreen() {
                             category: e.category,
                             amount: e.amount,
                             currency: e.currency,
-                            date: e.date ?? new Date().toISOString().split('T')[0],
+                            date: e.date ?? todayLocalIso(),
                             note: e.description || null,
                             tournament_name: null,
                           }));

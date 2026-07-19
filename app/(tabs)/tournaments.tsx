@@ -1629,11 +1629,17 @@ export function AddTournamentModal({ onClose, defaultStartDate, initialMode }: {
   const all = data?.tournaments ?? [];
   const pool = all.filter((trn: any) => trn.isInMyList === false);
   // Catalog rows the user doesn't already track — matched by id and by
-  // name+start so a manually-added copy doesn't show up twice.
+  // name+start so a manually-added copy doesn't show up twice. Tracked rows
+  // store the COMPOSED challenger display name (see challengerDisplayName),
+  // while the catalog keeps the raw name, so check both against each row.
   const trackedIds = new Set(all.map((trn: any) => trn.id));
-  const trackedKeys = new Set(all.map((trn: any) => `${(trn.name ?? '').toLowerCase()}|${trn.startDate ?? ''}`));
+  const nameKey = (name: string | undefined, startDate: string | undefined) =>
+    `${(name ?? '').toLowerCase()}|${startDate ?? ''}`;
+  const trackedKeys = new Set(all.map((trn: any) => nameKey(trn.name, trn.startDate)));
   const itfPool = itfCatalog.filter((trn: any) =>
-    !trackedIds.has(trn.id) && !trackedKeys.has(`${(trn.name ?? '').toLowerCase()}|${trn.startDate ?? ''}`));
+    !trackedIds.has(trn.id) &&
+    !trackedKeys.has(nameKey(trn.name, trn.startDate)) &&
+    !trackedKeys.has(nameKey(challengerDisplayName(trn), trn.startDate)));
   const q = query.trim().toLowerCase();
   const searchMatch = (trn: any) =>
     (trn.name ?? '').toLowerCase().includes(q) ||
@@ -2049,9 +2055,22 @@ function TournamentDiscoveryModal({
   const [addingIds, setAddingIds] = useState<Set<string>>(new Set());
 
   const myCalendarIds = new Set(allTournaments.filter((t: any) => t.isInMyList !== false).map((t: any) => t.id));
+  // Name+start dedup — tracked rows can store the COMPOSED challenger display
+  // name (see challengerDisplayName) while inserted rows get a fresh uuid, so
+  // id-only matching misses already-added catalog rows. Check both the raw
+  // and composed name for each ITF row against tracked names.
+  const myCalendarKeys = new Set(
+    allTournaments
+      .filter((t: any) => t.isInMyList !== false)
+      .map((t: any) => `${(t.name ?? '').toLowerCase()}|${t.startDate ?? ''}`)
+  );
 
   // ITF tournaments from Supabase that user hasn't added yet
-  const itfDiscoverable = itfTournaments.filter(t => !myCalendarIds.has(t.id));
+  const itfDiscoverable = itfTournaments.filter(t =>
+    !myCalendarIds.has(t.id) &&
+    !myCalendarKeys.has(`${(t.name ?? '').toLowerCase()}|${t.startDate ?? ''}`) &&
+    !myCalendarKeys.has(`${challengerDisplayName(t).toLowerCase()}|${t.startDate ?? ''}`)
+  );
 
   async function handleAddFromITF(tournament: any) {
     if (addingIds.has(tournament.id)) return;

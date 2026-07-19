@@ -15,10 +15,15 @@ function fmt(n: number): number {
 // Effective USD spend for an expense — mirrors utils/export-pdf.ts's
 // effectiveSpend(): reimbursed rows are 0 (never counted as real spend),
 // otherwise (amountUsd ?? amount) scaled by the user's ownership share.
-// Keeping this identical to the PDF's rule means the CSV/XLSX export, the
-// season statement PDF, and the in-app totals never disagree with each other.
+// Foreign-currency expenses with no USD conversion on record (FX rate was
+// unavailable at entry time) also contribute 0 — never their raw
+// foreign-currency amount (e.g. 5000 CLP must not export as $5,000). Mirrors
+// the same guard in app/(tabs)/expenses.tsx and app/insights.tsx. Keeping
+// this identical to the PDF's rule means the CSV/XLSX export, the season
+// statement PDF, and the in-app totals never disagree with each other.
 function effectiveSpend(e: any): number {
   if (e.isReimbursed) return 0;
+  if (e.currency && e.currency !== 'USD' && e.amountUsd == null) return 0;
   const base = e.amountUsd ?? e.amount ?? 0;
   const share = (e.sharePct ?? 100) / 100;
   return base * share;

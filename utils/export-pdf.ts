@@ -82,9 +82,14 @@ function escapeHtml(str: string): string {
     .replace(/>/g, '&gt;');
 }
 
-// Effective spend for an expense: (amountUsd ?? amount) * (sharePct/100), excluding reimbursed rows.
+// Effective spend for an expense: (amountUsd ?? amount) * (sharePct/100),
+// excluding reimbursed rows. Foreign-currency expenses with no USD conversion
+// on record (FX rate was unavailable at entry time) also contribute 0 — never
+// their raw foreign-currency amount (e.g. 5000 CLP must not report as $5,000).
+// Mirrors the same guard in app/(tabs)/expenses.tsx and app/insights.tsx.
 function effectiveSpend(e: any): number {
   if (e.isReimbursed) return 0;
+  if (e.currency && e.currency !== 'USD' && e.amountUsd == null) return 0;
   const base = e.amountUsd ?? e.amount ?? 0;
   const share = (e.sharePct ?? 100) / 100;
   return base * share;

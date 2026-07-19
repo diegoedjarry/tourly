@@ -67,6 +67,8 @@ const strings = {
   // Offline write queue
   'common.savedOffline': { en: 'Saved offline — will sync when connected', es: 'Guardado sin conexión — se sincronizará al reconectar' },
   'common.error': { en: 'Error', es: 'Error' },
+  'sync.failedCount': { en: "{n} change(s) couldn't sync", es: '{n} cambio(s) no se pudieron sincronizar' },
+  'sync.retry': { en: 'Retry', es: 'Reintentar' },
 
   // Tournaments
   'tournaments.addNew': { en: 'Add Tournament', es: 'Agregar Torneo' },
@@ -378,6 +380,7 @@ const strings = {
   'receipt.fromFile': { en: 'PDF or file', es: 'PDF o archivo' },
   'receipt.reading': { en: 'Reading receipt…', es: 'Leyendo recibo…' },
   'receipt.readFailed': { en: 'Couldn\'t read everything — check the details', es: 'No se pudo leer todo — revisa los datos' },
+  'receipt.fileTooLarge': { en: 'This file is too large to scan. Try a smaller image or PDF.', es: 'Este archivo es demasiado grande para escanear. Prueba con una imagen o PDF más pequeño.' },
   'expenses.budgetTitle': { en: 'This week', es: 'Esta semana' },
   'expenses.budgetDayOf': { en: 'Day', es: 'Día' },
   'expenses.budgetDayOfSep': { en: 'of', es: 'de' },

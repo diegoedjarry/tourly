@@ -68,14 +68,15 @@ export async function triggerScraperOnce(playerName: string): Promise<void> {
         .ilike('player_name', `%${firstName}%`)
         .gte('last_updated', since)
         .limit(1)
-        .single();
+        .maybeSingle();
       if (data) {
         clearInterval(interval);
         setScraperStatus('complete');
         setTimeout(() => setScraperStatus('idle'), 10_000);
       }
+      // data === null, error === null → row not there yet, keep polling
     } catch {
-      // Row not there yet — keep polling
+      // Unexpected failure (e.g. network) — keep polling
     }
   }, POLL_MS);
 }
