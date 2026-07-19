@@ -1568,6 +1568,35 @@ export function AddTournamentModal({ onClose, defaultStartDate, initialMode }: {
   const [saving, setSaving]   = useState(false);
   const [error, setError]     = useState('');
 
+  // ITF catalog for search — the user's own rows only cover tournaments they
+  // already track, so a fresh account would otherwise search an empty pool.
+  // Demo mode skips the fetch: demo data already seeds isInMyList=false rows.
+  const [itfCatalog, setItfCatalog] = useState<any[]>([]);
+  useEffect(() => {
+    if (DEMO_MODE) return;
+    supabase
+      .from('itf_tournaments')
+      .select('itf_id, name, city, country, surface, category, start_date, end_date, prize_money_total')
+      .gte('start_date', todayIso())
+      .order('start_date', { ascending: true })
+      .limit(500)
+      .then(({ data: rows }) => {
+        if (rows) setItfCatalog(rows.map(r => ({
+          id: r.itf_id,
+          name: r.name,
+          city: r.city,
+          country: r.country,
+          surface: r.surface,
+          category: r.category,
+          startDate: r.start_date,
+          endDate: r.end_date,
+          prizeMoney: r.prize_money_total,
+          signUpDeadline: calcDeadlines(r.start_date, r.category).signUpDeadline,
+          _fromItf: true,
+        })));
+      });
+  }, []);
+
   function isManualFormDirty(): boolean {
     const init = initialFormRef.current;
     if (f.name.trim() !== '') return true;
@@ -1597,10 +1626,20 @@ export function AddTournamentModal({ onClose, defaultStartDate, initialMode }: {
     );
   }
 
-  const pool = (data?.tournaments ?? []).filter((trn: any) => trn.isInMyList === false);
-  const searchResults = query.trim().length > 0
-    ? pool.filter((trn: any) => trn.name?.toLowerCase().includes(query.trim().toLowerCase()))
-    : [];
+  const all = data?.tournaments ?? [];
+  const pool = all.filter((trn: any) => trn.isInMyList === false);
+  // Catalog rows the user doesn't already track — matched by id and by
+  // name+start so a manually-added copy doesn't show up twice.
+  const trackedIds = new Set(all.map((trn: any) => trn.id));
+  const trackedKeys = new Set(all.map((trn: any) => `${(trn.name ?? '').toLowerCase()}|${trn.startDate ?? ''}`));
+  const itfPool = itfCatalog.filter((trn: any) =>
+    !trackedIds.has(trn.id) && !trackedKeys.has(`${(trn.name ?? '').toLowerCase()}|${trn.startDate ?? ''}`));
+  const q = query.trim().toLowerCase();
+  const searchMatch = (trn: any) =>
+    (trn.name ?? '').toLowerCase().includes(q) ||
+    (trn.city ?? '').toLowerCase().includes(q) ||
+    (trn.country ?? '').toLowerCase().includes(q);
+  const searchResults = q.length > 0 ? [...pool.filter(searchMatch), ...itfPool.filter(searchMatch)] : [];
 
   // True when the sign-up deadline has already passed end-of-day
   const signUpPassed = (() => {
@@ -1679,6 +1718,28 @@ export function AddTournamentModal({ onClose, defaultStartDate, initialMode }: {
       if (_e2) _e2.setHours(23, 59, 59, 999);
       const _su2  = tournament.signUpDeadline ? parseLocalDate(tournament.signUpDeadline) : null;
       if (_su2) _su2.setHours(23, 59, 59, 999);
+      if (tournament._fromItf) {
+        // Catalog row — not in the user's table yet; must INSERT (mirrors
+        // handleAddFromITF in the discovery modal), a patch would no-op.
+        const calc = tournament.startDate ? calcDeadlines(tournament.startDate, tournament.category) : ({} as any);
+        await apiAddTournament({
+          name: challengerDisplayName(tournament),
+          city: tournament.city,
+          country: tournament.country,
+          surface: tournament.surface,
+          category: tournament.category,
+          startDate: tournament.startDate,
+          endDate: tournament.endDate ?? (tournament.startDate ? calcEndDate(tournament.startDate) : undefined),
+          prizeMoney: 0, singlesPrizeMoney: 0, doublesPrizeMoney: 0,
+          isInMyList: true,
+          isRegistered: (_su2 !== null && _now2 > _su2) || (_s2 !== null && _now2 >= _s2) || (_e2 !== null && _now2 > _e2),
+          ...calc,
+        });
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        onClose();
+        maybeShowNotifPrimingAlert();
+        return;
+      }
       const updates: any = { isInMyList: true };
       const composedName2 = challengerDisplayName(tournament);
       if (composedName2 !== tournament.name) updates.name = composedName2;

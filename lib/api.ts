@@ -29,7 +29,10 @@ function toSnake(obj: Record<string, any>): Record<string, any> {
 async function isOffline(): Promise<boolean> {
   try {
     const state = await NetInfo.fetch();
-    return !state.isConnected;
+    // Only an explicit false counts as offline — `isConnected` can be `null`
+    // (unknown) briefly after cold start, especially on iOS, and treating
+    // that as offline silently queues the write with a confusing notice.
+    return state.isConnected === false;
   } catch {
     return true;
   }
@@ -101,8 +104,20 @@ function replaceRow(key: string[], id: string, serverRow: Row) {
 // offline) now gets a real uuid up front — used as the optimistic cache row
 // id, the queued mutation id, AND the online insert payload id. That keeps
 // both paths symmetric and offline replays idempotent via upsert-on-id.
+//
+// Hermes has no crypto.randomUUID — react-native-get-random-values (imported
+// first thing in app/_layout.tsx) polyfills only getRandomValues, so on
+// device the RFC-4122 v4 uuid is built from random bytes here. Browsers take
+// the native randomUUID fast path.
 function newRowId(): string {
-  return (globalThis as any).crypto.randomUUID();
+  const c = (globalThis as any).crypto;
+  if (typeof c?.randomUUID === 'function') return c.randomUUID();
+  const b = new Uint8Array(16);
+  c.getRandomValues(b);
+  b[6] = (b[6] & 0x0f) | 0x40; // version 4
+  b[8] = (b[8] & 0x3f) | 0x80; // variant 10
+  const h = Array.from(b, (x: number) => x.toString(16).padStart(2, '0')).join('');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
 export async function apiPatchTournament(id: string, updates: Record<string, any>) {

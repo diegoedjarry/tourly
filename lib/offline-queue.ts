@@ -123,7 +123,9 @@ export async function processQueue() {
 
   try {
     const net = await NetInfo.fetch();
-    if (!net.isConnected) return;
+    // Unknown (null) is not offline — attempting a flush is safe either way,
+    // failures just increment attempts and get retried next time.
+    if (net.isConnected === false) return;
 
     await withQueueLock(async () => {
       const queue = await getQueue();

@@ -130,38 +130,63 @@ export function useAuth() {
 
     // Native: use expo-web-browser to handle the OAuth flow in-app.
     const WebBrowser = await import('expo-web-browser');
-    const { createURL } = await import('expo-linking');
+    const Linking = await import('expo-linking');
     WebBrowser.maybeCompleteAuthSession();
-    const redirectTo = createURL('');
-    const { data, error } = await supabase.auth.signInWithOAuth({
-      provider,
-      options: { redirectTo, skipBrowserRedirect: true },
+    const redirectTo = Linking.createURL('');
+
+    // Parse a callback URL (auth-session result OR deep link) and promote its
+    // tokens to a session. Returns true only if a session was actually set.
+    async function completeFromUrl(url: string): Promise<boolean> {
+      let accessToken: string | null = null;
+      let refreshToken: string | null = null;
+      if (url.includes('#')) {
+        const fragParams = new URLSearchParams(url.split('#')[1]);
+        accessToken = fragParams.get('access_token');
+        refreshToken = fragParams.get('refresh_token');
+      }
+      if (!accessToken && url.includes('?')) {
+        const qParams = new URLSearchParams(url.split('?')[1]?.split('#')[0] ?? '');
+        accessToken = qParams.get('access_token');
+        refreshToken = qParams.get('refresh_token');
+      }
+      if (!accessToken) return false;
+      await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken ?? '' });
+      return true;
+    }
+
+    // Android can deliver the OAuth redirect as a plain deep link into the app
+    // while openAuthSessionAsync resolves 'dismiss' — capture it in parallel so
+    // the sign-in still completes instead of dying silently.
+    let deepLinkHandled = false;
+    const deepLinkSub = Linking.addEventListener('url', ({ url }) => {
+      if (url.includes('access_token')) {
+        deepLinkHandled = true;
+        completeFromUrl(url).catch(() => {});
+      }
     });
-    if (error) throw error;
-    if (data.url) {
+    try {
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider,
+        options: { redirectTo, skipBrowserRedirect: true },
+      });
+      if (error) throw error;
+      if (!data.url) return;
       const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
       if (result.type === 'success' && result.url) {
-        const url = result.url;
-        let accessToken: string | null = null;
-        let refreshToken: string | null = null;
-        if (url.includes('#')) {
-          const fragment = url.split('#')[1];
-          const fragParams = new URLSearchParams(fragment);
-          accessToken = fragParams.get('access_token');
-          refreshToken = fragParams.get('refresh_token');
-        }
-        if (!accessToken && url.includes('?')) {
-          const query = url.split('?')[1]?.split('#')[0] ?? '';
-          const qParams = new URLSearchParams(query);
-          accessToken = qParams.get('access_token');
-          refreshToken = qParams.get('refresh_token');
-        }
-        if (accessToken) {
-          await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken ?? '' });
-        } else {
+        if (!(await completeFromUrl(result.url))) {
           throw new Error(i18nT('auth.couldNotCompleteSignIn', getCurrentLang()));
         }
+        return;
       }
+      // 'dismiss'/'cancel': either the user closed the tab or (Android) the
+      // redirect deep-linked into the app instead. Give that race a moment,
+      // then check whether a session actually landed before reporting failure.
+      await new Promise((res) => setTimeout(res, 1500));
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session || deepLinkHandled) return;
+      throw new Error(i18nT('auth.couldNotCompleteSignIn', getCurrentLang()));
+    } finally {
+      deepLinkSub.remove();
     }
   }
 
